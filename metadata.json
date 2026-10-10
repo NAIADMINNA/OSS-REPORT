@@ -1,0 +1,6 @@
+{
+  "name": "ระบบรายงานผลการปฏิบัติงานศูนย์บริการแรงงานต่างด้าว DOE",
+  "description": "ระบบบันทึกข้อมูลและแดชบอร์ดสรุปผลการปฏิบัติงานประจำศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว กรมการจัดหางาน (DOE)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
