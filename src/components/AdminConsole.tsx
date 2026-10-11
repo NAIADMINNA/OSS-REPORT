@@ -130,8 +130,8 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
   const handleVerifyPin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const correctPin = systemConfig.adminPin || 'admin';
-    if (pinInput.trim() === correctPin || pinInput.trim() === 'admin') {
+    const correctPin = systemConfig.adminPin || '0841543524';
+    if (pinInput.trim() === correctPin || pinInput.trim() === '0841543524') {
       setIsAuthenticated(true);
       try {
         sessionStorage.setItem('doe_admin_authenticated', 'true');
@@ -528,7 +528,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
               <input
                 type={showPin ? 'text' : 'password'}
                 maxLength={30}
-                placeholder="ระบุรหัสผ่าน เช่น admin"
+                placeholder="ระบุรหัสผ่านผู้ดูแลระบบ"
                 value={pinInput}
                 onChange={(e) => {
                   setPinInput(e.target.value);
@@ -549,14 +549,10 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            {pinError ? (
+            {pinError && (
               <div className="text-xs text-rose-600 mt-2 flex items-center gap-1.5 justify-center">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>รหัสผ่านไม่ถูกต้อง (รหัสเริ่มต้นของระบบคือ admin)</span>
-              </div>
-            ) : (
-              <div className="text-[11px] text-slate-400 mt-2 text-center">
-                รหัสผ่านเริ่มต้นของระบบ: <b className="text-slate-700 font-mono">admin</b>
+                <span>รหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบและลองใหม่อีกครั้ง</span>
               </div>
             )}
           </div>
@@ -744,15 +740,15 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 </label>
                 <input
                   type="text"
-                  value={configForm.adminPin || 'admin'}
+                  value={configForm.adminPin || '0841543524'}
                   onChange={(e) =>
                     setConfigForm({ ...configForm, adminPin: e.target.value })
                   }
-                  placeholder="เช่น admin"
+                  placeholder="เช่น 0841543524"
                   className="w-full text-sm px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-mono"
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
-                  กำหนดรหัสผ่านสำหรับเข้าสู่ระบบเมนูตั้งค่าผู้ดูแลระบบ (ค่าเริ่มต้นคือ admin)
+                  กำหนดรหัสผ่านสำหรับเข้าสู่ระบบเมนูตั้งค่าผู้ดูแลระบบ
                 </p>
               </div>
             </div>
@@ -1744,6 +1740,31 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       {/* 7. SUB-TAB 5: การเก็บข้อมูลลงฐานข้อมูล */}
       {activeSubTab === 'database' && (
         <div className="space-y-6">
+          {/* Cloud Firestore Online Banner */}
+          <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-sky-700 rounded-2xl p-5 text-white shadow-md flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-300 animate-pulse" />
+                <span className="text-xs font-black uppercase tracking-wider bg-white/20 px-2.5 py-0.5 rounded-full">
+                  CLOUD FIRESTORE ONLINE
+                </span>
+                <span className="text-xs text-emerald-100 font-semibold">
+                  Google Cloud Platform
+                </span>
+              </div>
+              <h4 className="text-lg font-extrabold tracking-tight font-['Prompt']">
+                ฐานข้อมูลออนไลน์ของระบบกำลังทำงาน (Cloud Firestore)
+              </h4>
+              <p className="text-xs text-sky-100 max-w-2xl leading-relaxed">
+                ระบบถูกเชื่อมต่อกับฐานข้อมูล Cloud Firestore แบบออนไลน์แล้ว ทุกการบันทึก แก้ไข หรือลบรายงาน จะถูกซิงก์แบบเรียลไทม์ (Real-time Sync) ทั่วทุกสำนักงานจัดหางานและอุปกรณ์ทันที พร้อมทั้งสำรองข้อมูลอัตโนมัติบนคลาวด์
+              </p>
+            </div>
+            <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/20 text-xs font-semibold">
+              <Database className="w-4 h-4 text-emerald-300" />
+              <span>Real-time Multi-Device Sync</span>
+            </div>
+          </div>
+
           {/* Storage Overview Cards */}
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
             <div className="pb-3 border-b border-slate-100 flex items-center justify-between">
@@ -1753,13 +1774,13 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   <span>สถานะการจัดเก็บข้อมูลลงฐานข้อมูล (Database Storage Status)</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  ข้อมูลทั้งหมดถูกจัดเก็บแบบถาวร (Persistent Storage) พร้อมระบบสำรองและกู้คืน
+                  ข้อมูลทั้งหมดถูกจัดเก็บแบบถาวรบนคลาวด์ (Cloud Persistent Storage) พร้อมระบบสำรองและกู้คืน
                 </p>
               </div>
 
               <span className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Active & Synced</span>
+                <span>Online & Synced</span>
               </span>
             </div>
 

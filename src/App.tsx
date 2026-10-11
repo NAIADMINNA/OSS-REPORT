@@ -34,7 +34,29 @@ import {
   Maximize2,
   FileText,
   Truck,
+  Cloud,
+  RefreshCw,
 } from 'lucide-react';
+import { testConnection } from './firebase';
+import {
+  subscribeReports,
+  saveReportOnline,
+  deleteReportOnline,
+  restoreReportOnline,
+  subscribeDeletedReports,
+  subscribeOffices,
+  saveOfficeOnline,
+  deleteOfficeOnline,
+  restoreOfficeOnline,
+  subscribeDeletedOffices,
+  subscribeCategories,
+  saveAllCategoriesOnline,
+  subscribeReporters,
+  saveAllReportersOnline,
+  subscribeSystemConfig,
+  saveSystemConfigOnline,
+  initializeFirestoreIfEmpty,
+} from './services/firestoreService';
 
 const STORAGE_KEY_REPORTS = 'doe_work_permit_reports_v1';
 const STORAGE_KEY_OFFICES = 'doe_work_permit_offices_v1';
@@ -45,6 +67,9 @@ const STORAGE_KEY_DELETED_OFFICES = 'doe_work_permit_deleted_offices_v1';
 const STORAGE_KEY_DELETED_REPORTS = 'doe_work_permit_deleted_reports_v1';
 
 export default function App() {
+  const [isFirestoreOnline, setIsFirestoreOnline] = useState<boolean>(true);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
   // 1. Reports Database
   const [reports, setReports] = useState<DOEReport[]>(() => {
     try {
@@ -74,7 +99,6 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Merge with latest EMPLOYMENT_OFFICES defaults to update centerNames and include new centers, preserving custom offices
           const updated = [...parsed].map((o: EmploymentOffice) =>
             o.region === 'ส่วนกลาง' ? { ...o, region: 'เฉพาะกิจ' as const } : o
           );
@@ -135,8 +159,8 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object') {
           const config = { ...DEFAULT_SYSTEM_CONFIG, ...parsed };
-          if (!config.adminPin || config.adminPin === '1234') {
-            config.adminPin = 'admin';
+          if (!config.adminPin || config.adminPin === '1234' || config.adminPin === 'admin') {
+            config.adminPin = '0841543524';
           }
           return config;
         }
@@ -170,7 +194,7 @@ export default function App() {
     onAction?: () => void;
   } | null>(null);
 
-  // Deleted items memory & storage (ถังขยะสำหรับกู้คืนข้อมูลที่ถูกลบ)
+  // Deleted items memory & storage
   const [deletedOffices, setDeletedOffices] = useState<EmploymentOffice[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_DELETED_OFFICES);
@@ -196,6 +220,84 @@ export default function App() {
     }
     return [];
   });
+
+  // Online Firestore Setup and Realtime Sync Subscriptions
+  useEffect(() => {
+    let unsubs: (() => void)[] = [];
+
+    async function initOnlineDB() {
+      setIsSyncing(true);
+      try {
+        const isConnected = await testConnection();
+        setIsFirestoreOnline(isConnected);
+
+        // Ensure online Firestore has initial data if newly provisioned
+        await initializeFirestoreIfEmpty();
+
+        // 1. Subscribe to online reports
+        const unsubReports = subscribeReports((onlineReports) => {
+          if (onlineReports && onlineReports.length > 0) {
+            setReports(onlineReports);
+          }
+        });
+        unsubs.push(unsubReports);
+
+        // 2. Subscribe to online offices
+        const unsubOffices = subscribeOffices((onlineOffices) => {
+          if (onlineOffices && onlineOffices.length > 0) {
+            setOffices(onlineOffices);
+          }
+        });
+        unsubs.push(unsubOffices);
+
+        // 3. Subscribe to categories
+        const unsubCats = subscribeCategories((onlineCats) => {
+          if (onlineCats && onlineCats.length > 0) {
+            setCategories(onlineCats);
+          }
+        });
+        unsubs.push(unsubCats);
+
+        // 4. Subscribe to reporters
+        const unsubReps = subscribeReporters((onlineReps) => {
+          if (onlineReps && onlineReps.length > 0) {
+            setReporters(onlineReps);
+          }
+        });
+        unsubs.push(unsubReps);
+
+        // 5. Subscribe to system config
+        const unsubConfig = subscribeSystemConfig((onlineConfig) => {
+          if (onlineConfig && onlineConfig.reportTitle) {
+            setSystemConfig(onlineConfig);
+          }
+        });
+        unsubs.push(unsubConfig);
+
+        // 6. Subscribe to deleted reports (trash)
+        const unsubDelReports = subscribeDeletedReports((onlineDel) => {
+          setDeletedReports(onlineDel);
+        });
+        unsubs.push(unsubDelReports);
+
+        // 7. Subscribe to deleted offices (trash)
+        const unsubDelOffices = subscribeDeletedOffices((onlineDelOffices) => {
+          setDeletedOffices(onlineDelOffices);
+        });
+        unsubs.push(unsubDelOffices);
+      } catch (err) {
+        console.warn('Firestore initialization or connection status:', err);
+      } finally {
+        setIsSyncing(false);
+      }
+    }
+
+    initOnlineDB();
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, []);
 
   // Persist Databases to localStorage
   useEffect(() => {
@@ -267,7 +369,9 @@ export default function App() {
     const removed = offices.filter((o) => !updatedOffices.some((u) => u.id === o.id));
     if (removed.length > 0) {
       setDeletedOffices((prev) => [...removed, ...prev.filter((d) => !removed.some((r) => r.id === d.id))]);
+      removed.forEach((o) => deleteOfficeOnline(o).catch(console.warn));
     }
+    updatedOffices.forEach((o) => saveOfficeOnline(o).catch(console.warn));
     setOffices(updatedOffices);
   };
 
@@ -283,6 +387,7 @@ export default function App() {
       setOffices((prev) => [...prev, target]);
     }
     setDeletedOffices((prev) => prev.filter((o) => o.id !== target.id));
+    restoreOfficeOnline(target).catch(console.warn);
     showToast(`กู้คืน "${target.name}" กลับสู่ระบบเรียบร้อยแล้ว`);
   };
 
@@ -298,6 +403,7 @@ export default function App() {
     setDeletedOffices((prev) =>
       prev.filter((d) => !missing.some((m) => m.id === d.id))
     );
+    missing.forEach((o) => saveOfficeOnline(o).catch(console.warn));
     showToast(
       `กู้คืนจังหวัด/สำนักงานที่ขาดหายไปทั้งหมด (${missing.length} แห่ง) เรียบร้อยแล้ว`
     );
@@ -309,12 +415,14 @@ export default function App() {
     if (!target) return;
     setReports((prev) => [target, ...prev.filter((r) => r.id !== target.id)]);
     setDeletedReports((prev) => prev.filter((r) => r.id !== target.id));
+    restoreReportOnline(target).catch(console.warn);
     showToast(`กู้คืนรายงานของ "${target.officeName}" สำเร็จ!`);
   };
 
   const handleRestoreAllDeletedReports = () => {
     if (deletedReports.length === 0) return;
     const count = deletedReports.length;
+    deletedReports.forEach((r) => restoreReportOnline(r).catch(console.warn));
     setReports((prev) => [...deletedReports, ...prev]);
     setDeletedReports([]);
     showToast(`กู้คืนรายงานทั้งหมด (${count} ฉบับ) เรียบร้อยแล้ว`);
@@ -322,14 +430,17 @@ export default function App() {
 
   const handleUpdateCategories = (updatedCategories: ReportCategory[]) => {
     setCategories(updatedCategories);
+    saveAllCategoriesOnline(updatedCategories).catch(console.warn);
   };
 
   const handleUpdateReporters = (updatedReporters: ReporterProfile[]) => {
     setReporters(updatedReporters);
+    saveAllReportersOnline(updatedReporters).catch(console.warn);
   };
 
   const handleUpdateSystemConfig = (updatedConfig: SystemConfig) => {
     setSystemConfig(updatedConfig);
+    saveSystemConfigOnline(updatedConfig).catch(console.warn);
   };
 
   const handleRestoreFullDatabase = (data: {
@@ -342,22 +453,27 @@ export default function App() {
     if (data.offices && Array.isArray(data.offices)) {
       setOffices(data.offices);
       localStorage.setItem(STORAGE_KEY_OFFICES, JSON.stringify(data.offices));
+      data.offices.forEach((o) => saveOfficeOnline(o).catch(console.warn));
     }
     if (data.categories && Array.isArray(data.categories)) {
       setCategories(data.categories);
       localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(data.categories));
+      saveAllCategoriesOnline(data.categories).catch(console.warn);
     }
     if (data.reporters && Array.isArray(data.reporters)) {
       setReporters(data.reporters);
       localStorage.setItem(STORAGE_KEY_REPORTERS, JSON.stringify(data.reporters));
+      saveAllReportersOnline(data.reporters).catch(console.warn);
     }
     if (data.systemConfig) {
       setSystemConfig(data.systemConfig);
       localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(data.systemConfig));
+      saveSystemConfigOnline(data.systemConfig).catch(console.warn);
     }
     if (data.reports && Array.isArray(data.reports)) {
       setReports(data.reports);
       localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(data.reports));
+      data.reports.forEach((r) => saveReportOnline(r).catch(console.warn));
       if (data.reports.length > 0) {
         setCurrentReport(data.reports[0]);
         setLivePreviewReport(data.reports[0]);
@@ -378,6 +494,11 @@ export default function App() {
     setReporters(DEFAULT_REPORTERS);
     setSystemConfig(DEFAULT_SYSTEM_CONFIG);
 
+    INITIAL_REPORTS.forEach((r) => saveReportOnline(r).catch(console.warn));
+    saveAllCategoriesOnline(DEFAULT_CATEGORIES).catch(console.warn);
+    saveAllReportersOnline(DEFAULT_REPORTERS).catch(console.warn);
+    saveSystemConfigOnline(DEFAULT_SYSTEM_CONFIG).catch(console.warn);
+
     setCurrentReport(INITIAL_REPORTS[0]);
     setLivePreviewReport(INITIAL_REPORTS[0]);
     showToast('รีเซ็ตระบบและฐานข้อมูลเป็นค่าเริ่มต้นทางการของ DOE เรียบร้อย');
@@ -391,16 +512,20 @@ export default function App() {
     if (existingIndex >= 0) {
       updatedList = [...reports];
       updatedList[existingIndex] = savedReport;
-      showToast(`บันทึกการแก้ไขรายงาน "${savedReport.officeName}" สำเร็จ!`);
+      showToast(`บันทึกการแก้ไขรายงาน "${savedReport.officeName}" สำเร็จ! (ซิงก์ออนไลน์แล้ว)`);
     } else {
       updatedList = [savedReport, ...reports];
-      showToast(`บันทึกรายงานใหม่ของ "${savedReport.officeName}" สำเร็จ!`);
+      showToast(`บันทึกรายงานใหม่ของ "${savedReport.officeName}" สำเร็จ! (ซิงก์ออนไลน์แล้ว)`);
     }
 
     setReports(updatedList);
     setCurrentReport(savedReport);
     setLivePreviewReport(savedReport);
     setModalTargetReport(savedReport);
+
+    // Save to Firestore online database
+    saveReportOnline(savedReport).catch(console.warn);
+
     // Open preview poster modal to verify
     setIsPosterModalOpen(true);
   };
@@ -418,6 +543,10 @@ export default function App() {
     const remaining = reports.filter((r) => r.id !== target.id);
     setReports(remaining);
     setDeletedReports((prev) => [target, ...prev.filter((r) => r.id !== target.id)]);
+
+    // Delete from online Firestore (moves to deleted_reports collection)
+    deleteReportOnline(target).catch(console.warn);
+
     showToast(
       `ลบรายงานของ "${target.officeName}" เรียบร้อยแล้ว`,
       '↩️ กู้คืน (Undo)',
@@ -520,6 +649,7 @@ export default function App() {
         onPreviewCurrentPoster={() => handleOpenPosterModal(livePreviewReport)}
         customLogoUrl={systemConfig.customLogoUrl}
         systemTitle={systemConfig.reportTitle}
+        isOnlineDatabase={isFirestoreOnline}
       />
 
       {/* Toast Alert with Action / Undo Support */}

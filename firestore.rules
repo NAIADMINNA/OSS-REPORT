@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection health check document
+    match /test/connection {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Daily DOE Reports
+    match /reports/{reportId} {
+      allow read: if isValidId(reportId);
+      allow create: if isValidId(reportId)
+        && incoming().id is string
+        && incoming().reportDate is string
+        && incoming().officeId is string
+        && incoming().officeName is string
+        && incoming().reporterName is string;
+      allow update: if isValidId(reportId)
+        && incoming().id == existing().id;
+      allow delete: if isValidId(reportId);
+    }
+
+    // Employment Offices & Mobile Units
+    match /offices/{officeId} {
+      allow read: if isValidId(officeId);
+      allow create: if isValidId(officeId)
+        && incoming().id is string
+        && incoming().name is string
+        && incoming().region is string;
+      allow update: if isValidId(officeId)
+        && incoming().id == existing().id;
+      allow delete: if isValidId(officeId);
+    }
+
+    // Work Permit Report Categories
+    match /categories/{categoryId} {
+      allow read: if isValidId(categoryId);
+      allow create: if isValidId(categoryId)
+        && incoming().id is string
+        && incoming().code is string
+        && incoming().title is string;
+      allow update: if isValidId(categoryId)
+        && incoming().id == existing().id;
+      allow delete: if isValidId(categoryId);
+    }
+
+    // Reporters Directory
+    match /reporters/{reporterId} {
+      allow read: if isValidId(reporterId);
+      allow create: if isValidId(reporterId)
+        && incoming().id is string
+        && incoming().name is string
+        && incoming().position is string;
+      allow update: if isValidId(reporterId)
+        && incoming().id == existing().id;
+      allow delete: if isValidId(reporterId);
+    }
+
+    // System Branding & Config
+    match /system_config/{configId} {
+      allow read: if isValidId(configId);
+      allow create, update: if isValidId(configId)
+        && incoming().reportTitle is string
+        && incoming().adminPin is string;
+      allow delete: if false;
+    }
+
+    // Recycle bin archive for deleted reports
+    match /deleted_reports/{reportId} {
+      allow read, write: if isValidId(reportId);
+    }
+
+    // Recycle bin archive for deleted offices
+    match /deleted_offices/{officeId} {
+      allow read, write: if isValidId(officeId);
+    }
+  }
+}

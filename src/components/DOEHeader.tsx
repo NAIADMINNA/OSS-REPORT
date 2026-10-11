@@ -11,6 +11,7 @@ interface DOEHeaderProps {
   onPreviewCurrentPoster?: () => void;
   customLogoUrl?: string | null;
   systemTitle?: string;
+  isOnlineDatabase?: boolean;
 }
 
 export const DOEHeader: React.FC<DOEHeaderProps> = ({
@@ -20,6 +21,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
   onPreviewCurrentPoster,
   customLogoUrl,
   systemTitle,
+  isOnlineDatabase = true,
 }) => {
   return (
     <header className="bg-gradient-to-r from-blue-700 via-indigo-700 to-sky-700 text-white shadow-md sticky top-0 z-30 border-b border-sky-400/30">
@@ -42,6 +44,12 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
                 <span className="text-sm text-sky-100 font-medium hidden sm:inline">
                   กรมการจัดหางาน กระทรวงแรงงาน
                 </span>
+                {isOnlineDatabase && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 backdrop-blur-xs">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    ฐานข้อมูลออนไลน์ (Cloud Firestore)
+                  </span>
+                )}
               </div>
               <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white leading-tight mt-0.5 font-['Prompt']">
                 {systemTitle || 'ระบบรายงานผลการปฏิบัติงานศูนย์บริการคนต่างด้าว'}

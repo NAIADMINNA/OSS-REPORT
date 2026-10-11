@@ -1,0 +1,225 @@
+{
+  "entities": {
+    "Report": {
+      "title": "DOEReport",
+      "description": "Daily work permit service and queue statistic report submitted by employment offices",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique report ID"
+        },
+        "reportDate": {
+          "type": "string",
+          "description": "Date of report in YYYY-MM-DD format"
+        },
+        "reportDateThaiStr": {
+          "type": "string",
+          "description": "Thai formatted date string"
+        },
+        "officeId": {
+          "type": "string",
+          "description": "Employment office identifier"
+        },
+        "officeName": {
+          "type": "string",
+          "description": "Thai name of the employment office"
+        },
+        "officeNameEn": {
+          "type": "string",
+          "description": "English name of the employment office"
+        },
+        "centerName": {
+          "type": "string",
+          "description": "Name of the service center or mobile unit"
+        },
+        "region": {
+          "type": "string",
+          "description": "Administrative region of the office"
+        },
+        "reporterName": {
+          "type": "string",
+          "description": "Name of the reporting officer"
+        },
+        "reporterPosition": {
+          "type": "string",
+          "description": "Position of the reporting officer"
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "Contact phone number"
+        },
+        "lineId": {
+          "type": "string",
+          "description": "LINE ID for contact"
+        },
+        "section59": {
+          "type": "number",
+          "description": "Work permits issued under Section 59"
+        },
+        "section62": {
+          "type": "number",
+          "description": "Work permits issued under Section 62"
+        },
+        "section63_1": {
+          "type": "number",
+          "description": "Work permits issued under Section 63/1"
+        },
+        "section63_2": {
+          "type": "number",
+          "description": "Work permits issued under Section 63/2"
+        },
+        "section64": {
+          "type": "number",
+          "description": "Work permits issued under Section 64"
+        },
+        "modifyDetails": {
+          "type": "number",
+          "description": "Permit details modified count"
+        },
+        "substituteCard": {
+          "type": "number",
+          "description": "Substitute permit cards issued"
+        },
+        "queueAppointment": {
+          "type": "number",
+          "description": "Total booked queue appointments"
+        },
+        "cardsIssued": {
+          "type": "number",
+          "description": "Total cards issued today"
+        },
+        "identityVerified": {
+          "type": "number",
+          "description": "Identities verified today"
+        },
+        "cardsNotIssued": {
+          "type": "number",
+          "description": "Cards not issued today"
+        },
+        "missedAppointment": {
+          "type": "number",
+          "description": "Appointments missed today"
+        },
+        "wrongAppointmentDate": {
+          "type": "number",
+          "description": "Wrong appointment date count"
+        },
+        "cumulativeCardsIssued": {
+          "type": "number",
+          "description": "Cumulative cards issued count"
+        },
+        "cumulativeSinceDate": {
+          "type": "string",
+          "description": "Cumulative start date"
+        },
+        "customCategoryValues": {
+          "type": "object",
+          "description": "Dynamic custom category values"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Additional remarks or notes"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "reportDate", "officeId", "officeName", "reporterName"]
+    },
+    "EmploymentOffice": {
+      "title": "EmploymentOffice",
+      "description": "Provincial employment office or mobile unit",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Office unique identifier" },
+        "name": { "type": "string", "description": "Thai office name" },
+        "nameEn": { "type": "string", "description": "English office name" },
+        "centerName": { "type": "string", "description": "Center or mobile unit name" },
+        "region": { "type": "string", "description": "Region name" },
+        "defaultPhone": { "type": "string", "description": "Default phone number" },
+        "defaultLine": { "type": "string", "description": "Default LINE ID" }
+      },
+      "required": ["id", "name", "region"]
+    },
+    "ReportCategory": {
+      "title": "ReportCategory",
+      "description": "Work permit category or section classification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Category ID" },
+        "code": { "type": "string", "description": "Short code" },
+        "title": { "type": "string", "description": "Category title" },
+        "subLabel": { "type": "string", "description": "Category sublabel description" },
+        "color": { "type": "string", "description": "Color theme indicator" },
+        "iconName": { "type": "string", "description": "Icon key name" },
+        "isActive": { "type": "boolean", "description": "Is active flag" },
+        "isDefault": { "type": "boolean", "description": "Is system default flag" }
+      },
+      "required": ["id", "code", "title", "isActive"]
+    },
+    "ReporterProfile": {
+      "title": "ReporterProfile",
+      "description": "Reporting officer contact directory",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Reporter profile ID" },
+        "name": { "type": "string", "description": "Officer name" },
+        "position": { "type": "string", "description": "Officer position" },
+        "phoneNumber": { "type": "string", "description": "Officer phone number" },
+        "lineId": { "type": "string", "description": "Officer LINE ID" },
+        "officeId": { "type": "string", "description": "Affiliated office ID" }
+      },
+      "required": ["id", "name", "position"]
+    },
+    "SystemConfig": {
+      "title": "SystemConfig",
+      "description": "Global system branding, title, and admin settings",
+      "type": "object",
+      "properties": {
+        "reportTitle": { "type": "string", "description": "Primary report title" },
+        "reportSubtitle": { "type": "string", "description": "Report subtitle" },
+        "departmentNameTh": { "type": "string", "description": "Thai department name" },
+        "departmentNameEn": { "type": "string", "description": "English department name" },
+        "customLogoUrl": { "type": "string", "description": "Custom logo URL or data URI" },
+        "adminPin": { "type": "string", "description": "Admin security PIN" }
+      },
+      "required": ["reportTitle", "departmentNameTh", "adminPin"]
+    }
+  },
+  "firestore": {
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Daily DOE work permit reports submitted across provinces"
+    },
+    "/offices/{officeId}": {
+      "schema": "EmploymentOffice",
+      "description": "List of active provincial employment offices and mobile service units"
+    },
+    "/categories/{categoryId}": {
+      "schema": "ReportCategory",
+      "description": "Customizable categories and legal sections for work permit statistics"
+    },
+    "/reporters/{reporterId}": {
+      "schema": "ReporterProfile",
+      "description": "Profiles and contact details of reporting officers"
+    },
+    "/system_config/{configId}": {
+      "schema": "SystemConfig",
+      "description": "Global branding and administrative configurations"
+    },
+    "/deleted_reports/{reportId}": {
+      "schema": "Report",
+      "description": "Recycle bin archive for deleted reports with restoration ability"
+    },
+    "/deleted_offices/{officeId}": {
+      "schema": "EmploymentOffice",
+      "description": "Recycle bin archive for deleted offices with restoration ability"
+    }
+  }
+}
