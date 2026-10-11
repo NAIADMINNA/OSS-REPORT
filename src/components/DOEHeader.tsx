@@ -22,7 +22,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
   systemTitle,
 }) => {
   return (
-    <header className="bg-gradient-to-r from-[#0A162B] via-[#0F2856] to-[#0D1C38] text-white shadow-md sticky top-0 z-30 border-b border-sky-900/40">
+    <header className="bg-gradient-to-r from-blue-700 via-indigo-700 to-sky-700 text-white shadow-md sticky top-0 z-30 border-b border-sky-400/30">
       <div className="w-full max-w-[1780px] 2xl:max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 py-2.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Brand & Emblem */}
@@ -36,10 +36,10 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-black tracking-wider uppercase bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 px-2.5 py-0.5 rounded-md shadow-2xs">
+                <span className="text-xs font-black tracking-wider uppercase bg-amber-400 text-slate-950 px-2.5 py-0.5 rounded-md shadow-xs">
                   DOE Report System
                 </span>
-                <span className="text-sm text-sky-200/90 font-medium hidden sm:inline">
+                <span className="text-sm text-sky-100 font-medium hidden sm:inline">
                   กรมการจัดหางาน กระทรวงแรงงาน
                 </span>
               </div>
@@ -50,13 +50,13 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
           </div>
 
           {/* Navigation Tabs */}
-          <nav className="flex items-center gap-1.5 bg-slate-950/50 p-1.5 rounded-2xl border border-white/10 shadow-inner text-sm">
+          <nav className="flex items-center gap-1.5 bg-white/15 backdrop-blur-md p-1.5 rounded-2xl border border-white/25 shadow-xs text-sm">
             <button
               onClick={() => onTabChange('dashboard')}
               className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'dashboard'
-                  ? 'bg-sky-500 text-white shadow-xs ring-1 ring-sky-300/40 text-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-white/10 text-sm'
+                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
+                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
               }`}
             >
               <LayoutDashboard className="w-4 h-4" />
@@ -67,8 +67,8 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
               onClick={() => onTabChange('form')}
               className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'form'
-                  ? 'bg-sky-500 text-white shadow-xs ring-1 ring-sky-300/40 text-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-white/10 text-sm'
+                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
+                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
               }`}
             >
               <FileEdit className="w-4 h-4" />
@@ -79,14 +79,14 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
               onClick={() => onTabChange('history')}
               className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'history'
-                  ? 'bg-sky-500 text-white shadow-xs ring-1 ring-sky-300/40 text-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-white/10 text-sm'
+                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
+                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
               }`}
             >
               <FolderClock className="w-4 h-4" />
               <span>ประวัติรายงาน</span>
               <span className={`text-xs px-2 py-0.5 rounded-full font-mono font-bold ${
-                activeTab === 'history' ? 'bg-white/20 text-white' : 'bg-slate-800 text-slate-300'
+                activeTab === 'history' ? 'bg-blue-100 text-blue-900' : 'bg-white/20 text-white'
               }`}>
                 {reportCount}
               </span>
@@ -96,8 +96,8 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
               onClick={() => onTabChange('admin')}
               className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'admin'
-                  ? 'bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 shadow-xs ring-1 ring-amber-300/50 text-sm'
-                  : 'text-amber-300 hover:text-white hover:bg-white/10 text-sm'
+                  ? 'bg-amber-400 text-slate-950 shadow-sm ring-1 ring-amber-300 font-extrabold text-sm'
+                  : 'text-amber-200 hover:text-white hover:bg-white/15 text-sm font-semibold'
               }`}
             >
               <ShieldCheck className="w-4 h-4" />

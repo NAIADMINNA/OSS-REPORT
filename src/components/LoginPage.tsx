@@ -96,32 +96,32 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0F172A] via-[#1E293B] to-[#0F2042] flex flex-col justify-between p-4 sm:p-6 lg:p-8 font-sans">
+    <div className="min-h-screen bg-gradient-to-br from-blue-700 via-indigo-700 to-sky-700 flex flex-col justify-between p-4 sm:p-6 lg:p-8 font-sans">
       {/* Background Glow */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-blue-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 left-1/4 w-[500px] h-[500px] bg-amber-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-sky-300/20 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 left-1/4 w-[500px] h-[500px] bg-amber-300/20 rounded-full blur-3xl" />
       </div>
 
       {/* Main Center Card */}
       <div className="max-w-4xl w-full mx-auto relative z-10 my-auto">
         {/* Emblem & Title */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center p-3 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 shadow-2xl mb-4">
+          <div className="inline-flex items-center justify-center p-3 rounded-2xl bg-white/15 backdrop-blur-md border border-white/25 shadow-2xl mb-4">
             <DOELogo size={84} />
           </div>
           <div className="flex items-center justify-center gap-2 mb-1">
             <span className="text-[11px] font-extrabold uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-mono shadow-xs">
               DOE REPORTING PORTAL
             </span>
-            <span className="text-xs text-sky-300 font-semibold">
+            <span className="text-xs text-sky-100 font-semibold">
               กรมการจัดหางาน กระทรวงแรงงาน
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight font-['Prompt']">
             ระบบรายงานผลการปฏิบัติงานศูนย์บริการคนต่างด้าว
           </h1>
-          <p className="text-sm text-slate-300 mt-2 max-w-xl mx-auto">
+          <p className="text-sm text-sky-100 mt-2 max-w-xl mx-auto">
             เข้าสู่ระบบตามระดับสิทธิ์การใช้งานเพื่อความปลอดภัยและความถูกต้องของข้อมูลสถิติ
           </p>
         </div>
@@ -135,7 +135,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
               onClick={() => setSelectedRole('provincial_officer')}
               className={`py-3.5 px-4 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
                 selectedRole === 'provincial_officer'
-                  ? 'bg-blue-900 text-white shadow-md'
+                  ? 'bg-blue-600 text-white shadow-md'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >

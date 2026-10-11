@@ -114,5 +114,5 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   departmentNameTh: 'กรมการจัดหางาน กระทรวงแรงงาน',
   departmentNameEn: 'DEPARTMENT OF EMPLOYMENT',
   customLogoUrl: null,
-  adminPin: '1234',
+  adminPin: 'admin',
 };

@@ -1,4 +1,4 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useMemo } from 'react';
 import { DOEReport, ReportCategory, SystemConfig } from '../types/doe';
 import { DOELogo } from './DOELogo';
 import { formatNumber, formatThaiDateFull } from '../utils/thaiDate';
@@ -168,6 +168,13 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
 
     const rawDateStr = report.reportDateThaiStr || formatThaiDateFull(report.reportDate);
     const isCycle =
+      report.id?.includes('cycle') ||
+      report.id?.includes('overview') ||
+      report.officeId === 'overview' ||
+      report.officeName?.includes('ภาพรวม') ||
+      rawDateStr.includes('สะสม') ||
+      rawDateStr.includes('ภาพรวม') ||
+      rawDateStr.includes('รอบ') ||
       rawDateStr.includes('ประจำรอบ') ||
       rawDateStr.includes('รอบที่') ||
       rawDateStr.includes('รอบสัปดาห์') ||
@@ -208,6 +215,9 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
     } else if (rawDateStr.startsWith('ประจำรอบวันที่ ')) {
       cycleBadge = 'ประจำรอบการรายงาน';
       cleanDateText = rawDateStr.replace('ประจำรอบวันที่ ', 'วันที่ ').trim();
+    } else if (rawDateStr.startsWith('ช่วงวันที่: ')) {
+      cycleBadge = 'ประจำช่วงวันที่รายงาน';
+      cleanDateText = rawDateStr.replace('ช่วงวันที่: ', '').trim();
     } else if (rawDateStr.startsWith('ประจำรอบ: ')) {
       cycleBadge = 'ประจำรอบการรายงาน';
       cleanDateText = rawDateStr.replace('ประจำรอบ: ', '').trim();
@@ -227,6 +237,113 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
       cleanDateText = `วันที่ ${cleanDateText}`;
     }
 
+    // Dynamic font size calculation for officeName to prevent awkward text wrapping when text is long
+    const officeNameFontSize = useMemo(() => {
+      const text = report.officeName || '';
+      const len = text.trim().length;
+      if (len <= 24) return 22;
+      if (len <= 28) return 20;
+      if (len <= 32) return 18;
+      if (len <= 38) return 16;
+      if (len <= 44) return 14.5;
+      if (len <= 52) return 13.5;
+      if (len <= 62) return 12.5;
+      return 11.5;
+    }, [report.officeName]);
+
+    const officeNameEnFontSize = useMemo(() => {
+      const text = report.officeNameEn || '';
+      const len = text.trim().length;
+      if (len <= 35) return 12;
+      if (len <= 45) return 11;
+      if (len <= 55) return 10;
+      return 9.5;
+    }, [report.officeNameEn]);
+
+    // Center name display logic for beautiful multiline rendering when text is long or wraps
+    const centerNameDisplay = useMemo(() => {
+      const name = report.centerName || '';
+      if (!name) {
+        return { isMultiline: false, line1: '', line2: '', hasSeparator: false, fontSize: '12px', marginTop: '23px' };
+      }
+
+      // Check for Mobile Unit (หน่วยบริการเคลื่อนที่)
+      if (
+        name.includes('Mobile Unit') ||
+        (name.includes('หน่วยบริการ') && name.includes('เคลื่อนที่'))
+      ) {
+        let line1 = 'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่';
+        let line2 = '(Mobile Unit)';
+        if (name.includes('(Mobile Unit)')) {
+          const parts = name.split('(Mobile Unit)');
+          line1 = parts[0].trim() || 'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่';
+          const suffix = parts.slice(1).join('(Mobile Unit)').trim();
+          line2 = suffix ? `(Mobile Unit) ${suffix}` : '(Mobile Unit)';
+        } else if (name.includes(' - ')) {
+          const [p1, ...rest] = name.split(' - ');
+          line1 = p1.trim();
+          line2 = rest.join(' - ').trim();
+        }
+        return {
+          isMultiline: true,
+          line1,
+          line2,
+          hasSeparator: true,
+          fontSize: line2.length > 35 ? '10px' : '11px',
+          marginTop: '4px',
+        };
+      }
+
+      // Check for separator " - " (e.g. Bangkok centers and branches)
+      if (name.includes(' - ')) {
+        const [p1, ...rest] = name.split(' - ');
+        const line2Text = rest.join(' - ').trim();
+        return {
+          isMultiline: true,
+          line1: p1.trim(),
+          line2: line2Text,
+          hasSeparator: true,
+          fontSize: line2Text.length > 40 ? '10px' : '11px',
+          marginTop: '4px',
+        };
+      }
+
+      // Check for " จังหวัด" separation if name is long
+      if (name.includes(' จังหวัด') && name.length > 32) {
+        const [p1, p2] = name.split(' จังหวัด');
+        return {
+          isMultiline: true,
+          line1: p1.trim(),
+          line2: `จังหวัด${p2}`.trim(),
+          hasSeparator: false,
+          fontSize: '11px',
+          marginTop: '6px',
+        };
+      }
+
+      // If text is long enough to wrap (> 34 characters)
+      if (name.length > 34) {
+        return {
+          isMultiline: true,
+          line1: name,
+          line2: '',
+          hasSeparator: false,
+          fontSize: name.length > 50 ? '10px' : '11px',
+          marginTop: '8px',
+        };
+      }
+
+      // Single line standard
+      return {
+        isMultiline: false,
+        line1: name,
+        line2: '',
+        hasSeparator: false,
+        fontSize: '12px',
+        marginTop: '23px',
+      };
+    }, [report.centerName]);
+
     return (
       <div
         ref={ref}
@@ -241,24 +358,32 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
 
         {/* 1. TOP HEADER: Clean Light Style */}
         <div className="relative z-10">
-          <div className="flex items-center justify-between pb-5 border-b border-slate-200 mb-5">
-            <div className="flex items-center gap-4">
+          <div className="flex items-center justify-between pb-5 border-b border-slate-200 mb-5 gap-3">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
               <div className="shrink-0 p-1 rounded-2xl bg-gradient-to-tr from-amber-400/20 via-sky-400/20 to-transparent border border-slate-200 shadow-xs">
                 <DOELogo size={68} customLogoUrl={effectiveLogoUrl} />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-900 text-white font-mono shadow-2xs">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-900 text-white font-mono shadow-2xs shrink-0">
                     {systemConfig?.departmentNameEn || 'DEPARTMENT OF EMPLOYMENT'}
                   </span>
-                  <span className="text-[11px] font-bold tracking-wide text-sky-800">
+                  <span className="text-[11px] font-bold tracking-wide text-sky-800 truncate">
                     {systemConfig?.departmentNameTh || 'กรมการจัดหางาน กระทรวงแรงงาน'}
                   </span>
                 </div>
-                <h1 className="text-[22px] font-black tracking-tight leading-tight mt-1 text-[#1e3a8a] font-['Prompt']">
+                <h1
+                  style={{ fontSize: `${officeNameFontSize}px`, lineHeight: 1.25 }}
+                  className="font-black tracking-tight mt-1 text-[#1e3a8a] font-['Prompt'] whitespace-nowrap transition-all"
+                  title={report.officeName}
+                >
                   {report.officeName}
                 </h1>
-                <p className="text-[12px] font-medium tracking-wide text-slate-500">
+                <p
+                  style={{ fontSize: `${officeNameEnFontSize}px` }}
+                  className="font-medium tracking-wide text-slate-500 whitespace-nowrap transition-all"
+                  title={report.officeNameEn}
+                >
                   {report.officeNameEn}
                 </p>
               </div>
@@ -329,11 +454,23 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
               <div className="min-w-0 pr-3">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span
-                    style={{ width: '400.667px' }}
-                    className="text-[11px] font-extrabold uppercase tracking-wide text-amber-800 bg-amber-50 px-2.5 py-0.5 rounded-md border border-amber-200 inline-flex items-center gap-1.5 shadow-2xs font-['Prompt']"
+                    className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-sky-50 via-indigo-50/70 to-blue-50/80 border border-sky-200/90 text-sky-950 shadow-xs ring-1 ring-sky-100/70 font-['Prompt'] transition-all"
                   >
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                    <span style={{ width: '329px' }}>
+                    <span className="relative flex h-2 w-2 shrink-0">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-60" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-600" />
+                    </span>
+                    <span
+                      style={{
+                        fontSize:
+                          (systemConfig?.reportSubtitle?.length || 0) > 45
+                            ? '10px'
+                            : (systemConfig?.reportSubtitle?.length || 0) > 30
+                            ? '10.5px'
+                            : '11.5px',
+                      }}
+                      className="font-extrabold tracking-wide text-[#0f2856] whitespace-nowrap leading-normal"
+                    >
                       {systemConfig?.reportSubtitle ||
                         (isCycle
                           ? 'รายงานสรุปผลการดำเนินงานประจำรอบ'
@@ -341,10 +478,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                     </span>
                   </span>
                   {isCycle && (
-                    <span
-                      style={{ width: '97.4375px' }}
-                      className="text-[11px] font-black text-blue-900 bg-blue-100/90 px-2.5 py-0.5 rounded-md border border-blue-300 shadow-2xs font-['Prompt'] inline-flex items-center justify-center text-center"
-                    >
+                    <span className="text-[11px] font-black text-blue-900 bg-blue-100/90 px-2.5 py-0.5 rounded-md border border-blue-300 shadow-2xs font-['Prompt'] inline-flex items-center justify-center text-center">
                       {cycleBadge}
                     </span>
                   )}
@@ -354,9 +488,35 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                     'รายงานผลการปฏิบัติงานศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'}
                 </h2>
               </div>
-              <div className="text-right shrink-0 flex flex-col items-end justify-center">
-                <span className="text-xs font-bold px-3 py-1 rounded-lg border bg-blue-50 border-blue-200 text-blue-900 shadow-2xs">
-                  {report.centerName}
+              <div className="text-right shrink-0 flex flex-col items-end justify-center max-w-[340px]">
+                <span
+                  style={{
+                    fontSize: centerNameDisplay.fontSize,
+                    marginTop: centerNameDisplay.marginTop,
+                    lineHeight: centerNameDisplay.isMultiline ? '1.3' : '1.25',
+                  }}
+                  className={`font-bold pl-[12px] pr-[13px] -ml-[12px] mr-[1px] rounded-lg border bg-gradient-to-b from-blue-50/95 to-blue-100/60 border-blue-200/90 text-blue-900 shadow-2xs max-w-full text-right transition-all ${
+                    centerNameDisplay.isMultiline
+                      ? 'py-[5px] inline-flex flex-col items-end'
+                      : 'py-[6px] inline-block'
+                  }`}
+                  title={report.centerName}
+                >
+                  {centerNameDisplay.isMultiline && centerNameDisplay.line2 ? (
+                    <>
+                      <span className="font-bold tracking-tight text-blue-950 block leading-tight">
+                        {centerNameDisplay.line1}
+                      </span>
+                      <span className="font-semibold text-[10px] text-blue-700/90 mt-0.5 flex items-center justify-end gap-1 leading-tight">
+                        {centerNameDisplay.hasSeparator && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                        )}
+                        <span className="truncate max-w-[310px]">{centerNameDisplay.line2}</span>
+                      </span>
+                    </>
+                  ) : (
+                    <span>{report.centerName}</span>
+                  )}
                 </span>
                 {isCycle && (
                   <span className="text-[10px] font-semibold text-slate-500 mt-1 flex items-center gap-1">
@@ -655,9 +815,11 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                 <span>
                   ผู้รายงาน: {isCycle ? 'สำนักบริหารแรงงานต่างด้าว' : (report.reporterName || '-')}
                 </span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300">
-                  {isCycle ? 'ประมวลผลส่วนกลาง' : 'ตรวจสอบแล้ว'}
-                </span>
+                {!isCycle && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    ตรวจสอบแล้ว
+                  </span>
+                )}
               </div>
               <div className="text-[11px] text-slate-500">
                 ตำแหน่ง: {isCycle ? 'กรมการจัดหางาน กระทรวงแรงงาน' : (report.reporterPosition || '-')}
@@ -667,10 +829,14 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
 
           {/* Contact Badges */}
           <div className="flex items-center gap-3">
-            {(isCycle || report.phoneNumber) && (
+            {(isCycle || report.phoneNumber || report.reporterName === 'สำนักบริหารแรงงานต่างด้าว') && (
               <div className="flex items-center gap-1.5 font-semibold text-rose-800 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200">
                 <Phone className="w-3.5 h-3.5 text-rose-700" />
-                <span className="text-xs">{isCycle ? '02-354-0082' : report.phoneNumber}</span>
+                <span className="text-xs">
+                  {isCycle || report.reporterName === 'สำนักบริหารแรงงานต่างด้าว'
+                    ? '02-354-0082'
+                    : report.phoneNumber}
+                </span>
               </div>
             )}
           </div>

@@ -27,12 +27,13 @@ import { PosterPreviewModal } from './components/PosterPreviewModal';
 import { ExportLineModal } from './components/ExportLineModal';
 import { AdminConsole } from './components/AdminConsole';
 import { ConfirmDialogModal } from './components/ConfirmDialogModal';
-import { formatThaiDateFull } from './utils/thaiDate';
+import { formatThaiDateFull, getTodayIsoDate } from './utils/thaiDate';
 import {
   Eye,
   CheckCircle,
   Maximize2,
   FileText,
+  Truck,
 } from 'lucide-react';
 
 const STORAGE_KEY_REPORTS = 'doe_work_permit_reports_v1';
@@ -51,6 +52,12 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
+          const today = getTodayIsoDate();
+          const hasToday = parsed.some((r: DOEReport) => r.reportDate === today);
+          if (!hasToday) {
+            const todaySeed = INITIAL_REPORTS.filter((r) => r.reportDate === today);
+            return [...todaySeed, ...parsed];
+          }
           return parsed;
         }
       }
@@ -67,7 +74,19 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          // Merge with latest EMPLOYMENT_OFFICES defaults to update centerNames and include new centers, preserving custom offices
+          const updated = [...parsed].map((o: EmploymentOffice) =>
+            o.region === 'ส่วนกลาง' ? { ...o, region: 'เฉพาะกิจ' as const } : o
+          );
+          for (const defaultOffice of EMPLOYMENT_OFFICES) {
+            const idx = updated.findIndex((o: EmploymentOffice) => o.id === defaultOffice.id);
+            if (idx >= 0) {
+              updated[idx] = { ...updated[idx], ...defaultOffice };
+            } else {
+              updated.push(defaultOffice);
+            }
+          }
+          return updated;
         }
       }
     } catch (e) {
@@ -115,7 +134,11 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object') {
-          return { ...DEFAULT_SYSTEM_CONFIG, ...parsed };
+          const config = { ...DEFAULT_SYSTEM_CONFIG, ...parsed };
+          if (!config.adminPin || config.adminPin === '1234') {
+            config.adminPin = 'admin';
+          }
+          return config;
         }
       }
     } catch (e) {
@@ -501,8 +524,8 @@ export default function App() {
 
       {/* Toast Alert with Action / Undo Support */}
       {toastState && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl border border-slate-700 flex items-center gap-3 text-xs font-semibold animate-in slide-in-from-bottom duration-200">
-          <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+        <div className="fixed bottom-6 right-6 z-50 bg-white text-slate-800 px-4 py-3 rounded-xl shadow-xl border border-slate-200 ring-1 ring-slate-950/5 flex items-center gap-3 text-xs font-semibold animate-in slide-in-from-bottom duration-200">
+          <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
           <span>{toastState.message}</span>
           {toastState.actionLabel && toastState.onAction && (
             <button
@@ -579,9 +602,14 @@ export default function App() {
               <div className="xl:col-span-5 hidden xl:block sticky top-20">
                 <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-xs space-y-2">
                   <div className="flex items-center justify-between px-2 pt-1">
-                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 flex-wrap">
                       <Eye className="w-3.5 h-3.5 text-sky-600" />
                       <span>ตัวอย่างโปสเตอร์ Clean Light (อัปเดตสด)</span>
+                      {livePreviewReport.centerName?.includes('Mobile Unit') && (
+                        <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-semibold border border-emerald-200 flex items-center gap-1">
+                          <Truck className="w-2.5 h-2.5" /> Mobile Unit
+                        </span>
+                      )}
                     </span>
 
                     <button

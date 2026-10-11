@@ -139,6 +139,8 @@ export function generateLineSummaryText(report: DOEReport): string {
 
   const dateLabel = report.reportDateThaiStr || formatThaiDateFull(report.reportDate);
   const isCycle =
+    report.id?.includes('cycle') ||
+    dateLabel.includes('รอบ') ||
     dateLabel.includes('ประจำรอบ') ||
     dateLabel.includes('รอบที่') ||
     dateLabel.includes('รอบสัปดาห์') ||

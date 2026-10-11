@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useId, useMemo } from 'react';
 import { DOEReport, EmploymentOffice, ReportCategory, ReporterProfile } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
-import { formatThaiDateFull, formatNumber } from '../utils/thaiDate';
+import { formatThaiDateFull, formatNumber, getTodayIsoDate } from '../utils/thaiDate';
 import {
   Save,
   User,
@@ -14,7 +14,12 @@ import {
   CheckCircle2,
   Plus,
   Minus,
+  Truck,
+  RotateCcw,
 } from 'lucide-react';
+
+export const MOBILE_UNIT_CENTER_NAME =
+  'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit)';
 
 interface ReportFormProps {
   initialReport?: DOEReport | null;
@@ -58,9 +63,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     ];
   }, [categories]);
 
+  const todayIso = getTodayIsoDate();
+
   const [formData, setFormData] = useState<Omit<DOEReport, 'id' | 'createdAt' | 'updatedAt'>>({
-    reportDate: initialReport?.reportDate || '2026-10-07',
-    reportDateThaiStr: initialReport?.reportDateThaiStr || 'วันพุธที่ 7 ตุลาคม 2569',
+    reportDate: initialReport?.reportDate || todayIso,
+    reportDateThaiStr: initialReport?.reportDateThaiStr || formatThaiDateFull(todayIso),
     officeId: initialReport?.officeId || 'chiangrai',
     officeName: initialReport?.officeName || 'สำนักงานจัดหางานจังหวัดเชียงราย',
     officeNameEn: initialReport?.officeNameEn || 'Chiangrai Provincial Employment Office',
@@ -95,10 +102,10 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     if (initialReport) {
       setSelectedOfficeId(initialReport.officeId || 'chiangrai');
       setFormData({
-        reportDate: initialReport.reportDate || '2026-10-07',
+        reportDate: initialReport.reportDate || todayIso,
         reportDateThaiStr:
           initialReport.reportDateThaiStr ||
-          formatThaiDateFull(initialReport.reportDate),
+          formatThaiDateFull(initialReport.reportDate || todayIso),
         officeId: initialReport.officeId || 'chiangrai',
         officeName: initialReport.officeName || 'สำนักงานจัดหางานจังหวัดเชียงราย',
         officeNameEn:
@@ -157,13 +164,16 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     if (office) {
       // Check if a registered reporter belongs to this office
       const matchingReporter = reporters?.find((r) => r.officeId === office.id);
+      const isMobile =
+        formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+        formData.centerName.includes('Mobile Unit');
 
       const updated = {
         ...formData,
         officeId: office.id,
         officeName: office.name,
         officeNameEn: office.nameEn,
-        centerName: office.centerName,
+        centerName: isMobile ? formData.centerName : office.centerName,
         region: office.region,
         phoneNumber: matchingReporter?.phoneNumber || office.defaultPhone || formData.phoneNumber,
         lineId: matchingReporter?.lineId || office.defaultLine || formData.lineId,
@@ -266,7 +276,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
           {/* สำนักงานจัดหางาน */}
           <div className="md:col-span-2">
             <label htmlFor={searchInputId} className="block text-sm font-bold text-slate-800 mb-1.5">
-              สำนักงานจัดหางาน (76 จังหวัด + กทม. 10 พื้นที่ + ส่วนกลาง) <span className="text-rose-500">*</span>
+              สำนักงานจัดหางาน (76 จังหวัด + กทม. 10 พื้นที่) <span className="text-rose-500">*</span>
             </label>
             <div className="space-y-2">
               <input
@@ -311,21 +321,152 @@ export const ReportForm: React.FC<ReportFormProps> = ({
           </div>
 
           {/* ชื่อศูนย์บริการ */}
-          <div>
-            <label className="block text-sm font-bold text-slate-800 mb-1">
-              ชื่อศูนย์บริการ (ระบุในหัวเรื่องโปสเตอร์)
-            </label>
-            <input
-              type="text"
-              value={formData.centerName}
-              onChange={(e) => {
-                const updated = { ...formData, centerName: e.target.value };
-                setFormData(updated);
-                triggerPreview(updated);
-              }}
-              className="w-full min-w-0 text-sm px-3.5 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
-              placeholder="ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดเชียงราย"
-            />
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-bold text-slate-800">
+                ชื่อศูนย์บริการ (ระบุในหัวเรื่องโปสเตอร์)
+              </label>
+              {formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+              formData.centerName?.includes('Mobile Unit') ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  <Truck className="w-3 h-3" />
+                  หน่วยบริการเคลื่อนที่
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-sky-100 text-sky-800 border border-sky-200">
+                  <Building2 className="w-3 h-3" />
+                  ชื่อศูนย์ตามระบุ
+                </span>
+              )}
+            </div>
+
+            {/* Selector: ชื่อศูนย์ตามระบุ vs หน่วยบริการเคลื่อนที่ (Mobile Unit) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
+                  const targetName =
+                    currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+                  const updated = { ...formData, centerName: targetName };
+                  setFormData(updated);
+                  triggerPreview(updated);
+                }}
+                className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  !(
+                    formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+                    formData.centerName?.includes('Mobile Unit')
+                  )
+                    ? 'bg-sky-50/90 border-sky-500 ring-2 ring-sky-500/20 shadow-xs'
+                    : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 text-slate-600'
+                }`}
+              >
+                <div
+                  className={`p-1.5 rounded-lg shrink-0 ${
+                    !(
+                      formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+                      formData.centerName?.includes('Mobile Unit')
+                    )
+                      ? 'bg-sky-600 text-white'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  <Building2 className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900">
+                      ชื่อศูนย์ตามระบุ
+                    </span>
+                    {!(
+                      formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+                      formData.centerName?.includes('Mobile Unit')
+                    ) && <span className="w-2 h-2 rounded-full bg-sky-600" />}
+                  </div>
+                  <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                    {officeList.find((o) => o.id === selectedOfficeId)?.centerName ||
+                      'ตามที่ระบุประจำสำนักงาน'}
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const updated = { ...formData, centerName: MOBILE_UNIT_CENTER_NAME };
+                  setFormData(updated);
+                  triggerPreview(updated);
+                }}
+                className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+                  formData.centerName?.includes('Mobile Unit')
+                    ? 'bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
+                    : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 text-slate-600'
+                }`}
+              >
+                <div
+                  className={`p-1.5 rounded-lg shrink-0 ${
+                    formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+                    formData.centerName?.includes('Mobile Unit')
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  <Truck className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900">
+                      หน่วยบริการเคลื่อนที่ (Mobile Unit)
+                    </span>
+                    {(formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+                      formData.centerName?.includes('Mobile Unit')) && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                    หน่วยบริการใบอนุญาตทำงานแบบเคลื่อนที่
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <input
+                type="text"
+                value={formData.centerName}
+                onChange={(e) => {
+                  const updated = { ...formData, centerName: e.target.value };
+                  setFormData(updated);
+                  triggerPreview(updated);
+                }}
+                className="w-full min-w-0 text-sm px-3.5 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium text-slate-800"
+                placeholder="ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว..."
+              />
+              <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 pt-0.5">
+                <span>
+                  {formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+                  formData.centerName?.includes('Mobile Unit')
+                    ? '💡 สามารถระบุจุดบริการหรืออำเภอต่อท้ายได้ เช่น (Mobile Unit) - อ.แม่สาย'
+                    : '💡 สามารถปรับแต่งชื่อศูนย์บริการตามต้องการ หรือกดคืนค่าตามสำนักงาน'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
+                    const defaultName =
+                      currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+                    const updated = { ...formData, centerName: defaultName };
+                    setFormData(updated);
+                    triggerPreview(updated);
+                  }}
+                  className="text-sky-600 hover:text-sky-700 font-medium underline shrink-0 ml-2 cursor-pointer flex items-center gap-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>คืนค่าตามสำนักงาน</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* ชื่อผู้รายงาน */}

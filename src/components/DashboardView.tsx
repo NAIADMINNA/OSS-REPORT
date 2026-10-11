@@ -6,6 +6,7 @@ import {
   formatThaiDateShort,
   formatThaiDateFull,
   formatThaiDateRange,
+  getTodayIsoDate,
 } from '../utils/thaiDate';
 import {
   TrendingUp,
@@ -46,19 +47,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onViewPendingInHistory,
   offices,
 }) => {
-  // Available distinct dates from existing reports
+  const todayStr = useMemo(() => getTodayIsoDate(), []);
+
+  // Available distinct dates from existing reports (always including today)
   const availableDates = useMemo(() => {
-    const dates = Array.from(new Set(reports.map((r) => r.reportDate))).sort(
-      (a, b) => b.localeCompare(a)
-    );
-    return dates;
-  }, [reports]);
+    const datesSet = new Set(reports.map((r) => r.reportDate));
+    datesSet.add(todayStr);
+    return Array.from(datesSet).sort((a, b) => b.localeCompare(a));
+  }, [reports, todayStr]);
 
   // Selected Cycle/Date Filter Key:
-  // 'cycle:2026-10-01:2026-10-05' | 'cycle:2026-10-06:2026-10-10' | 'cycle:2026-10-01:2026-10-07' | 'cycle:2026-10-01:2026-10-31' | 'custom' | 'single:YYYY-MM-DD' | 'all'
-  const [selectedCycleKey, setSelectedCycleKey] = useState<string>('cycle:2026-10-01:2026-10-05');
-  const [customStartDate, setCustomStartDate] = useState<string>('2026-10-01');
-  const [customEndDate, setCustomEndDate] = useState<string>('2026-10-05');
+  // 'custom' | 'single:YYYY-MM-DD' | 'all'
+  // Default to today: 'single:' + todayStr
+  const [selectedCycleKey, setSelectedCycleKey] = useState<string>(
+    () => `single:${getTodayIsoDate()}`
+  );
+  const [customStartDate, setCustomStartDate] = useState<string>(
+    () => getTodayIsoDate()
+  );
+  const [customEndDate, setCustomEndDate] = useState<string>(
+    () => getTodayIsoDate()
+  );
 
   // Selected Region
   const [selectedRegion, setSelectedRegion] = useState<string>('ทั้งหมด');
@@ -75,29 +84,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       return {
         filterStartDate: null,
         filterEndDate: null,
-        isCycleMode: false,
-        activePeriodLabel: 'ข้อมูลรายงานสะสมทุกช่วงวัน',
+        isCycleMode: true,
+        activePeriodLabel: 'ภาพรวมสะสมทั้งหมด (ทุกช่วงวัน)',
       };
     }
     if (selectedCycleKey.startsWith('cycle:')) {
       const parts = selectedCycleKey.split(':');
       const start = parts[1];
       const end = parts[2];
-      let cyclePrefix = 'ประจำรอบ:';
-      if (start === '2026-10-01' && end === '2026-10-05') {
-        cyclePrefix = 'รอบที่ 1:';
-      } else if (start === '2026-10-06' && end === '2026-10-10') {
-        cyclePrefix = 'รอบที่ 2:';
-      } else if (start === '2026-10-01' && end === '2026-10-07') {
-        cyclePrefix = 'รอบสัปดาห์:';
-      } else if (start === '2026-10-01' && end === '2026-10-31') {
-        cyclePrefix = 'รอบประจำเดือน:';
-      }
       return {
         filterStartDate: start,
         filterEndDate: end,
         isCycleMode: true,
-        activePeriodLabel: `${cyclePrefix} ${formatThaiDateRange(start, end).replace(' - ', ' – ')}`,
+        activePeriodLabel: `ช่วงวันที่: ${formatThaiDateRange(start, end).replace(' - ', ' – ')}`,
       };
     }
     if (selectedCycleKey === 'custom') {
@@ -105,7 +104,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         filterStartDate: customStartDate || null,
         filterEndDate: customEndDate || null,
         isCycleMode: true,
-        activePeriodLabel: `ประจำรอบ: ${formatThaiDateRange(customStartDate, customEndDate).replace(' - ', ' – ')}`,
+        activePeriodLabel: `ช่วงวันที่: ${formatThaiDateRange(customStartDate, customEndDate).replace(' - ', ' – ')}`,
       };
     }
     if (selectedCycleKey.startsWith('single:')) {
@@ -169,7 +168,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     reportingComplianceRate,
     nationalStats,
   } = useMemo(() => {
-    const officeList = offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES;
+    const officeList = (offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES).filter(
+      (o) => o.region !== 'ส่วนกลาง' && o.id !== 'doe-hq'
+    );
     const officesInRegion = officeList.filter(
       (o) => selectedRegion === 'ทั้งหมด' || o.region === selectedRegion
     );
@@ -417,13 +418,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
     const centerName = isOverview
       ? selectedRegion === 'ทั้งหมด'
-        ? 'ภาพรวม 76 จังหวัด + กทม. 10 พื้นที่ + ส่วนกลาง'
+        ? 'ภาพรวม 76 จังหวัด + กทม. 10 พื้นที่'
         : `รวมสำนักงานจัดหางานในพื้นที่ ${selectedRegion}`
       : baseRep?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
 
     return {
       id: `poster-cycle-${Date.now()}`,
-      reportDate: baseRep?.reportDate || '2026-10-05',
+      reportDate: baseRep?.reportDate || todayStr,
       reportDateThaiStr: activePeriodLabel,
       officeId: isOverview ? 'overview' : baseRep?.officeId || 'chiangrai',
       officeName,
@@ -492,7 +493,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   DOE National Overview
                 </span>
                 <span className="text-sm text-slate-500 hidden sm:inline">
-                  ครอบคลุม 76 จังหวัด + กทม. 10 พื้นที่ + ส่วนกลาง
+                  ครอบคลุม 76 จังหวัด + กทม. 10 พื้นที่
                 </span>
               </div>
               <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight mt-0.5 font-['Prompt']">
@@ -518,40 +519,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 }}
                 className="bg-transparent font-bold text-slate-900 focus:outline-hidden cursor-pointer text-sm"
               >
-                <optgroup label="🌟 เลือกรอบการรายงาน (Recommended Cycles)">
-                  <option value="cycle:2026-10-01:2026-10-05">
-                    รอบที่ 1: วันที่ 1 - 5 ตุลาคม 2569
-                  </option>
-                  <option value="cycle:2026-10-06:2026-10-10">
-                    รอบที่ 2: วันที่ 6 - 10 ตุลาคม 2569
-                  </option>
-                  <option value="cycle:2026-10-01:2026-10-07">
-                    รอบสัปดาห์: วันที่ 1 - 7 ตุลาคม 2569
-                  </option>
-                  <option value="cycle:2026-10-01:2026-10-31">
-                    รอบประจำเดือน: วันที่ 1 - 31 ตุลาคม 2569
-                  </option>
-                </optgroup>
+                <option value="custom">
+                  📅 กำหนดช่วงวันที่เอง (ระบุวันเริ่ม - สิ้นสุด)...
+                </option>
 
-                <optgroup label="⚙️ กำหนดช่วงวันที่เอง">
-                  <option value="custom">
-                    📅 กำหนดช่วงวันเอง (ระบุวันเริ่ม - สิ้นสุด)...
-                  </option>
-                </optgroup>
-
-                <optgroup label="📆 ดูเฉพาะรายวัน (Single Date)">
+                <optgroup label="📆 เลือกดูแบบรายวัน">
                   {availableDates.map((d) => (
                     <option key={`single:${d}`} value={`single:${d}`}>
-                      รายวัน: {formatThaiDateShort(d)} ({d})
+                      {d === todayStr
+                        ? `รายวัน (วันนี้): ${formatThaiDateShort(d)} (${d})`
+                        : `รายวัน: ${formatThaiDateShort(d)} (${d})`}
                     </option>
                   ))}
                 </optgroup>
 
-                <optgroup label="📊 ภาพรวมสะสมทั้งหมด">
-                  <option value="all">
-                    ทุกช่วงวันที่รวมกัน (รายงานทั้งหมด {reports.length} รายการ)
-                  </option>
-                </optgroup>
+                <option value="all">
+                  📊 ภาพรวมสะสมทั้งหมด (รายงานทั้งหมด {reports.length} รายการ)
+                </option>
               </select>
             </div>
 
@@ -575,7 +559,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <option value="ภาคตะวันออก">ภาคตะวันออก (8 จังหวัด)</option>
                 <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ (20 จังหวัด)</option>
                 <option value="ภาคใต้">ภาคใต้ (14 จังหวัด)</option>
-                <option value="ส่วนกลาง">ส่วนกลาง</option>
+                <option value="เฉพาะกิจ">เฉพาะกิจ</option>
               </select>
             </div>
 
@@ -612,7 +596,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               title="เปิดดูและดาวน์โหลดโปสเตอร์สรุปผลตามรอบที่เลือก"
             >
               <Eye className="w-4.5 h-4.5 text-amber-300" />
-              <span>ดูโปสเตอร์ประจำรอบ</span>
+              <span>
+                {selectedCycleKey === 'all'
+                  ? 'ดูโปสเตอร์ภาพรวมสะสม'
+                  : selectedCycleKey === 'custom'
+                  ? 'ดูโปสเตอร์ตามช่วงวันที่'
+                  : selectedCycleKey.startsWith('single:')
+                  ? 'ดูโปสเตอร์ประจำวัน'
+                  : 'ดูโปสเตอร์สรุปผล'}
+              </span>
             </button>
 
             <button
@@ -655,50 +647,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 onChange={(e) => setCustomEndDate(e.target.value)}
                 className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-sm font-bold text-slate-800 focus:ring-2 focus:ring-sky-500"
               />
-            </div>
-            {/* Quick Presets */}
-            <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
-              <span className="text-xs text-slate-500 font-medium">รอบแนะนำ:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setCustomStartDate('2026-10-01');
-                  setCustomEndDate('2026-10-05');
-                }}
-                className="text-xs font-bold px-2.5 py-1 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg transition-colors cursor-pointer"
-              >
-                1 - 5 ต.ค. 2569
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCustomStartDate('2026-10-06');
-                  setCustomEndDate('2026-10-10');
-                }}
-                className="text-xs font-bold px-2.5 py-1 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg transition-colors cursor-pointer"
-              >
-                6 - 10 ต.ค. 2569
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCustomStartDate('2026-10-01');
-                  setCustomEndDate('2026-10-07');
-                }}
-                className="text-xs font-bold px-2.5 py-1 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg transition-colors cursor-pointer"
-              >
-                1 - 7 ต.ค. 2569
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCustomStartDate('2026-10-01');
-                  setCustomEndDate('2026-10-31');
-                }}
-                className="text-xs font-bold px-2.5 py-1 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg transition-colors cursor-pointer"
-              >
-                ทั้งเดือน ต.ค. 2569
-              </button>
             </div>
           </div>
         )}
@@ -804,7 +752,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => onSelectReport(activeSelectedReport)}
+              onClick={() => {
+                const targetPoster = isCycleMode
+                  ? buildPosterReport('office', activeSelectedReport?.officeId)
+                  : activeSelectedReport;
+                if (targetPoster) onSelectReport(targetPoster);
+              }}
               className="text-sm font-bold px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Eye className="w-4 h-4" />

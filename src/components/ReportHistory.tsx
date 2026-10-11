@@ -315,7 +315,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
             <option value="ภาคตะวันออก">ภาคตะวันออก</option>
             <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ</option>
             <option value="ภาคใต้">ภาคใต้</option>
-            <option value="ส่วนกลาง">ส่วนกลาง</option>
+            <option value="เฉพาะกิจ">เฉพาะกิจ</option>
           </select>
 
           {/* Date Selector for Pending tab */}

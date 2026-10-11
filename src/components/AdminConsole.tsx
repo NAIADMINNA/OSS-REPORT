@@ -27,6 +27,7 @@ import {
   Search,
   Filter,
   Eye,
+  EyeOff,
   Lock,
   Unlock,
   Sparkles,
@@ -125,11 +126,12 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   });
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState(false);
+  const [showPin, setShowPin] = useState(false);
 
   const handleVerifyPin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const correctPin = systemConfig.adminPin || '1234';
-    if (pinInput.trim() === correctPin || pinInput.trim() === '1234') {
+    const correctPin = systemConfig.adminPin || 'admin';
+    if (pinInput.trim() === correctPin || pinInput.trim() === 'admin') {
       setIsAuthenticated(true);
       try {
         sessionStorage.setItem('doe_admin_authenticated', 'true');
@@ -139,15 +141,6 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     } else {
       setPinError(true);
     }
-  };
-
-  const handleQuickUnlock = () => {
-    setIsAuthenticated(true);
-    try {
-      sessionStorage.setItem('doe_admin_authenticated', 'true');
-    } catch {}
-    setPinError(false);
-    onNotify('ปลดล็อกสิทธิ์ผู้ดูแลระบบสำเร็จ (รหัสเริ่มต้น: 1234)');
   };
 
   const handleLogout = () => {
@@ -529,53 +522,52 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         <form onSubmit={handleVerifyPin} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
-              รหัสผ่านผู้ดูแลระบบ (Admin PIN)
+              รหัสผ่านผู้ดูแลระบบ (Admin Password)
             </label>
             <div className="relative">
               <input
-                type="password"
-                maxLength={10}
-                placeholder="ระบุรหัส PIN เช่น 1234"
+                type={showPin ? 'text' : 'password'}
+                maxLength={30}
+                placeholder="ระบุรหัสผ่าน เช่น admin"
                 value={pinInput}
                 onChange={(e) => {
                   setPinInput(e.target.value);
                   setPinError(false);
                 }}
-                className={`w-full text-center text-xl tracking-widest px-3 py-2.5 bg-slate-50 border rounded-xl font-mono font-bold focus:bg-white focus:outline-hidden focus:ring-2 ${
+                className={`w-full text-center text-lg px-9 py-2.5 bg-slate-50 border rounded-xl font-mono font-bold focus:bg-white focus:outline-hidden focus:ring-2 ${
                   pinError ? 'border-rose-400 focus:ring-rose-400' : 'border-slate-300 focus:ring-sky-500'
                 }`}
                 autoFocus
               />
               <Key className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+              <button
+                type="button"
+                onClick={() => setShowPin(!showPin)}
+                className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition-colors p-0.5 cursor-pointer"
+                title={showPin ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
+              >
+                {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
             {pinError ? (
               <div className="text-xs text-rose-600 mt-2 flex items-center gap-1.5 justify-center">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>รหัส PIN ไม่ถูกต้อง (รหัสเริ่มต้นของระบบคือ 1234)</span>
+                <span>รหัสผ่านไม่ถูกต้อง (รหัสเริ่มต้นของระบบคือ admin)</span>
               </div>
             ) : (
               <div className="text-[11px] text-slate-400 mt-2 text-center">
-                รหัสผ่านเริ่มต้นของระบบ: <b className="text-slate-700 font-mono">1234</b>
+                รหัสผ่านเริ่มต้นของระบบ: <b className="text-slate-700 font-mono">admin</b>
               </div>
             )}
           </div>
 
-          <div className="space-y-2 pt-2">
+          <div className="pt-2">
             <button
               type="submit"
-              className="w-full py-2.5 px-4 bg-blue-900 hover:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
               <Unlock className="w-4 h-4" />
               <span>เข้าสู่ระบบผู้ดูแลระบบ (Sign In)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleQuickUnlock}
-              className="w-full py-2 px-4 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <ShieldCheck className="w-4 h-4 text-amber-600" />
-              <span>ปลดล็อกเข้าใช้งานทันที (ด้วยรหัส 1234)</span>
             </button>
           </div>
         </form>
@@ -586,7 +578,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   return (
     <div className="space-y-6">
       {/* 1. TOP ADMIN BANNER */}
-      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white p-5 rounded-2xl border border-blue-800 shadow-md flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-sky-700 text-white p-5 rounded-2xl border border-blue-400/30 shadow-md flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div className="w-12 h-12 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shadow-md shrink-0">
             <ShieldCheck className="w-6 h-6 text-slate-950" />
@@ -596,7 +588,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
               <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-sm bg-amber-400 text-slate-950 font-mono tracking-wider">
                 ADMIN CONSOLE
               </span>
-              <span className="text-xs text-sky-200 font-medium">
+              <span className="text-xs text-sky-100 font-medium">
                 สิทธิ์ผู้ดูแลระบบสูงสุด (System Administrator)
               </span>
             </div>
@@ -608,23 +600,23 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
         {/* Database Live Stats Badges & Logout */}
         <div className="flex items-center gap-2 text-xs flex-wrap">
-          <span className="bg-white/10 px-3 py-1.5 rounded-xl border border-white/10 flex items-center gap-1.5 font-medium">
-            <Building2 className="w-3.5 h-3.5 text-sky-400" />
+          <span className="bg-white/15 px-3 py-1.5 rounded-xl border border-white/20 flex items-center gap-1.5 font-medium">
+            <Building2 className="w-3.5 h-3.5 text-sky-200" />
             <span>ศูนย์บริการ: <b>{offices.length}</b> แห่ง</span>
           </span>
-          <span className="bg-white/10 px-3 py-1.5 rounded-xl border border-white/10 flex items-center gap-1.5 font-medium">
-            <FolderTree className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="bg-white/15 px-3 py-1.5 rounded-xl border border-white/20 flex items-center gap-1.5 font-medium">
+            <FolderTree className="w-3.5 h-3.5 text-emerald-300" />
             <span>หัวข้อกลุ่ม: <b>{categories.length}</b> กลุ่ม</span>
           </span>
-          <span className="bg-emerald-500/20 text-emerald-300 px-3 py-1.5 rounded-xl border border-emerald-500/30 flex items-center gap-1.5 font-bold">
-            <Database className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="bg-emerald-500/25 text-white px-3 py-1.5 rounded-xl border border-emerald-400/40 flex items-center gap-1.5 font-bold">
+            <Database className="w-3.5 h-3.5 text-emerald-200" />
             <span>ฐานข้อมูล: บันทึกถาวร</span>
           </span>
 
           <button
             type="button"
             onClick={handleLogout}
-            className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 flex items-center gap-1.5 font-bold transition-colors cursor-pointer ml-1"
+            className="px-3 py-1.5 rounded-xl bg-white/20 hover:bg-rose-500 text-white border border-white/30 flex items-center gap-1.5 font-bold transition-colors cursor-pointer ml-1"
             title="ออกจากระบบ Admin"
           >
             <Lock className="w-3.5 h-3.5" />
@@ -639,7 +631,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           onClick={() => setActiveSubTab('sections')}
           className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 cursor-pointer ${
             activeSubTab === 'sections'
-              ? 'bg-blue-900 text-white shadow-xs'
+              ? 'bg-blue-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -651,7 +643,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           onClick={() => setActiveSubTab('offices')}
           className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 cursor-pointer ${
             activeSubTab === 'offices'
-              ? 'bg-blue-900 text-white shadow-xs'
+              ? 'bg-blue-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -663,7 +655,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           onClick={() => setActiveSubTab('branding')}
           className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 cursor-pointer ${
             activeSubTab === 'branding'
-              ? 'bg-blue-900 text-white shadow-xs'
+              ? 'bg-blue-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -675,7 +667,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           onClick={() => setActiveSubTab('reporters')}
           className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 cursor-pointer ${
             activeSubTab === 'reporters'
-              ? 'bg-blue-900 text-white shadow-xs'
+              ? 'bg-blue-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -687,7 +679,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           onClick={() => setActiveSubTab('database')}
           className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 cursor-pointer ${
             activeSubTab === 'database'
-              ? 'bg-emerald-700 text-white shadow-xs'
+              ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -743,6 +735,25 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   }
                   className="w-full text-sm px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-blue-700" />
+                  <span>รหัสผ่านเข้าสู่ระบบผู้ดูแลระบบ (Admin Password)</span>
+                </label>
+                <input
+                  type="text"
+                  value={configForm.adminPin || 'admin'}
+                  onChange={(e) =>
+                    setConfigForm({ ...configForm, adminPin: e.target.value })
+                  }
+                  placeholder="เช่น admin"
+                  className="w-full text-sm px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-mono"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  กำหนดรหัสผ่านสำหรับเข้าสู่ระบบเมนูตั้งค่าผู้ดูแลระบบ (ค่าเริ่มต้นคือ admin)
+                </p>
               </div>
             </div>
           </div>
@@ -1121,7 +1132,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 <option value="ภาคตะวันออก">ภาคตะวันออก</option>
                 <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ</option>
                 <option value="ภาคใต้">ภาคใต้</option>
-                <option value="ส่วนกลาง">ส่วนกลาง</option>
+                <option value="เฉพาะกิจ">เฉพาะกิจ</option>
               </select>
             </div>
             <span className="text-xs text-slate-500 font-medium">
@@ -1170,7 +1181,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     <option value="ภาคตะวันออก">ภาคตะวันออก</option>
                     <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ</option>
                     <option value="ภาคใต้">ภาคใต้</option>
-                    <option value="ส่วนกลาง">ส่วนกลาง</option>
+                    <option value="เฉพาะกิจ">เฉพาะกิจ</option>
                   </select>
                 </div>
                 <div className="sm:col-span-2">
@@ -1247,7 +1258,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                             <option value="ภาคตะวันออก">ภาคตะวันออก</option>
                             <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ</option>
                             <option value="ภาคใต้">ภาคใต้</option>
-                            <option value="ส่วนกลาง">ส่วนกลาง</option>
+                            <option value="เฉพาะกิจ">เฉพาะกิจ</option>
                           </select>
                         </td>
                         <td className="p-2 space-y-1">
