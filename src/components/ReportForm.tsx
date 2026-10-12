@@ -709,18 +709,18 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
         <div>
           <label className="block text-xs font-semibold text-slate-700 mb-1">
-            บันทึกการปฏิบัติงานหรือข้อสังเกตเพิ่มเติม
+            บันทึกการปฏิบัติงานหรือข้อสังเกตเพิ่มเติม (รายละเอียดที่บันทึกเข้ามา)
           </label>
-          <input
-            type="text"
+          <textarea
+            rows={3}
             value={formData.notes || ''}
             onChange={(e) => {
               const updated = { ...formData, notes: e.target.value };
               setFormData(updated);
               triggerPreview(updated);
             }}
-            className="w-full text-sm px-3 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
-            placeholder="เช่น การให้บริการเป็นไปด้วยความเรียบร้อย ไม่มีข้อติดขัด"
+            className="w-full text-sm px-3 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 leading-relaxed"
+            placeholder="ระบุรายละเอียด ข้อสังเกต หรือสรุปสถานการณ์ประจำวัน เช่น การให้บริการเป็นไปด้วยความเรียบร้อย ไม่มีข้อติดขัด"
           />
         </div>
       </div>

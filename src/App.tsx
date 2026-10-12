@@ -22,6 +22,7 @@ import { DOEHeader, ActiveTab } from './components/DOEHeader';
 import { ReportForm } from './components/ReportForm';
 import { DashboardView } from './components/DashboardView';
 import { ReportHistory } from './components/ReportHistory';
+import { DailyNotesTable } from './components/DailyNotesTable';
 import { InfographicPoster } from './components/InfographicPoster';
 import { PosterPreviewModal } from './components/PosterPreviewModal';
 import { ExportLineModal } from './components/ExportLineModal';
@@ -646,6 +647,7 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         reportCount={reports.length}
+        notesCount={reports.filter((r) => Boolean(r.notes && r.notes.trim().length > 0)).length}
         onPreviewCurrentPoster={() => handleOpenPosterModal(livePreviewReport)}
         customLogoUrl={systemConfig.customLogoUrl}
         systemTitle={systemConfig.reportTitle}
@@ -785,7 +787,12 @@ export default function App() {
           />
         )}
 
-        {/* TAB 4: ADMIN CONSOLE (สิทธิ์ ADMIN) */}
+        {/* TAB 4: DAILY OPERATIONAL NOTES & REMARKS (หมายเหตุ / บันทึกเพิ่มเติมประจำวัน) */}
+        {activeTab === 'notes' && (
+          <DailyNotesTable reports={reports} />
+        )}
+
+        {/* TAB 5: ADMIN CONSOLE (สิทธิ์ ADMIN) */}
         {activeTab === 'admin' && (
           <AdminConsole
             offices={offices}

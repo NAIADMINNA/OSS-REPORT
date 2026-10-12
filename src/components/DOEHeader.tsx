@@ -1,13 +1,14 @@
 import React from 'react';
 import { DOELogo } from './DOELogo';
-import { LayoutDashboard, FileEdit, FolderClock, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, FileEdit, FolderClock, ShieldCheck, FileText } from 'lucide-react';
 
-export type ActiveTab = 'dashboard' | 'form' | 'history' | 'admin';
+export type ActiveTab = 'dashboard' | 'form' | 'history' | 'notes' | 'admin';
 
 interface DOEHeaderProps {
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
   reportCount: number;
+  notesCount?: number;
   onPreviewCurrentPoster?: () => void;
   customLogoUrl?: string | null;
   systemTitle?: string;
@@ -18,6 +19,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
   activeTab,
   onTabChange,
   reportCount,
+  notesCount,
   onPreviewCurrentPoster,
   customLogoUrl,
   systemTitle,
@@ -98,6 +100,29 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
               }`}>
                 {reportCount}
               </span>
+            </button>
+
+            <button
+              onClick={() => onTabChange('notes')}
+              className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                activeTab === 'notes'
+                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
+                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>หมายเหตุ / บันทึกเพิ่มเติม</span>
+              {notesCount !== undefined && notesCount > 0 && (
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full font-mono font-bold ${
+                    activeTab === 'notes'
+                      ? 'bg-blue-100 text-blue-900'
+                      : 'bg-amber-400 text-slate-950 shadow-2xs'
+                  }`}
+                >
+                  {notesCount}
+                </span>
+              )}
             </button>
 
             <button
