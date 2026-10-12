@@ -15,11 +15,6 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Default deny catch-all
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     // Connection health check document
     match /test/connection {
       allow read: if true;
@@ -28,7 +23,8 @@ service cloud.firestore {
 
     // Daily DOE Reports
     match /reports/{reportId} {
-      allow read: if isValidId(reportId);
+      allow get: if isValidId(reportId);
+      allow list: if true;
       allow create: if isValidId(reportId)
         && incoming().id is string
         && incoming().reportDate is string
@@ -42,7 +38,8 @@ service cloud.firestore {
 
     // Employment Offices & Mobile Units
     match /offices/{officeId} {
-      allow read: if isValidId(officeId);
+      allow get: if isValidId(officeId);
+      allow list: if true;
       allow create: if isValidId(officeId)
         && incoming().id is string
         && incoming().name is string
@@ -54,7 +51,8 @@ service cloud.firestore {
 
     // Work Permit Report Categories
     match /categories/{categoryId} {
-      allow read: if isValidId(categoryId);
+      allow get: if isValidId(categoryId);
+      allow list: if true;
       allow create: if isValidId(categoryId)
         && incoming().id is string
         && incoming().code is string
@@ -66,7 +64,8 @@ service cloud.firestore {
 
     // Reporters Directory
     match /reporters/{reporterId} {
-      allow read: if isValidId(reporterId);
+      allow get: if isValidId(reporterId);
+      allow list: if true;
       allow create: if isValidId(reporterId)
         && incoming().id is string
         && incoming().name is string
@@ -78,7 +77,8 @@ service cloud.firestore {
 
     // System Branding & Config
     match /system_config/{configId} {
-      allow read: if isValidId(configId);
+      allow get: if isValidId(configId);
+      allow list: if true;
       allow create, update: if isValidId(configId)
         && incoming().reportTitle is string
         && incoming().adminPin is string;
@@ -87,12 +87,16 @@ service cloud.firestore {
 
     // Recycle bin archive for deleted reports
     match /deleted_reports/{reportId} {
-      allow read, write: if isValidId(reportId);
+      allow get, delete: if isValidId(reportId);
+      allow list: if true;
+      allow create, update: if isValidId(reportId);
     }
 
     // Recycle bin archive for deleted offices
     match /deleted_offices/{officeId} {
-      allow read, write: if isValidId(officeId);
+      allow get, delete: if isValidId(officeId);
+      allow list: if true;
+      allow create, update: if isValidId(officeId);
     }
   }
 }

@@ -51,7 +51,7 @@ export function subscribeReports(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.GET, REPORTS_COLLECTION);
+      handleFirestoreError(error, OperationType.LIST, REPORTS_COLLECTION);
     }
   );
 }
@@ -104,7 +104,7 @@ export function subscribeDeletedReports(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.GET, DELETED_REPORTS_COLLECTION);
+      handleFirestoreError(error, OperationType.LIST, DELETED_REPORTS_COLLECTION);
     }
   );
 }
@@ -126,7 +126,7 @@ export function subscribeOffices(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.GET, OFFICES_COLLECTION);
+      handleFirestoreError(error, OperationType.LIST, OFFICES_COLLECTION);
     }
   );
 }
@@ -178,7 +178,7 @@ export function subscribeDeletedOffices(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.GET, DELETED_OFFICES_COLLECTION);
+      handleFirestoreError(error, OperationType.LIST, DELETED_OFFICES_COLLECTION);
     }
   );
 }
@@ -200,7 +200,7 @@ export function subscribeCategories(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.GET, CATEGORIES_COLLECTION);
+      handleFirestoreError(error, OperationType.LIST, CATEGORIES_COLLECTION);
     }
   );
 }
@@ -244,7 +244,7 @@ export function subscribeReporters(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.GET, REPORTERS_COLLECTION);
+      handleFirestoreError(error, OperationType.LIST, REPORTERS_COLLECTION);
     }
   );
 }

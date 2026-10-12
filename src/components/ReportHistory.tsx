@@ -21,11 +21,18 @@ import {
   Share2,
   RotateCcw,
   X,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  Key,
+  EyeOff,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface ReportHistoryProps {
   reports: DOEReport[];
   deletedReports?: DOEReport[];
+  adminPin?: string;
   onViewPoster: (report: DOEReport) => void;
   onEditReport: (report: DOEReport) => void;
   onDeleteReport: (id: string) => void;
@@ -39,6 +46,7 @@ interface ReportHistoryProps {
 export const ReportHistory: React.FC<ReportHistoryProps> = ({
   reports,
   deletedReports = [],
+  adminPin = '0841543524',
   onViewPoster,
   onEditReport,
   onDeleteReport,
@@ -50,6 +58,23 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 }) => {
   const searchInputId = useId();
   const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
+  // Admin authentication state
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('doe_admin_authenticated') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  // Admin PIN prompt modal state
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [adminActionTitle, setAdminActionTitle] = useState('');
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  const [adminPinInput, setAdminPinInput] = useState('');
+  const [adminPinError, setAdminPinError] = useState(false);
+  const [showAdminPin, setShowAdminPin] = useState(false);
+
   // Sub-tab inside History: 'reported' (รายงานแล้ว) vs 'pending' (ยังไม่รายงาน ตามที่ผู้ใช้สั่ง)
   const [activeHistoryTab, setActiveHistoryTab] = useState<'reported' | 'pending'>('reported');
 
@@ -240,6 +265,71 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
     }
   };
 
+  // Admin Protection Helpers for Editing, Deleting, Duplicating & Trash
+  const executeProtectedAction = (actionName: string, actionFn: () => void) => {
+    if (isAdmin) {
+      actionFn();
+    } else {
+      setAdminActionTitle(actionName);
+      setPendingAction(() => actionFn);
+      setAdminPinInput('');
+      setAdminPinError(false);
+      setAdminModalOpen(true);
+    }
+  };
+
+  const handleVerifyAdminPin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const correctPin = adminPin || '0841543524';
+    if (adminPinInput.trim() === correctPin || adminPinInput.trim() === '0841543524') {
+      setIsAdmin(true);
+      try {
+        sessionStorage.setItem('doe_admin_authenticated', 'true');
+      } catch {}
+      setAdminPinError(false);
+      setAdminModalOpen(false);
+      if (pendingAction) {
+        pendingAction();
+        setPendingAction(null);
+      }
+    } else {
+      setAdminPinError(true);
+    }
+  };
+
+  const handleLockAdmin = () => {
+    setIsAdmin(false);
+    try {
+      sessionStorage.removeItem('doe_admin_authenticated');
+    } catch {}
+  };
+
+  const handleProtectedEdit = (report: DOEReport) => {
+    executeProtectedAction(`แก้ไขข้อมูลรายงานของ "${report.officeName}"`, () => {
+      onEditReport(report);
+    });
+  };
+
+  const handleProtectedDelete = (id: string) => {
+    const target = reports.find((r) => r.id === id);
+    const officeName = target ? target.officeName : id;
+    executeProtectedAction(`ลบรายงานของ "${officeName}"`, () => {
+      onDeleteReport(id);
+    });
+  };
+
+  const handleProtectedDuplicate = (report: DOEReport) => {
+    executeProtectedAction(`คัดลอกสร้างรายงานใหม่จาก "${report.officeName}"`, () => {
+      onDuplicateReport(report);
+    });
+  };
+
+  const handleProtectedTrash = () => {
+    executeProtectedAction('เปิดถังขยะและกู้คืนรายงานที่ถูกลบ', () => {
+      setIsTrashModalOpen(true);
+    });
+  };
+
   return (
     <div className="space-y-4">
       {/* 1. TOP SUB-TABS: รายงานแล้ว vs สำนักงานที่ยังไม่รายงาน (ตามคำสั่งผู้ใช้) */}
@@ -272,13 +362,43 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
           </button>
         </div>
 
-        <button
-          onClick={() => onNewReport()}
-          className="text-sm sm:text-base font-bold px-4 py-2.5 bg-blue-900 hover:bg-blue-800 text-white rounded-xl shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
-        >
-          <Plus className="w-4.5 h-4.5" />
-          <span>เพิ่มรายงานใหม่</span>
-        </button>
+        {/* Admin Access Indicator & Controls */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAdmin ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-100 text-amber-950 border border-amber-300 text-xs font-bold shadow-2xs">
+              <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>สิทธิ์ Admin: จัดการแก้ไข/ลบได้</span>
+              <button
+                type="button"
+                onClick={handleLockAdmin}
+                className="ml-1 text-amber-800 hover:text-rose-600 underline font-normal text-[11px] cursor-pointer"
+                title="ล็อคสิทธิ์เพื่อความปลอดภัย"
+              >
+                (ล็อคสิทธิ์)
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                executeProtectedAction('ปลดล็อคสิทธิ์ผู้ดูแลระบบ (Admin) เพื่อจัดการแก้ไข/ลบรายงาน', () => {})
+              }
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs font-semibold cursor-pointer transition-colors shadow-2xs"
+              title="คลิกเพื่อยืนยันรหัสผ่าน Admin สำหรับการจัดการ"
+            >
+              <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span>เฉพาะ Admin สำหรับแก้ไข/ลบ (คลิกเพื่อยืนยันสิทธิ์)</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => onNewReport()}
+            className="text-sm sm:text-base font-bold px-4 py-2.5 bg-blue-900 hover:bg-blue-800 text-white rounded-xl shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <Plus className="w-4.5 h-4.5" />
+            <span>เพิ่มรายงานใหม่</span>
+          </button>
+        </div>
       </div>
 
       {/* 2. FILTER & SEARCH BAR */}
@@ -344,12 +464,13 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
           {deletedReports.length > 0 && (
             <button
               type="button"
-              onClick={() => setIsTrashModalOpen(true)}
+              onClick={handleProtectedTrash}
               className="text-sm font-bold px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-800 rounded-lg border border-rose-300 transition-colors flex items-center gap-2 cursor-pointer shadow-2xs"
-              title="ดูรายการรายงานที่ถูกลบและกู้คืน"
+              title={isAdmin ? 'ดูรายการรายงานที่ถูกลบและกู้คืน (สิทธิ์ Admin)' : 'ถังขยะรายงานที่ลบ (เฉพาะ Admin)'}
             >
               <RotateCcw className="w-4 h-4 text-rose-600" />
               <span>ถังขยะรายงานที่ลบ ({deletedReports.length})</span>
+              {!isAdmin && <Lock className="w-3.5 h-3.5 text-amber-600" />}
             </button>
           )}
 
@@ -484,29 +605,48 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                         <MessageCircle className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => onDuplicateReport(r)}
+                        type="button"
+                        onClick={() => handleProtectedDuplicate(r)}
                         className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                        title="คัดลอกสร้างรายงานใหม่"
+                        title={isAdmin ? 'คัดลอกสร้างรายงานใหม่ (สิทธิ์ Admin)' : 'คัดลอกสร้างรายงานใหม่ (เฉพาะ Admin)'}
                       >
                         <Copy className="w-4 h-4" />
                       </button>
                       <button
                         type="button"
-                        onClick={() => onEditReport(r)}
-                        className="p-1.5 text-blue-700 hover:text-white hover:bg-blue-600 border border-blue-200 hover:border-blue-600 rounded-lg transition-all cursor-pointer shadow-2xs"
-                        title="แก้ไขข้อมูลรายงาน"
+                        onClick={() => handleProtectedEdit(r)}
+                        className={`p-1.5 rounded-lg transition-all cursor-pointer shadow-2xs border ${
+                          isAdmin
+                            ? 'text-blue-700 hover:text-white hover:bg-blue-600 border-blue-200 hover:border-blue-600'
+                            : 'text-slate-500 hover:text-blue-700 hover:bg-blue-50 border-slate-200'
+                        }`}
+                        title={isAdmin ? 'แก้ไขข้อมูลรายงาน (สิทธิ์ Admin)' : 'แก้ไขข้อมูลรายงาน (เฉพาะ Admin)'}
                         aria-label="แก้ไขข้อมูลรายงาน"
                       >
-                        <Edit2 className="w-4 h-4" />
+                        <div className="relative">
+                          <Edit2 className="w-4 h-4" />
+                          {!isAdmin && (
+                            <Lock className="w-2.5 h-2.5 text-amber-600 absolute -bottom-1 -right-1" />
+                          )}
+                        </div>
                       </button>
                       <button
                         type="button"
-                        onClick={() => onDeleteReport(r.id)}
-                        className="p-1.5 text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg transition-all cursor-pointer shadow-2xs"
-                        title="ลบรายงานนี้"
+                        onClick={() => handleProtectedDelete(r.id)}
+                        className={`p-1.5 rounded-lg transition-all cursor-pointer shadow-2xs border ${
+                          isAdmin
+                            ? 'text-rose-600 hover:text-white hover:bg-rose-600 border-rose-200 hover:border-rose-600'
+                            : 'text-slate-500 hover:text-rose-600 hover:bg-rose-50 border-slate-200'
+                        }`}
+                        title={isAdmin ? 'ลบรายงานนี้ (สิทธิ์ Admin)' : 'ลบรายงานนี้ (เฉพาะ Admin)'}
                         aria-label="ลบรายงานนี้"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <div className="relative">
+                          <Trash2 className="w-4 h-4" />
+                          {!isAdmin && (
+                            <Lock className="w-2.5 h-2.5 text-amber-600 absolute -bottom-1 -right-1" />
+                          )}
+                        </div>
                       </button>
                     </div>
 
@@ -749,6 +889,101 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                 ปิดหน้าต่าง
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. ADMIN AUTH MODAL (เมื่อพยายามแก้ไข ลบ หรือจัดการรายงาน) */}
+      {adminModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-slate-200 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3 pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 shrink-0 shadow-2xs">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base font-['Prompt']">
+                    ยืนยันสิทธิ์ผู้ดูแลระบบ (Admin Only)
+                  </h3>
+                  <p className="text-xs text-amber-700 font-semibold">
+                    สงวนสิทธิ์การแก้ไข/ลบ/กู้คืนรายงานเฉพาะ Admin
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdminModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {adminActionTitle && (
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700">
+                <span className="font-bold text-slate-900">การดำเนินการ: </span>
+                <span>{adminActionTitle}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleVerifyAdminPin} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  รหัสผ่านผู้ดูแลระบบ (Admin Password)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showAdminPin ? 'text' : 'password'}
+                    maxLength={30}
+                    placeholder="ระบุรหัสผ่านผู้ดูแลระบบ"
+                    value={adminPinInput}
+                    onChange={(e) => {
+                      setAdminPinInput(e.target.value);
+                      setAdminPinError(false);
+                    }}
+                    className={`w-full text-center text-base px-9 py-2.5 bg-slate-50 border rounded-xl font-mono font-bold focus:bg-white focus:outline-hidden focus:ring-2 ${
+                      adminPinError
+                        ? 'border-rose-400 focus:ring-rose-400'
+                        : 'border-slate-300 focus:ring-sky-500'
+                    }`}
+                    autoFocus
+                  />
+                  <Key className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminPin(!showAdminPin)}
+                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition-colors p-0.5 cursor-pointer"
+                    title={showAdminPin ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
+                  >
+                    {showAdminPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {adminPinError && (
+                  <div className="text-xs text-rose-600 mt-2 flex items-center gap-1.5 justify-center">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>รหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบและลองใหม่อีกครั้ง</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAdminModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>ยืนยันสิทธิ์และดำเนินการ</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

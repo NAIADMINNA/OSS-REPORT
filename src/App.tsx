@@ -773,6 +773,7 @@ export default function App() {
           <ReportHistory
             reports={reports}
             deletedReports={deletedReports}
+            adminPin={systemConfig.adminPin || '0841543524'}
             onViewPoster={handleOpenPosterModal}
             onEditReport={handleEditReport}
             onDeleteReport={handleDeleteReport}
