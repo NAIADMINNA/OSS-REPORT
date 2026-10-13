@@ -64,7 +64,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             count,
             icon,
             color: c.color || 'from-blue-600 to-indigo-600',
-            isPrimary: c.id === 'section63_2',
+            isPrimary: c.id === 'section59' || idx === 0,
           };
         })
       : [
@@ -76,7 +76,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             count: report.section59,
             icon: BookOpen,
             color: 'from-blue-600 to-indigo-600',
-            isPrimary: false,
+            isPrimary: true,
           },
           {
             id: 'sec62',
@@ -106,7 +106,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             count: report.section63_2,
             icon: Users,
             color: 'from-amber-500 to-orange-500',
-            isPrimary: true,
+            isPrimary: false,
           },
           {
             id: 'sec64',
@@ -663,80 +663,128 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
           {/* Target Groups Breakdown Card (Full Width 12 columns) */}
           <div
             style={{
-              paddingTop: '20px',
-              paddingLeft: '17px',
+              paddingTop: '16px',
+              paddingLeft: '18px',
+              paddingRight: '18px',
+              paddingBottom: '16px',
               height: '477.5px',
               marginLeft: '0px',
               marginTop: '0px',
             }}
-            className="col-span-12 bg-white rounded-3xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between"
+            className="col-span-12 bg-white rounded-3xl p-4.5 border border-slate-200/90 shadow-sm flex flex-col justify-between relative overflow-hidden"
           >
             <div>
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3.5">
+              {/* Card Header */}
+              <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 mb-2.5">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center">
-                    <Layers className="w-4 h-4" />
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-700 via-indigo-600 to-sky-600 text-white flex items-center justify-center shadow-xs">
+                    <Layers className="w-4 h-4 text-white" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-sm leading-none text-slate-900">การออกบัตรใบอนุญาตทำงาน</h3>
+                    <h3 className="font-bold text-sm leading-none text-slate-900 font-['Prompt']">การออกบัตรใบอนุญาตทำงาน</h3>
                     <p className="text-[11px] mt-0.5 text-slate-500">
                       จำแนกตาม {sections.length} กลุ่มเป้าหมายและมาตรา
                     </p>
                   </div>
                 </div>
-                <div className="text-xs font-bold px-2.5 py-1 rounded-xl bg-blue-50 text-blue-900 border border-blue-200">
-                  รวม {formatNumber(totalIssuedGroups)} คน
+                <div className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50/80 text-blue-900 border border-blue-200 shadow-2xs font-['Prompt']">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                  <span>รวม {formatNumber(totalIssuedGroups)} คน</span>
                 </div>
               </div>
 
-              {/* 7 Section Items with Progress Bars in 2 columns */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* รายการกลุ่มเป้าหมายทั้งหมด เรียงตามลำดับเดิม โดยเน้นสีพื้นหลังข้อ 1 */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {sections.map((sec, idx) => {
                   const IconComponent = sec.icon;
                   const pct = totalIssuedGroups > 0 ? Math.round((sec.count / totalIssuedGroups) * 100) : 0;
                   const barWidth = maxSectionCount > 0 ? (sec.count / maxSectionCount) * 100 : 0;
+                  const isItem1 = idx === 0;
 
                   return (
                     <div
                       key={sec.id}
-                      className={`p-2.5 rounded-2xl transition-all border ${
-                        sec.isPrimary
-                          ? 'bg-amber-50/70 border-amber-300 ring-1 ring-amber-200'
-                          : 'bg-slate-50/80 border-slate-200 hover:bg-white'
+                      className={`p-2.5 rounded-xl transition-all border flex flex-col justify-between shadow-2xs ${
+                        isItem1
+                          ? 'bg-gradient-to-r from-blue-100/90 via-indigo-50/90 to-sky-100/80 border-blue-400 ring-2 ring-blue-400/40 shadow-xs'
+                          : 'bg-slate-50/80 hover:bg-white border-slate-200/90'
                       }`}
                     >
                       <div className="flex items-center justify-between text-xs mb-1.5">
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className={`w-6 h-6 rounded-lg bg-gradient-to-tr ${sec.color} text-white flex items-center justify-center shrink-0 shadow-2xs`}>
-                            <IconComponent className="w-3.5 h-3.5" />
+                          <div
+                            className={`w-7 h-7 rounded-lg text-white flex items-center justify-center shrink-0 shadow-2xs ${
+                              isItem1
+                                ? 'bg-gradient-to-tr from-blue-700 via-indigo-700 to-sky-600 ring-2 ring-blue-300'
+                                : `bg-gradient-to-tr ${sec.color}`
+                            }`}
+                          >
+                            <IconComponent className="w-4 h-4 text-white" />
                           </div>
                           <div className="min-w-0">
-                            <span className="font-semibold block truncate text-slate-800">
-                              {idx + 1}. {sec.title}
-                            </span>
-                            <span className="text-[10px] block truncate text-slate-500">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`font-bold block truncate text-[12px] leading-tight ${
+                                  isItem1 ? 'text-blue-950 font-black' : 'text-slate-800'
+                                }`}
+                              >
+                                {idx + 1}. {sec.title}
+                              </span>
+                              {isItem1 && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-blue-600 text-white font-['Prompt'] shrink-0 shadow-2xs">
+                                  เด่น
+                                </span>
+                              )}
+                            </div>
+                            <span
+                              className={`text-[9.5px] block truncate leading-tight ${
+                                isItem1 ? 'text-blue-800 font-medium' : 'text-slate-500'
+                              }`}
+                            >
                               {sec.desc}
                             </span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className={`font-black text-sm font-['Prompt'] ${sec.isPrimary ? 'text-amber-800' : 'text-slate-900'}`}>
+                        <div className="flex items-center gap-1.5 shrink-0 pl-1">
+                          <span
+                            className={`font-black text-[14px] font-['Prompt'] ${
+                              isItem1 ? 'text-blue-950' : 'text-slate-900'
+                            }`}
+                          >
                             {formatNumber(sec.count)}
                           </span>
-                          <span className="text-[11px] text-slate-500">
+                          <span
+                            className={`text-[10px] font-medium ${
+                              isItem1 ? 'text-blue-800 font-bold' : 'text-slate-500'
+                            }`}
+                          >
                             คน
                           </span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md min-w-[34px] text-center bg-white text-slate-700 border border-slate-200">
+                          <span
+                            className={`text-[9.5px] font-bold font-mono px-1.5 py-0.5 rounded-md min-w-[32px] text-center shadow-2xs ${
+                              isItem1
+                                ? 'bg-blue-600 text-white border border-blue-700'
+                                : 'bg-white text-slate-700 border border-slate-200'
+                            }`}
+                          >
                             {pct}%
                           </span>
                         </div>
                       </div>
 
                       {/* Bar Fill Meter */}
-                      <div className="h-1.5 w-full rounded-full overflow-hidden bg-slate-200">
+                      <div
+                        className={`h-1.5 w-full rounded-full overflow-hidden ${
+                          isItem1 ? 'bg-blue-200/90' : 'bg-slate-200/90'
+                        }`}
+                      >
                         <div
-                          className={`h-full bg-gradient-to-r ${sec.color} rounded-full transition-all duration-300`}
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            isItem1
+                              ? 'bg-gradient-to-r from-blue-700 via-indigo-600 to-sky-500'
+                              : `bg-gradient-to-r ${sec.color}`
+                          }`}
                           style={{ width: `${Math.max(barWidth, sec.count > 0 ? 3 : 0)}%` }}
                         />
                       </div>
@@ -747,19 +795,19 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             </div>
 
             {/* Combined Summary Bar: รวมผู้รับบริการที่ออกบัตร + อัตราความสำเร็จ */}
-            <div className="mt-3.5 p-3.5 rounded-2xl border bg-gradient-to-r from-blue-50/80 via-slate-50 to-emerald-50/80 border-slate-200/90 shadow-2xs grid grid-cols-2 gap-4 items-center">
+            <div className="mt-2.5 p-3 rounded-2xl border bg-gradient-to-r from-blue-50/90 via-slate-50 to-emerald-50/90 border-slate-200/90 shadow-2xs grid grid-cols-2 gap-4 items-center">
               {/* ฝั่งซ้าย: รวมผู้รับบริการที่ออกบัตรทั้งหมด */}
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 shadow-2xs">
-                  <Sparkles className="w-5 h-5" />
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-700 via-indigo-600 to-sky-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Sparkles className="w-4.5 h-4.5 text-amber-300" />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-[11px] font-bold text-slate-700 block leading-tight">
                       รวมผู้รับบริการที่ออกบัตรทั้งหมด
                     </span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-md font-semibold bg-blue-100/70 text-blue-800">
-                      7 กลุ่มเป้าหมาย
+                    <span className="text-[9.5px] px-1.5 py-0.2 rounded-md font-bold bg-blue-100 text-blue-800">
+                      {sections.length} กลุ่มเป้าหมาย
                     </span>
                   </div>
                   <div className="flex items-baseline gap-1.5 mt-0.5">
@@ -781,7 +829,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                     <span className="text-[11px] font-bold text-emerald-900 block leading-tight">
                       อัตราความสำเร็จการให้บริการ
                     </span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-md font-semibold bg-emerald-100 text-emerald-800">
+                    <span className="text-[9.5px] px-1.5 py-0.2 rounded-md font-bold bg-emerald-100 text-emerald-800">
                       เป้าหมายคิวนัดหมาย
                     </span>
                   </div>
@@ -795,8 +843,8 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                   </div>
                 </div>
 
-                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 shadow-2xs">
-                  <CheckCircle2 className="w-5 h-5" />
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 shadow-2xs">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                 </div>
               </div>
             </div>

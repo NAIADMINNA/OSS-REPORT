@@ -28,6 +28,7 @@ import { PosterPreviewModal } from './components/PosterPreviewModal';
 import { ExportLineModal } from './components/ExportLineModal';
 import { AdminConsole } from './components/AdminConsole';
 import { ConfirmDialogModal } from './components/ConfirmDialogModal';
+import { DOEAssistantMascot } from './components/DOEAssistantMascot';
 import { formatThaiDateFull, getTodayIsoDate } from './utils/thaiDate';
 import {
   Eye,
@@ -37,6 +38,7 @@ import {
   Truck,
   Cloud,
   RefreshCw,
+  Plus,
 } from 'lucide-react';
 import { testConnection } from './firebase';
 import {
@@ -57,6 +59,7 @@ import {
   subscribeSystemConfig,
   saveSystemConfigOnline,
   initializeFirestoreIfEmpty,
+  clearAllReportsOnline,
 } from './services/firestoreService';
 
 const STORAGE_KEY_REPORTS = 'doe_work_permit_reports_v1';
@@ -67,30 +70,70 @@ const STORAGE_KEY_CONFIG = 'doe_work_permit_config_v1';
 const STORAGE_KEY_DELETED_OFFICES = 'doe_work_permit_deleted_offices_v1';
 const STORAGE_KEY_DELETED_REPORTS = 'doe_work_permit_deleted_reports_v1';
 
+export const createEmptyReportTemplate = (targetOffice?: EmploymentOffice): DOEReport => {
+  const office = targetOffice || EMPLOYMENT_OFFICES[0];
+  const today = getTodayIsoDate();
+  return {
+    id: `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+    reportDate: today,
+    reportDateThaiStr: formatThaiDateFull(today),
+    officeId: office.id,
+    officeName: office.name,
+    officeNameEn: office.nameEn,
+    centerName: office.centerName,
+    region: office.region,
+    reporterName: '',
+    reporterPosition: '',
+    phoneNumber: '',
+    lineId: '',
+    section59: 0,
+    section62: 0,
+    section63_1: 0,
+    section63_2: 0,
+    section64: 0,
+    modifyDetails: 0,
+    substituteCard: 0,
+    queueAppointment: 0,
+    cardsIssued: 0,
+    identityVerified: 0,
+    cardsNotIssued: 0,
+    missedAppointment: 0,
+    wrongAppointmentDate: 0,
+    cumulativeCardsIssued: 0,
+    cumulativeSinceDate: '13 ตุลาคม 2568',
+    customCategoryValues: {},
+    notes: '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+};
+
 export default function App() {
   const [isFirestoreOnline, setIsFirestoreOnline] = useState<boolean>(true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // 1. Reports Database
+  // 1. Reports Database (เริ่มต้นเป็นว่างเปล่าเพื่อนำระบบขึ้นใช้งานจริง)
   const [reports, setReports] = useState<DOEReport[]>(() => {
     try {
+      // Check if client storage has been wiped for production release
+      const isCleaned = localStorage.getItem('doe_production_cleaned_v3');
+      if (!isCleaned) {
+        localStorage.removeItem(STORAGE_KEY_REPORTS);
+        localStorage.removeItem(STORAGE_KEY_DELETED_REPORTS);
+        localStorage.setItem('doe_production_cleaned_v3', 'true');
+        return [];
+      }
       const saved = localStorage.getItem(STORAGE_KEY_REPORTS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const today = getTodayIsoDate();
-          const hasToday = parsed.some((r: DOEReport) => r.reportDate === today);
-          if (!hasToday) {
-            const todaySeed = INITIAL_REPORTS.filter((r) => r.reportDate === today);
-            return [...todaySeed, ...parsed];
-          }
+        if (Array.isArray(parsed)) {
           return parsed;
         }
       }
     } catch (e) {
       console.error('Failed to load reports from storage', e);
     }
-    return INITIAL_REPORTS;
+    return [];
   });
 
   // 2. Offices Database
@@ -173,18 +216,19 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
-  const [currentReport, setCurrentReport] = useState<DOEReport>(
-    reports[0] || INITIAL_REPORTS[0]
+  const [isEditingExistingReport, setIsEditingExistingReport] = useState<boolean>(false);
+  const [currentReport, setCurrentReport] = useState<DOEReport>(() =>
+    createEmptyReportTemplate(EMPLOYMENT_OFFICES[0])
   );
-  const [livePreviewReport, setLivePreviewReport] = useState<DOEReport>(
-    reports[0] || INITIAL_REPORTS[0]
+  const [livePreviewReport, setLivePreviewReport] = useState<DOEReport>(() =>
+    createEmptyReportTemplate(EMPLOYMENT_OFFICES[0])
   );
 
   // Modals
   const [isPosterModalOpen, setIsPosterModalOpen] = useState(false);
   const [isLineModalOpen, setIsLineModalOpen] = useState(false);
-  const [modalTargetReport, setModalTargetReport] = useState<DOEReport>(
-    reports[0] || INITIAL_REPORTS[0]
+  const [modalTargetReport, setModalTargetReport] = useState<DOEReport>(() =>
+    reports[0] || createEmptyReportTemplate(EMPLOYMENT_OFFICES[0])
   );
   const [reportToDelete, setReportToDelete] = useState<DOEReport | null>(null);
 
@@ -235,9 +279,16 @@ export default function App() {
         // Ensure online Firestore has initial data if newly provisioned
         await initializeFirestoreIfEmpty();
 
-        // 1. Subscribe to online reports
+        // Production Cleanup: ล้างข้อมูลรายงานทดสอบ/ตัวอย่างเดิมทั้งหมดออกจาก Cloud Firestore
+        const isCleanedOnline = localStorage.getItem('doe_firestore_cleaned_prod_v3');
+        if (!isCleanedOnline) {
+          await clearAllReportsOnline();
+          localStorage.setItem('doe_firestore_cleaned_prod_v3', 'true');
+        }
+
+        // 1. Subscribe to online reports (Realtime push via onSnapshot)
         const unsubReports = subscribeReports((onlineReports) => {
-          if (onlineReports && onlineReports.length > 0) {
+          if (Array.isArray(onlineReports)) {
             setReports(onlineReports);
           }
         });
@@ -489,20 +540,39 @@ export default function App() {
     localStorage.removeItem(STORAGE_KEY_REPORTERS);
     localStorage.removeItem(STORAGE_KEY_CONFIG);
 
-    setReports(INITIAL_REPORTS);
+    setReports([]);
     setOffices(EMPLOYMENT_OFFICES);
     setCategories(DEFAULT_CATEGORIES);
     setReporters(DEFAULT_REPORTERS);
     setSystemConfig(DEFAULT_SYSTEM_CONFIG);
 
-    INITIAL_REPORTS.forEach((r) => saveReportOnline(r).catch(console.warn));
     saveAllCategoriesOnline(DEFAULT_CATEGORIES).catch(console.warn);
     saveAllReportersOnline(DEFAULT_REPORTERS).catch(console.warn);
     saveSystemConfigOnline(DEFAULT_SYSTEM_CONFIG).catch(console.warn);
 
-    setCurrentReport(INITIAL_REPORTS[0]);
-    setLivePreviewReport(INITIAL_REPORTS[0]);
+    const emptyReport = createEmptyReportTemplate(EMPLOYMENT_OFFICES[0]);
+    setCurrentReport(emptyReport);
+    setLivePreviewReport(emptyReport);
     showToast('รีเซ็ตระบบและฐานข้อมูลเป็นค่าเริ่มต้นทางการของ DOE เรียบร้อย');
+  };
+
+  // ล้างประวัติการรายงานและหมายเหตุทั้งหมดเพื่อนำระบบขึ้นใช้งานจริง (Production Clear All)
+  const handleClearAllReportsForProduction = async () => {
+    try {
+      setReports([]);
+      setDeletedReports([]);
+      localStorage.removeItem(STORAGE_KEY_REPORTS);
+      localStorage.removeItem(STORAGE_KEY_DELETED_REPORTS);
+      await clearAllReportsOnline();
+
+      const emptyReport = createEmptyReportTemplate(EMPLOYMENT_OFFICES[0]);
+      setCurrentReport(emptyReport);
+      setLivePreviewReport(emptyReport);
+
+      showToast('ล้างประวัติการรายงานและหมายเหตุ/บันทึกเพิ่มเติมทั้งหมดเรียบร้อยแล้ว (ระบบพร้อมใช้งานจริง)');
+    } catch (err) {
+      console.error('Failed to clear reports for production:', err);
+    }
   };
 
   // Save or update report
@@ -526,6 +596,7 @@ export default function App() {
 
     // Save to Firestore online database
     saveReportOnline(savedReport).catch(console.warn);
+    setIsEditingExistingReport(false);
 
     // Open preview poster modal to verify
     setIsPosterModalOpen(true);
@@ -553,9 +624,13 @@ export default function App() {
       '↩️ กู้คืน (Undo)',
       () => handleRestoreDeletedReport(target.id)
     );
-    if (currentReport.id === target.id && remaining.length > 0) {
-      setCurrentReport(remaining[0]);
-      setLivePreviewReport(remaining[0]);
+    if (currentReport.id === target.id) {
+      const nextReport =
+        remaining.length > 0
+          ? remaining[0]
+          : createEmptyReportTemplate(offices[0]);
+      setCurrentReport(nextReport);
+      setLivePreviewReport(nextReport);
     }
     setReportToDelete(null);
   };
@@ -564,12 +639,13 @@ export default function App() {
   const handleDuplicateReport = (report: DOEReport) => {
     const cloned: DOEReport = {
       ...report,
-      id: `report-${Date.now()}`,
+      id: `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       reportDate: new Date().toISOString().slice(0, 10),
       reportDateThaiStr: formatThaiDateFull(new Date()),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    setIsEditingExistingReport(true);
     setCurrentReport(cloned);
     setLivePreviewReport(cloned);
     setActiveTab('form');
@@ -590,6 +666,7 @@ export default function App() {
 
   // Edit report
   const handleEditReport = (report: DOEReport) => {
+    setIsEditingExistingReport(true);
     setCurrentReport(report);
     setLivePreviewReport(report);
     setActiveTab('form');
@@ -598,46 +675,41 @@ export default function App() {
 
   // New report (supports preselectedOfficeId from dashboard table!)
   const handleNewReport = (preselectedOfficeId?: string) => {
+    setIsEditingExistingReport(false);
     const targetOffice =
       offices.find(
         (o) => o.id === (preselectedOfficeId || currentReport.officeId)
       ) || offices[0];
 
-    const newReportTemplate: DOEReport = {
-      id: `report-${Date.now()}`,
-      reportDate: new Date().toISOString().slice(0, 10),
-      reportDateThaiStr: formatThaiDateFull(new Date()),
-      officeId: targetOffice.id,
-      officeName: targetOffice.name,
-      officeNameEn: targetOffice.nameEn,
-      centerName: targetOffice.centerName,
-      region: targetOffice.region,
-      reporterName: '',
-      reporterPosition: '',
-      phoneNumber: targetOffice.defaultPhone || '',
-      lineId: targetOffice.defaultLine || '',
-      section59: 0,
-      section62: 0,
-      section63_1: 0,
-      section63_2: 0,
-      section64: 0,
-      modifyDetails: 0,
-      substituteCard: 0,
-      queueAppointment: 0,
-      cardsIssued: 0,
-      identityVerified: 0,
-      cardsNotIssued: 0,
-      missedAppointment: 0,
-      wrongAppointmentDate: 0,
-      cumulativeCardsIssued: 0,
-      cumulativeSinceDate: '13 ตุลาคม 2568',
-      notes: '',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const newReportTemplate = createEmptyReportTemplate(targetOffice);
     setCurrentReport(newReportTemplate);
     setLivePreviewReport(newReportTemplate);
     setActiveTab('form');
+  };
+
+  // Handle clearing current report form
+  const handleClearCurrentReport = () => {
+    setIsEditingExistingReport(false);
+    const targetOffice =
+      offices.find((o) => o.id === currentReport.officeId) || offices[0];
+    const blank = createEmptyReportTemplate(targetOffice);
+    setCurrentReport(blank);
+    setLivePreviewReport(blank);
+    showToast('ล้างข้อมูลในแบบฟอร์มเรียบร้อยแล้ว');
+  };
+
+  // Switch tabs safely, ensuring form opens as a clean blank template if not editing
+  const handleTabChange = (tab: ActiveTab) => {
+    if (tab === 'form' && activeTab !== 'form') {
+      if (!isEditingExistingReport) {
+        const blank = createEmptyReportTemplate(
+          offices.find((o) => o.id === currentReport.officeId) || offices[0]
+        );
+        setCurrentReport(blank);
+        setLivePreviewReport(blank);
+      }
+    }
+    setActiveTab(tab);
   };
 
   return (
@@ -645,7 +717,7 @@ export default function App() {
       {/* Top System Header */}
       <DOEHeader
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         reportCount={reports.length}
         notesCount={reports.filter((r) => Boolean(r.notes && r.notes.trim().length > 0)).length}
         onPreviewCurrentPoster={() => handleOpenPosterModal(livePreviewReport)}
@@ -680,6 +752,8 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <DashboardView
             reports={reports}
+            categories={categories}
+            currentReport={currentReport}
             onSelectReport={handleOpenPosterModal}
             onNewReport={handleNewReport}
             onOpenLine={handleOpenLineModal}
@@ -694,16 +768,37 @@ export default function App() {
           <div className="space-y-4">
             <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-blue-700" />
-                  <span>บันทึกผลการปฏิบัติงานศูนย์บริการคนต่างด้าว</span>
-                </h2>
-                <p className="text-xs text-slate-500">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-blue-700" />
+                    <span>บันทึกผลการปฏิบัติงานศูนย์บริการคนต่างด้าว</span>
+                  </h2>
+                  {isEditingExistingReport ? (
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold border border-amber-300 flex items-center gap-1">
+                      <span>กำลังแก้ไขรายงาน:</span>
+                      <span className="underline">{currentReport.officeName}</span>
+                    </span>
+                  ) : (
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-300">
+                      แบบฟอร์มเริ่มต้น (ค่าว่าง)
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
                   กรอกข้อมูลประจำวัน รายงานจะแสดงผลเปรียบเทียบในโปสเตอร์ทันทีแบบเรียลไทม์
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleNewReport()}
+                  className="text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer hover:border-slate-400 active:scale-98"
+                  title="เริ่มฟอร์มใหม่และเคลียร์ค่าเป็นค่าว่างทั้งหมด"
+                >
+                  <Plus className="w-3.5 h-3.5 text-blue-600" />
+                  <span>เริ่มฟอร์มใหม่ (ล้างค่าว่าง)</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => handleOpenPosterModal(livePreviewReport)}
@@ -724,6 +819,7 @@ export default function App() {
                   initialReport={currentReport}
                   onSave={handleSaveReport}
                   onPreviewLive={setLivePreviewReport}
+                  onClearForm={handleClearCurrentReport}
                   offices={offices}
                   categories={categories}
                   reporters={reporters}
@@ -812,6 +908,7 @@ export default function App() {
             onRestoreAllMissingOffices={handleRestoreAllMissingOffices}
             onRestoreDeletedReport={handleRestoreDeletedReport}
             onRestoreAllDeletedReports={handleRestoreAllDeletedReports}
+            onClearAllReportsForProduction={handleClearAllReportsForProduction}
             onNotify={showToast}
           />
         )}
@@ -868,6 +965,14 @@ export default function App() {
         iconType="trash"
         onConfirm={handleConfirmDeleteReport}
         onClose={() => setReportToDelete(null)}
+      />
+
+      {/* Floating DOE Assistant Mascot at Bottom-Left (ตัวละครซ้ายมือจอด้านล่าง คอยตอบคำถามและแจ้งข้อขัดข้องต่างๆ) */}
+      <DOEAssistantMascot
+        offices={offices}
+        currentOfficeName={currentReport.officeName}
+        isFirestoreOnline={isFirestoreOnline}
+        onNavigateTab={(tab) => setActiveTab(tab)}
       />
     </div>
   );

@@ -25,6 +25,7 @@ interface ReportFormProps {
   initialReport?: DOEReport | null;
   onSave: (report: DOEReport) => void;
   onPreviewLive: (report: DOEReport) => void;
+  onClearForm?: () => void;
   offices?: EmploymentOffice[];
   categories?: ReportCategory[];
   reporters?: ReporterProfile[];
@@ -34,6 +35,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   initialReport,
   onSave,
   onPreviewLive,
+  onClearForm,
   offices,
   categories,
   reporters,
@@ -75,24 +77,24 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       initialReport?.centerName ||
       'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดเชียงราย',
     region: initialReport?.region || 'ภาคเหนือ',
-    reporterName: initialReport?.reporterName || 'นางสาวสิริพร สุขเกษม',
-    reporterPosition: initialReport?.reporterPosition || 'นักวิชาการแรงงานชำนาญการ',
-    phoneNumber: initialReport?.phoneNumber || '053-152054, 098-7466630',
-    lineId: initialReport?.lineId || '@doecri',
-    section59: initialReport?.section59 ?? 9,
+    reporterName: initialReport?.reporterName || '',
+    reporterPosition: initialReport?.reporterPosition || '',
+    phoneNumber: initialReport?.phoneNumber || '',
+    lineId: initialReport?.lineId || '',
+    section59: initialReport?.section59 ?? 0,
     section62: initialReport?.section62 ?? 0,
-    section63_1: initialReport?.section63_1 ?? 3,
-    section63_2: initialReport?.section63_2 ?? 137,
+    section63_1: initialReport?.section63_1 ?? 0,
+    section63_2: initialReport?.section63_2 ?? 0,
     section64: initialReport?.section64 ?? 0,
     modifyDetails: initialReport?.modifyDetails ?? 0,
     substituteCard: initialReport?.substituteCard ?? 0,
-    queueAppointment: initialReport?.queueAppointment ?? 167,
-    cardsIssued: initialReport?.cardsIssued ?? 149,
+    queueAppointment: initialReport?.queueAppointment ?? 0,
+    cardsIssued: initialReport?.cardsIssued ?? 0,
     identityVerified: initialReport?.identityVerified ?? 0,
     cardsNotIssued: initialReport?.cardsNotIssued ?? 0,
-    missedAppointment: initialReport?.missedAppointment ?? 19,
-    wrongAppointmentDate: initialReport?.wrongAppointmentDate ?? 1,
-    cumulativeCardsIssued: initialReport?.cumulativeCardsIssued ?? 29170,
+    missedAppointment: initialReport?.missedAppointment ?? 0,
+    wrongAppointmentDate: initialReport?.wrongAppointmentDate ?? 0,
+    cumulativeCardsIssued: initialReport?.cumulativeCardsIssued ?? 0,
     cumulativeSinceDate: initialReport?.cumulativeSinceDate || '13 ตุลาคม 2568',
     customCategoryValues: initialReport?.customCategoryValues || {},
     notes: initialReport?.notes || '',
@@ -137,7 +139,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         notes: initialReport.notes || '',
       });
     }
-  }, [initialReport]);
+  }, [initialReport, todayIso]);
 
   // Calculate live sums across all active categories (both default and custom)
   const totalSections = useMemo(() => {
@@ -175,10 +177,10 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         officeNameEn: office.nameEn,
         centerName: isMobile ? formData.centerName : office.centerName,
         region: office.region,
-        phoneNumber: matchingReporter?.phoneNumber || office.defaultPhone || formData.phoneNumber,
-        lineId: matchingReporter?.lineId || office.defaultLine || formData.lineId,
-        reporterName: matchingReporter?.name || formData.reporterName,
-        reporterPosition: matchingReporter?.position || formData.reporterPosition,
+        phoneNumber: matchingReporter?.phoneNumber || formData.phoneNumber || '',
+        lineId: matchingReporter?.lineId || formData.lineId || '',
+        reporterName: matchingReporter?.name || formData.reporterName || '',
+        reporterPosition: matchingReporter?.position || formData.reporterPosition || '',
       };
       setFormData(updated);
       triggerPreview(updated);
@@ -234,7 +236,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   const triggerPreview = (data: typeof formData) => {
     onPreviewLive({
       ...data,
-      id: initialReport?.id || `report-${Date.now()}`,
+      id: initialReport?.id || `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       createdAt: initialReport?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -244,11 +246,51 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     e.preventDefault();
     const finalReport: DOEReport = {
       ...formData,
-      id: initialReport?.id || `report-${Date.now()}`,
+      id: initialReport?.id || `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       createdAt: initialReport?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     onSave(finalReport);
+  };
+
+  const handleClearForm = () => {
+    const targetOffice =
+      officeList.find((o) => o.id === selectedOfficeId) || officeList[0];
+    const resetData: Omit<DOEReport, 'id' | 'createdAt' | 'updatedAt'> = {
+      reportDate: formData.reportDate,
+      reportDateThaiStr: formData.reportDateThaiStr,
+      officeId: targetOffice.id,
+      officeName: targetOffice.name,
+      officeNameEn: targetOffice.nameEn,
+      centerName: targetOffice.centerName,
+      region: targetOffice.region,
+      reporterName: '',
+      reporterPosition: '',
+      phoneNumber: '',
+      lineId: '',
+      section59: 0,
+      section62: 0,
+      section63_1: 0,
+      section63_2: 0,
+      section64: 0,
+      modifyDetails: 0,
+      substituteCard: 0,
+      queueAppointment: 0,
+      cardsIssued: 0,
+      identityVerified: 0,
+      cardsNotIssued: 0,
+      missedAppointment: 0,
+      wrongAppointmentDate: 0,
+      cumulativeCardsIssued: 0,
+      cumulativeSinceDate: '13 ตุลาคม 2568',
+      customCategoryValues: {},
+      notes: '',
+    };
+    setFormData(resetData);
+    triggerPreview(resetData);
+    if (onClearForm) {
+      onClearForm();
+    }
   };
 
   // Filtered offices list for search
@@ -728,8 +770,18 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       {/* Submit / Action Buttons */}
       <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
         <button
+          type="button"
+          onClick={handleClearForm}
+          className="px-5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-sm shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:border-slate-400 active:scale-98"
+          title="ล้างข้อมูลตัวเลขและหมายเหตุทั้งหมดเป็น 0"
+        >
+          <RotateCcw className="w-4 h-4 text-slate-500" />
+          <span>ล้างข้อมูล</span>
+        </button>
+
+        <button
           type="submit"
-          className="px-6 py-2.5 rounded-xl bg-blue-900 hover:bg-blue-800 text-white font-bold text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
+          className="px-6 py-2.5 rounded-xl bg-blue-900 hover:bg-blue-800 text-white font-bold text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer active:scale-98"
         >
           <Save className="w-4 h-4" />
           <span>บันทึกรายงานผลการปฏิบัติงาน</span>

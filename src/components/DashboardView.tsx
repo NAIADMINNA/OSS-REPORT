@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { DOEReport, EmploymentOffice } from '../types/doe';
+import { DOEReport, EmploymentOffice, ReportCategory } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import {
   formatNumber,
@@ -32,6 +32,8 @@ import {
 
 interface DashboardViewProps {
   reports: DOEReport[];
+  categories?: ReportCategory[];
+  currentReport?: DOEReport | null;
   onSelectReport: (report: DOEReport) => void;
   onNewReport: (preselectedOfficeId?: string) => void;
   onOpenLine?: (report: DOEReport) => void;
@@ -42,12 +44,30 @@ interface DashboardViewProps {
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   reports,
+  categories,
+  currentReport,
   onSelectReport,
   onNewReport,
   onViewPendingInHistory,
   offices,
 }) => {
   const todayStr = useMemo(() => getTodayIsoDate(), []);
+
+  // Dynamic active categories from system config / props
+  const activeCategories = useMemo(() => {
+    if (categories && categories.length > 0) {
+      return categories.filter((c) => c.isActive);
+    }
+    return [
+      { id: 'section59', code: 'ม.59', title: 'กลุ่มมาตรา 59', subLabel: 'คนต่างด้าวทั่วไป', color: 'bg-sky-500', isActive: true },
+      { id: 'section62', code: 'ม.62', title: 'กลุ่มมาตรา 62', subLabel: 'ผู้เชี่ยวชาญ/ช่างฝีมือ', color: 'bg-blue-600', isActive: true },
+      { id: 'section63_1', code: 'ม.63/1', title: 'กลุ่มมาตรา 63/1', subLabel: 'ชนกลุ่มน้อย/มีสถานะ', color: 'bg-indigo-500', isActive: true },
+      { id: 'section63_2', code: 'ม.63/2', title: 'กลุ่มมาตรา 63/2', subLabel: 'มติ ครม. 4 สัญชาติ', color: 'bg-blue-800', isActive: true },
+      { id: 'section64', code: 'ม.64', title: 'กลุ่มมาตรา 64', subLabel: 'แรงงานไป-กลับ/ฤดูกาล', color: 'bg-teal-500', isActive: true },
+      { id: 'modifyDetails', code: 'เปลี่ยนแปลง', title: 'เปลี่ยนแปลงรายการ', subLabel: 'ย้ายนายจ้าง/สถานที่', color: 'bg-violet-600', isActive: true },
+      { id: 'substituteCard', code: 'ใบแทน', title: 'ใบแทนใบอนุญาต', subLabel: 'ชำรุด/สูญหาย/ขอแทน', color: 'bg-amber-500', isActive: true },
+    ];
+  }, [categories]);
 
   // Available distinct dates from existing reports (always including today)
   const availableDates = useMemo(() => {
@@ -151,14 +171,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     if (!selectedReportId) return [];
     const baseRep = reports.find((r) => r.id === selectedReportId);
     if (!baseRep) return [];
-    return reportedList.filter((r) => r.officeId === baseRep.officeId);
+    const matchingInFilter = reportedList.filter((r) => r.officeId === baseRep.officeId);
+    if (matchingInFilter.length > 0) return matchingInFilter;
+    // Fallback: If date filter excluded this report, still return baseRep so user can view its stats!
+    return [baseRep];
   }, [reports, selectedReportId, reportedList]);
 
   // Active selected report (if user picked a province from the table or dropdown)
   const activeSelectedReport = useMemo(() => {
     if (!selectedReportId) return null;
-    return reportedList.find((r) => r.id === selectedReportId) || null;
-  }, [reportedList, selectedReportId]);
+    return (
+      reportedList.find((r) => r.id === selectedReportId) ||
+      reports.find((r) => r.id === selectedReportId) ||
+      null
+    );
+  }, [reportedList, selectedReportId, reports]);
 
   // 2. Regional / National Metrics Summary
   const {
@@ -198,6 +225,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     let sec64 = 0;
     let secModify = 0;
     let secSub = 0;
+    const customSums: Record<string, number> = {};
 
     reportedList.forEach((report) => {
       totalQueue += report.queueAppointment || 0;
@@ -214,10 +242,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       sec64 += report.section64 || 0;
       secModify += report.modifyDetails || 0;
       secSub += report.substituteCard || 0;
+
+      if (report.customCategoryValues) {
+        Object.entries(report.customCategoryValues).forEach(([k, v]) => {
+          customSums[k] = (customSums[k] || 0) + (Number(v) || 0);
+        });
+      }
     });
 
     const totalSections =
-      sec59 + sec62 + sec63_1 + sec63_2 + sec64 + secModify + secSub;
+      sec59 + sec62 + sec63_1 + sec63_2 + sec64 + secModify + secSub +
+      Object.values(customSums).reduce((a, b) => a + b, 0);
     const successRate =
       totalQueue > 0 ? ((totalIssued / totalQueue) * 100).toFixed(1) : '0';
     const missedRate =
@@ -251,6 +286,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         sec64,
         secModify,
         secSub,
+        customSums,
       },
     };
   }, [reportedList, selectedRegion]);
@@ -272,6 +308,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       let sec64 = 0;
       let secModify = 0;
       let secSub = 0;
+      const customSums: Record<string, number> = {};
 
       selectedOfficeReports.forEach((r) => {
         totalQueue += r.queueAppointment || 0;
@@ -287,10 +324,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         sec64 += r.section64 || 0;
         secModify += r.modifyDetails || 0;
         secSub += r.substituteCard || 0;
+        if (r.customCategoryValues) {
+          Object.entries(r.customCategoryValues).forEach(([k, v]) => {
+            customSums[k] = (customSums[k] || 0) + (Number(v) || 0);
+          });
+        }
       });
 
       const totalSections =
-        sec59 + sec62 + sec63_1 + sec63_2 + sec64 + secModify + secSub;
+        sec59 + sec62 + sec63_1 + sec63_2 + sec64 + secModify + secSub +
+        Object.values(customSums).reduce((a, b) => a + b, 0);
 
       const successRate =
         totalQueue > 0 ? ((totalIssued / totalQueue) * 100).toFixed(1) : '0';
@@ -325,6 +368,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         sec64,
         secModify,
         secSub,
+        customSums,
       };
     }
 
@@ -352,6 +396,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       sec64: nationalStats.sec64,
       secModify: nationalStats.secModify,
       secSub: nationalStats.secSub,
+      customSums: nationalStats.customSums,
     };
   }, [selectedOfficeReports, nationalStats, selectedRegion, activePeriodLabel]);
 
@@ -386,6 +431,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     let secModify = 0;
     let secSub = 0;
 
+    const posterCustomSums: Record<string, number> = {};
+
     targetReports.forEach((r) => {
       totalQueue += r.queueAppointment || 0;
       totalIssued += r.cardsIssued || 0;
@@ -402,6 +449,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       sec64 += r.section64 || 0;
       secModify += r.modifyDetails || 0;
       secSub += r.substituteCard || 0;
+
+      if (r.customCategoryValues) {
+        Object.entries(r.customCategoryValues).forEach(([k, v]) => {
+          posterCustomSums[k] = (posterCustomSums[k] || 0) + (Number(v) || 0);
+        });
+      }
     });
 
     const officeName = isOverview
@@ -448,6 +501,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       section64: sec64,
       modifyDetails: secModify,
       substituteCard: secSub,
+      customCategoryValues: posterCustomSums,
       queueAppointment: totalQueue,
       cardsIssued: totalIssued,
       identityVerified: totalVerified,
@@ -462,16 +516,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   };
 
-  // Section breakdown array based on displayedStats
-  const sectionBreakdown = useMemo(() => [
-    { label: '1. กลุ่มมาตรา 59', sub: 'คนต่างด้าวทั่วไป', count: displayedStats.sec59, color: 'bg-sky-500' },
-    { label: '2. กลุ่มมาตรา 62', sub: 'ผู้เชี่ยวชาญ/ช่างฝีมือ', count: displayedStats.sec62, color: 'bg-blue-600' },
-    { label: '3. กลุ่มมาตรา 63/1', sub: 'ชนกลุ่มน้อย/มีสถานะ', count: displayedStats.sec63_1, color: 'bg-indigo-500' },
-    { label: '4. กลุ่มมาตรา 63/2', sub: 'มติ ครม. 4 สัญชาติ', count: displayedStats.sec63_2, color: 'bg-blue-800' },
-    { label: '5. กลุ่มมาตรา 64', sub: 'แรงงานไป-กลับ/ฤดูกาล', count: displayedStats.sec64, color: 'bg-teal-500' },
-    { label: '6. เปลี่ยนแปลงรายการ', sub: 'ย้ายนายจ้าง/สถานที่', count: displayedStats.secModify, color: 'bg-violet-600' },
-    { label: '7. ใบแทนใบอนุญาต', sub: 'ชำรุด/สูญหาย/ขอแทน', count: displayedStats.secSub, color: 'bg-amber-500' },
-  ], [displayedStats]);
+  // Dynamic Section breakdown array based on activeCategories & displayedStats
+  const sectionBreakdown = useMemo(() => {
+    return activeCategories.map((cat, i) => {
+      let count = 0;
+      if (cat.id === 'section59') count = displayedStats.sec59;
+      else if (cat.id === 'section62') count = displayedStats.sec62;
+      else if (cat.id === 'section63_1') count = displayedStats.sec63_1;
+      else if (cat.id === 'section63_2') count = displayedStats.sec63_2;
+      else if (cat.id === 'section64') count = displayedStats.sec64;
+      else if (cat.id === 'modifyDetails') count = displayedStats.secModify;
+      else if (cat.id === 'substituteCard') count = displayedStats.secSub;
+      else count = displayedStats.customSums?.[cat.id] || 0;
+
+      let color = cat.color || 'bg-sky-500';
+      if (cat.id === 'section59') color = 'bg-sky-500';
+      else if (cat.id === 'section62') color = 'bg-blue-600';
+      else if (cat.id === 'section63_1') color = 'bg-indigo-500';
+      else if (cat.id === 'section63_2') color = 'bg-blue-800';
+      else if (cat.id === 'section64') color = 'bg-teal-500';
+      else if (cat.id === 'modifyDetails') color = 'bg-violet-600';
+      else if (cat.id === 'substituteCard') color = 'bg-amber-500';
+
+      return {
+        id: cat.id,
+        label: `${i + 1}. ${cat.title}`,
+        sub: cat.subLabel || cat.code,
+        count,
+        color,
+      };
+    });
+  }, [activeCategories, displayedStats]);
 
   const maxSec = Math.max(...sectionBreakdown.map((s) => s.count), 1);
   const topSec = useMemo(() => {
@@ -935,7 +1010,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 4. SECTIONS DISTRIBUTION BREAKDOWN (7 กลุ่มมาตรา) */}
+      {/* 4. SECTIONS DISTRIBUTION BREAKDOWN (จำแนกตามกลุ่มมาตรา) */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-3">
@@ -943,30 +1018,81 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <Users className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="font-extrabold text-slate-900 text-lg sm:text-xl font-['Prompt'] flex items-center gap-2">
-                <span>
-                  ยอดผู้รับบริการจำแนก 7 กลุ่มมาตรา
-                </span>
-                <span className="text-sm font-bold text-blue-800 bg-blue-50 px-3 py-0.5 rounded-full border border-blue-200">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-extrabold text-slate-900 text-lg sm:text-xl font-['Prompt']">
+                  ยอดผู้รับบริการจำแนก {activeCategories.length} กลุ่มมาตรา
+                </h3>
+                <span className={`text-sm font-bold px-3 py-0.5 rounded-full border ${
+                  displayedStats.isDrilldown
+                    ? 'text-emerald-900 bg-emerald-100 border-emerald-300'
+                    : 'text-blue-800 bg-blue-50 border-blue-200'
+                }`}>
                   {displayedStats.officeName}
                 </span>
-              </h3>
+                {displayedStats.isDrilldown && (
+                  <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>เฉพาะจังหวัด</span>
+                  </span>
+                )}
+              </div>
               <p className="text-sm sm:text-base text-slate-600 mt-0.5">
                 รวมผู้รับบริการที่ออกบัตรสำเร็จทั้งหมด <span className="font-extrabold text-slate-900">{formatNumber(displayedStats.totalSections)}</span> คน
-                {displayedStats.isDrilldown && (
-                  <span className="text-sky-700 font-bold ml-1.5">
+                {displayedStats.isDrilldown ? (
+                  <span className="text-emerald-700 font-bold ml-1.5">
                     • ข้อมูลเฉพาะ {displayedStats.officeName}
+                  </span>
+                ) : (
+                  <span className="text-slate-500 font-normal ml-1.5">
+                    • ภาพรวมสะสมทั้งประเทศ ({reportedList.length} สำนักงาน)
                   </span>
                 )}
               </p>
             </div>
           </div>
 
-          <div className="text-sm sm:text-base font-bold px-4 py-2 bg-gradient-to-r from-amber-50 to-orange-50 text-amber-900 rounded-xl border border-amber-200/80 shadow-2xs flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-            <span>กลุ่มสูงสุด: {topSec?.label || 'มาตรา 63/2'} ({formatNumber(topSec?.count || 0)} คน)</span>
+          {/* View Mode Toggle: ภาพรวมทั้งประเทศ */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedReportId(null)}
+              className={`text-xs sm:text-sm font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                !selectedReportId
+                  ? 'bg-blue-900 text-white border-blue-900 shadow-2xs'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-300'
+              }`}
+              title="ดูผลรวมสะสมของทุกสำนักงานทั่วประเทศ"
+            >
+              🌐 ภาพรวมทั้งประเทศ
+            </button>
+
+            <div className="text-xs sm:text-sm font-bold px-3 py-1.5 bg-gradient-to-r from-amber-50 to-orange-50 text-amber-900 rounded-xl border border-amber-200/80 shadow-2xs flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span>สูงสุด: {topSec?.label || 'ม.63/2'} ({formatNumber(topSec?.count || 0)} คน)</span>
+            </div>
           </div>
         </div>
+
+        {displayedStats.isDrilldown && (
+          <div className="bg-emerald-50/90 border border-emerald-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm text-emerald-950">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                กำลังแสดงยอดจำแนกกลุ่มของ <b>{displayedStats.officeName}</b>{' '}
+                <span className="font-semibold text-emerald-700">
+                  (ตรงกับข้อมูลที่บันทึก/แก้ไขในหน้ารายงานทุกประการ)
+                </span>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedReportId(null)}
+              className="text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 px-3 py-1 rounded-lg border border-slate-300 cursor-pointer shadow-2xs"
+            >
+              ✕ คืนค่าดูภาพรวมสะสมทั้งประเทศ
+            </button>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 pt-1">
           {sectionBreakdown.map((sec, i) => {

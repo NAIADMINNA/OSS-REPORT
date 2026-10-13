@@ -14,6 +14,7 @@ import {
   ReportCategory,
   ReporterProfile,
   SystemConfig,
+  SystemIssueReport,
 } from '../types/doe';
 import { INITIAL_REPORTS } from '../data/seedData';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
@@ -31,6 +32,7 @@ const CONFIG_COLLECTION = 'system_config';
 const CONFIG_DOC_ID = 'main_config';
 const DELETED_REPORTS_COLLECTION = 'deleted_reports';
 const DELETED_OFFICES_COLLECTION = 'deleted_offices';
+const ISSUES_COLLECTION = 'system_issues';
 
 // 1. REPORTS
 export function subscribeReports(
@@ -59,7 +61,10 @@ export function subscribeReports(
 export async function saveReportOnline(report: DOEReport): Promise<void> {
   const docRef = doc(db, REPORTS_COLLECTION, report.id);
   try {
-    await setDoc(docRef, report, { merge: true });
+    const cleanReport = JSON.parse(
+      JSON.stringify(report, (_, val) => (val === undefined ? null : val))
+    );
+    await setDoc(docRef, cleanReport, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${REPORTS_COLLECTION}/${report.id}`);
   }
@@ -69,11 +74,23 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
   const docRef = doc(db, REPORTS_COLLECTION, report.id);
   const trashRef = doc(db, DELETED_REPORTS_COLLECTION, report.id);
   try {
-    // Add to trash and delete from active
-    await setDoc(trashRef, report);
+    // 1. Delete from active reports immediately so it disappears from UI and Firestore
     await deleteDoc(docRef);
+
+    // 2. Safely archive to trash collection
+    const cleanReport = JSON.parse(
+      JSON.stringify(report, (_, val) => (val === undefined ? null : val))
+    );
+    await setDoc(trashRef, cleanReport).catch((err) =>
+      console.warn('Could not archive to trash collection:', err)
+    );
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, `${REPORTS_COLLECTION}/${report.id}`);
+    console.error('Delete report online error, attempting fallback deleteDoc:', error);
+    try {
+      await deleteDoc(docRef);
+    } catch (err2) {
+      handleFirestoreError(err2, OperationType.DELETE, `${REPORTS_COLLECTION}/${report.id}`);
+    }
   }
 }
 
@@ -81,8 +98,11 @@ export async function restoreReportOnline(report: DOEReport): Promise<void> {
   const docRef = doc(db, REPORTS_COLLECTION, report.id);
   const trashRef = doc(db, DELETED_REPORTS_COLLECTION, report.id);
   try {
-    await setDoc(docRef, report);
-    await deleteDoc(trashRef);
+    const cleanReport = JSON.parse(
+      JSON.stringify(report, (_, val) => (val === undefined ? null : val))
+    );
+    await setDoc(docRef, cleanReport);
+    await deleteDoc(trashRef).catch(console.warn);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${REPORTS_COLLECTION}/${report.id}`);
   }
@@ -302,6 +322,24 @@ export async function saveSystemConfigOnline(config: SystemConfig): Promise<void
 }
 
 // 6. INITIAL SYNC / SEED
+export async function clearAllReportsOnline(): Promise<void> {
+  try {
+    // Delete active reports
+    const reportSnap = await getDocs(collection(db, REPORTS_COLLECTION));
+    for (const docSnap of reportSnap.docs) {
+      await deleteDoc(docSnap.ref).catch((e) => console.warn('Could not delete doc:', docSnap.id, e));
+    }
+
+    // Delete deleted/trash reports
+    const trashSnap = await getDocs(collection(db, DELETED_REPORTS_COLLECTION));
+    for (const docSnap of trashSnap.docs) {
+      await deleteDoc(docSnap.ref).catch((e) => console.warn('Could not delete trash doc:', docSnap.id, e));
+    }
+  } catch (err) {
+    console.warn('Error clearing reports online for production:', err);
+  }
+}
+
 export async function initializeFirestoreIfEmpty(): Promise<{
   reportsSeeded: boolean;
   officesSeeded: boolean;
@@ -310,18 +348,7 @@ export async function initializeFirestoreIfEmpty(): Promise<{
   let officesSeeded = false;
 
   try {
-    // Check reports collection
-    const reportSnap = await getDocs(collection(db, REPORTS_COLLECTION));
-    if (reportSnap.empty) {
-      // Seed initial reports
-      const batch = writeBatch(db);
-      for (const report of INITIAL_REPORTS) {
-        const docRef = doc(db, REPORTS_COLLECTION, report.id);
-        batch.set(docRef, report);
-      }
-      await batch.commit();
-      reportsSeeded = true;
-    }
+    // For Production: Do NOT seed mock demo reports into REPORTS_COLLECTION
 
     // Check offices collection
     const officesSnap = await getDocs(collection(db, OFFICES_COLLECTION));
@@ -373,4 +400,58 @@ export async function initializeFirestoreIfEmpty(): Promise<{
   }
 
   return { reportsSeeded, officesSeeded };
+}
+
+// 7. SYSTEM ISSUES & TROUBLE REPORTS
+export async function reportSystemIssueOnline(issue: SystemIssueReport): Promise<void> {
+  const docRef = doc(db, ISSUES_COLLECTION, issue.id);
+  try {
+    await setDoc(docRef, issue);
+  } catch (error) {
+    console.warn('Could not save issue online, saved locally:', error);
+  }
+}
+
+export async function deleteSystemIssueOnline(issueId: string): Promise<void> {
+  const docRef = doc(db, ISSUES_COLLECTION, issueId);
+  try {
+    await deleteDoc(docRef);
+  } catch (error) {
+    console.warn('Could not delete issue online:', error);
+  }
+}
+
+export async function clearAllSystemIssuesOnline(): Promise<void> {
+  try {
+    const snap = await getDocs(collection(db, ISSUES_COLLECTION));
+    const batch = writeBatch(db);
+    snap.forEach((docSnap) => {
+      batch.delete(docSnap.ref);
+    });
+    await batch.commit();
+  } catch (error) {
+    console.warn('Could not clear all issues online:', error);
+  }
+}
+
+export function subscribeSystemIssues(
+  onData: (issues: SystemIssueReport[]) => void,
+  onError?: (err: unknown) => void
+) {
+  const colRef = collection(db, ISSUES_COLLECTION);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const list: SystemIssueReport[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as SystemIssueReport);
+      });
+      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      onData(list);
+    },
+    (error) => {
+      if (onError) onError(error);
+      console.warn('Issues subscription status:', error);
+    }
+  );
 }

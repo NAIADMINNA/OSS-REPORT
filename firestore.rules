@@ -32,7 +32,7 @@ service cloud.firestore {
         && incoming().officeName is string
         && incoming().reporterName is string;
       allow update: if isValidId(reportId)
-        && incoming().id == existing().id;
+        && (!('id' in existing()) || incoming().id == existing().id);
       allow delete: if isValidId(reportId);
     }
 
@@ -45,7 +45,7 @@ service cloud.firestore {
         && incoming().name is string
         && incoming().region is string;
       allow update: if isValidId(officeId)
-        && incoming().id == existing().id;
+        && (!('id' in existing()) || incoming().id == existing().id);
       allow delete: if isValidId(officeId);
     }
 
@@ -58,7 +58,7 @@ service cloud.firestore {
         && incoming().code is string
         && incoming().title is string;
       allow update: if isValidId(categoryId)
-        && incoming().id == existing().id;
+        && (!('id' in existing()) || incoming().id == existing().id);
       allow delete: if isValidId(categoryId);
     }
 
@@ -71,7 +71,7 @@ service cloud.firestore {
         && incoming().name is string
         && incoming().position is string;
       allow update: if isValidId(reporterId)
-        && incoming().id == existing().id;
+        && (!('id' in existing()) || incoming().id == existing().id);
       allow delete: if isValidId(reporterId);
     }
 
@@ -97,6 +97,16 @@ service cloud.firestore {
       allow get, delete: if isValidId(officeId);
       allow list: if true;
       allow create, update: if isValidId(officeId);
+    }
+
+    // System Issues & Trouble Reports from Assistant Mascot
+    match /system_issues/{issueId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(issueId)
+        && incoming().id is string
+        && incoming().issueType is string
+        && incoming().title is string;
+      allow delete: if isValidId(issueId);
     }
   }
 }

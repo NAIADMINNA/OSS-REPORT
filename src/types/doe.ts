@@ -81,3 +81,15 @@ export interface SystemConfig {
   customLogoUrl: string | null; // URL หรือ Base64 รูปภาพโลโก้
   adminPin: string; // รหัสผ่าน Admin
 }
+
+export interface SystemIssueReport {
+  id: string;
+  issueType: 'sync' | 'printer' | 'data' | 'queue' | 'other';
+  title: string;
+  description: string;
+  officeName?: string;
+  reporterContact?: string;
+  status: 'pending' | 'in_progress' | 'resolved';
+  createdAt: string;
+  clientInfo?: string;
+}

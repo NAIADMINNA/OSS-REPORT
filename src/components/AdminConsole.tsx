@@ -1,14 +1,21 @@
-import React, { useState, useId, useMemo } from 'react';
+import React, { useState, useId, useMemo, useEffect } from 'react';
 import {
   DOEReport,
   EmploymentOffice,
   ReportCategory,
   ReporterProfile,
   SystemConfig,
+  SystemIssueReport,
 } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { DOELogo } from './DOELogo';
 import { ConfirmDialogModal } from './ConfirmDialogModal';
+import {
+  subscribeSystemIssues,
+  reportSystemIssueOnline,
+  deleteSystemIssueOnline,
+  clearAllSystemIssuesOnline,
+} from '../services/firestoreService';
 import {
   ShieldCheck,
   Building2,
@@ -38,6 +45,9 @@ import {
   ArrowRight,
   Layers,
   Key,
+  Copy,
+  Globe,
+  Code,
 } from 'lucide-react';
 
 interface AdminConsoleProps {
@@ -64,10 +74,11 @@ interface AdminConsoleProps {
   onRestoreAllMissingOffices?: () => void;
   onRestoreDeletedReport?: (reportId: string) => void;
   onRestoreAllDeletedReports?: () => void;
+  onClearAllReportsForProduction?: () => void;
   onNotify: (msg: string) => void;
 }
 
-export type AdminSubTab = 'sections' | 'offices' | 'branding' | 'reporters' | 'database';
+export type AdminSubTab = 'sections' | 'offices' | 'branding' | 'reporters' | 'issues' | 'database';
 
 export const AdminConsole: React.FC<AdminConsoleProps> = ({
   offices,
@@ -87,9 +98,41 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   onRestoreAllMissingOffices,
   onRestoreDeletedReport,
   onRestoreAllDeletedReports,
+  onClearAllReportsForProduction,
   onNotify,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<AdminSubTab>('sections');
+
+  // Issues management states
+  const [reportedIssues, setReportedIssues] = useState<SystemIssueReport[]>(() => {
+    try {
+      const saved = localStorage.getItem('doe_assistant_reported_issues_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+  const [issueFilterStatus, setIssueFilterStatus] = useState<'all' | 'pending' | 'resolved'>('all');
+  const [issueSearchQuery, setIssueSearchQuery] = useState('');
+
+  // Subscribe to live issues
+  useEffect(() => {
+    const unsub = subscribeSystemIssues((onlineIssues) => {
+      if (onlineIssues && onlineIssues.length > 0) {
+        setReportedIssues((prev) => {
+          const combined = [...onlineIssues];
+          for (const p of prev) {
+            if (!combined.some((c) => c.id === p.id)) {
+              combined.push(p);
+            }
+          }
+          return combined;
+        });
+      }
+    });
+    return () => unsub();
+  }, []);
 
   // Office management states
   const [officeSearch, setOfficeSearch] = useState('');
@@ -672,6 +715,18 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         </button>
 
         <button
+          onClick={() => setActiveSubTab('issues')}
+          className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 cursor-pointer ${
+            activeSubTab === 'issues'
+              ? 'bg-rose-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <AlertTriangle className="w-4 h-4 text-rose-500" />
+          <span>5. ข้อขัดข้องที่แจ้งเข้ามา ({reportedIssues.filter((i) => i.status === 'pending').length})</span>
+        </button>
+
+        <button
           onClick={() => setActiveSubTab('database')}
           className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 cursor-pointer ${
             activeSubTab === 'database'
@@ -680,7 +735,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           }`}
         >
           <Database className="w-4 h-4 text-emerald-500" />
-          <span>5. การเก็บข้อมูลลงฐานข้อมูล</span>
+          <span>6. การเก็บข้อมูลลงฐานข้อมูล</span>
         </button>
       </div>
 
@@ -1737,7 +1792,250 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         </div>
       )}
 
-      {/* 7. SUB-TAB 5: การเก็บข้อมูลลงฐานข้อมูล */}
+      {/* 6. SUB-TAB: ข้อขัดข้องที่แจ้งเข้ามา (System Issues Reported by Mascot) */}
+      {activeSubTab === 'issues' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5 text-slate-900 font-bold text-sm">
+                <div className="w-8 h-8 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-slate-900 font-['Prompt']">
+                    รายการข้อขัดข้องและปัญหาที่เจ้าหน้าที่แจ้งเข้ามา (System Issues & Tickets)
+                  </h4>
+                  <p className="text-xs text-slate-500 font-normal">
+                    รวบรวมเรื่องที่ส่งผ่านหุ่นยนต์ "NAIJEABKUB" จากทุกศูนย์บริการทั่วประเทศ
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Counters & Clear Button */}
+              <div className="flex items-center gap-2 text-xs flex-wrap">
+                <span className="px-3 py-1 bg-slate-100 text-slate-700 rounded-xl font-bold border border-slate-200">
+                  ทั้งหมด: {reportedIssues.length}
+                </span>
+                <span className="px-3 py-1 bg-rose-100 text-rose-800 rounded-xl font-bold border border-rose-200">
+                  รอดำเนินการ: {reportedIssues.filter((i) => i.status === 'pending').length}
+                </span>
+                <span className="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-xl font-bold border border-emerald-200">
+                  แก้ไขแล้ว: {reportedIssues.filter((i) => i.status === 'resolved').length}
+                </span>
+                {reportedIssues.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (window.confirm('คุณต้องการล้างประวัติข้อขัดข้องทั้งหมดหรือไม่?')) {
+                        await clearAllSystemIssuesOnline();
+                        setReportedIssues([]);
+                        onNotify('ล้างประวัติข้อขัดข้องทั้งหมดเรียบร้อยแล้ว');
+                      }
+                    }}
+                    className="px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl font-bold border border-rose-200 flex items-center gap-1 cursor-pointer transition-colors"
+                    title="ล้างรายการข้อขัดข้องทั้งหมด"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ล้างทั้งหมด</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Filter and Search Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setIssueFilterStatus('all')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                    issueFilterStatus === 'all'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  ทั้งหมด ({reportedIssues.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIssueFilterStatus('pending')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                    issueFilterStatus === 'pending'
+                      ? 'bg-rose-600 text-white shadow-2xs'
+                      : 'text-rose-700 hover:bg-rose-50'
+                  }`}
+                >
+                  รอดำเนินการ ({reportedIssues.filter((i) => i.status === 'pending').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIssueFilterStatus('resolved')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                    issueFilterStatus === 'resolved'
+                      ? 'bg-emerald-600 text-white shadow-2xs'
+                      : 'text-emerald-700 hover:bg-emerald-50'
+                  }`}
+                >
+                  แก้ไขแล้ว ({reportedIssues.filter((i) => i.status === 'resolved').length})
+                </button>
+              </div>
+
+              <div className="relative min-w-[220px]">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={issueSearchQuery}
+                  onChange={(e) => setIssueSearchQuery(e.target.value)}
+                  placeholder="ค้นหาข้อขัดข้อง, ศูนย์, หรือผู้แจ้ง..."
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 font-medium"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Issues List */}
+          <div className="space-y-3">
+            {reportedIssues
+              .filter((issue) => {
+                if (issueFilterStatus !== 'all' && issue.status !== issueFilterStatus) return false;
+                if (!issueSearchQuery.trim()) return true;
+                const q = issueSearchQuery.toLowerCase();
+                return (
+                  issue.title.toLowerCase().includes(q) ||
+                  issue.description.toLowerCase().includes(q) ||
+                  (issue.officeName && issue.officeName.toLowerCase().includes(q)) ||
+                  (issue.reporterContact && issue.reporterContact.toLowerCase().includes(q))
+                );
+              })
+              .map((issue) => {
+                const isPending = issue.status === 'pending';
+                return (
+                  <div
+                    key={issue.id}
+                    className={`bg-white rounded-2xl p-4 border transition-all shadow-xs space-y-3 ${
+                      isPending ? 'border-rose-200 hover:border-rose-300' : 'border-slate-200 opacity-80'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="space-y-1 max-w-2xl">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              isPending
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            }`}
+                          >
+                            {isPending ? '🚨 รอดำเนินการ' : '✅ แก้ไขเรียบร้อยแล้ว'}
+                          </span>
+                          <span className="text-xs font-mono font-bold text-slate-400">
+                            #{issue.id}
+                          </span>
+                          {issue.issueType && issue.issueType !== 'other' && (
+                            <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md font-semibold">
+                              {issue.issueType === 'sync'
+                                ? 'อินเทอร์เน็ต / ซิงก์'
+                                : issue.issueType === 'printer'
+                                ? 'เครื่องพิมพ์ / บัตร'
+                                : issue.issueType === 'data'
+                                ? 'สถิติตัวเลข'
+                                : 'ข้อขัดข้อง'}
+                            </span>
+                          )}
+                          <span className="text-xs text-sky-800 font-bold bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200">
+                            🏛️ {issue.officeName || 'ไม่ระบุสำนักงาน'}
+                          </span>
+                        </div>
+
+                        <h5 className="font-extrabold text-sm sm:text-base text-slate-900 font-['Prompt'] pt-0.5">
+                          {issue.title}
+                        </h5>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const nextStatus = issue.status === 'resolved' ? 'pending' : 'resolved';
+                            const updated: SystemIssueReport = { ...issue, status: nextStatus };
+                            await reportSystemIssueOnline(updated);
+                            setReportedIssues((prev) =>
+                              prev.map((i) => (i.id === issue.id ? updated : i))
+                            );
+                            onNotify(
+                              nextStatus === 'resolved'
+                                ? `อัปเดต "${issue.title}" เป็นแก้ไขแล้ว`
+                                : `เปลี่ยนสถานะเป็นรอดำเนินการ`
+                            );
+                          }}
+                          className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                            isPending
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+                              : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+                          }`}
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>{isPending ? 'ทำเครื่องหมายว่าแก้ไขแล้ว' : 'เปลี่ยนเป็นรอดำเนินการ'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (window.confirm(`คุณต้องการลบข้อขัดข้อง "${issue.title}" หรือไม่?`)) {
+                              await deleteSystemIssueOnline(issue.id);
+                              setReportedIssues((prev) => prev.filter((i) => i.id !== issue.id));
+                              onNotify(`ลบข้อขัดข้อง "${issue.title}" เรียบร้อยแล้ว`);
+                            }
+                          }}
+                          className="text-xs font-bold p-1.5 px-2 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                          title="ลบข้อขัดข้องนี้"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">ลบ</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 text-xs text-slate-800 leading-relaxed whitespace-pre-wrap font-sans">
+                      {issue.description}
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100 gap-2">
+                      <div className="flex items-center gap-3">
+                        {issue.reporterContact && (
+                          <span>
+                            📞 ผู้แจ้ง/เบอร์ติดต่อ: <b>{issue.reporterContact}</b>
+                          </span>
+                        )}
+                        <span>
+                          🕒 เวลาที่แจ้ง: {new Date(issue.createdAt).toLocaleString('th-TH')}
+                        </span>
+                      </div>
+                      {issue.clientInfo && (
+                        <span className="text-[10px] text-slate-400 font-mono truncate max-w-xs">
+                          {issue.clientInfo}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+            {reportedIssues.length === 0 && (
+              <div className="bg-white rounded-2xl p-8 border border-slate-200 text-center text-slate-500 space-y-2">
+                <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+                <p className="font-bold text-sm text-slate-700">ไม่มีรายงานข้อขัดข้องในระบบ</p>
+                <p className="text-xs text-slate-400">
+                  เมื่อเจ้าหน้าที่กดแจ้งข้อขัดข้องผ่านหุ่นยนต์ NAIJEABKUB ข้อมูลจะเข้ามาแสดงที่นี่ทันที
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 7. SUB-TAB 6: การเก็บข้อมูลลงฐานข้อมูล */}
       {activeSubTab === 'database' && (
         <div className="space-y-6">
           {/* Cloud Firestore Online Banner */}
@@ -1865,6 +2163,72 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
               </div>
             </div>
 
+            {/* REST JSON API Endpoints Card */}
+            <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white rounded-2xl p-5 border border-slate-700 shadow-md space-y-3.5 md:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-sky-400" />
+                  <span className="font-extrabold text-sm text-white tracking-tight">
+                    ช่องทางดึงข้อมูลสรุปผ่าน REST API (JSON API Endpoints)
+                  </span>
+                </div>
+                <span className="text-[11px] bg-sky-500/20 text-sky-300 border border-sky-400/30 px-2.5 py-0.5 rounded-full font-mono font-bold">
+                  GET Request • JSON Format
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                ท่านสามารถใช้ URL ด้านล่างนี้ในการดึงข้อมูลสรุปแบบ JSON เพื่อนำไปเชื่อมต่อกับ Power BI, Looker Studio, Google Sheets, LINE Bot หรือระบบสารสนเทศภายนอกได้โดยตรง:
+              </p>
+
+              <div className="space-y-3 pt-1">
+                {/* Endpoint 1: Reports Collection */}
+                <div className="bg-slate-800/80 rounded-xl p-3 border border-slate-700">
+                  <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-mono font-bold">GET</span>
+                      1. ดึงข้อมูลรายงานผลการปฏิบัติงานทั้งหมด (Reports JSON)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText('https://firestore.googleapis.com/v1/projects/promising-imagery-l09p9/databases/ai-studio-doe-984116b9-6043-43c8-97a4-66738b218bdc/documents/reports');
+                        onNotify('คัดลอก Reports JSON API URL เรียบร้อยแล้ว');
+                      }}
+                      className="text-[11px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer bg-slate-700/60 hover:bg-slate-700 px-2.5 py-1 rounded-lg transition-colors"
+                    >
+                      <Copy className="w-3 h-3" /> คัดลอก URL
+                    </button>
+                  </div>
+                  <code className="text-[11px] font-mono text-slate-300 break-all select-all block bg-slate-950/70 p-2 rounded-lg border border-slate-800">
+                    https://firestore.googleapis.com/v1/projects/promising-imagery-l09p9/databases/ai-studio-doe-984116b9-6043-43c8-97a4-66738b218bdc/documents/reports
+                  </code>
+                </div>
+
+                {/* Endpoint 2: System Issues Collection */}
+                <div className="bg-slate-800/80 rounded-xl p-3 border border-slate-700">
+                  <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-mono font-bold">GET</span>
+                      2. ดึงประวัติข้อขัดข้องที่แจ้งผ่าน NAIJEABKUB (Issues JSON)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText('https://firestore.googleapis.com/v1/projects/promising-imagery-l09p9/databases/ai-studio-doe-984116b9-6043-43c8-97a4-66738b218bdc/documents/system_issues');
+                        onNotify('คัดลอก System Issues JSON API URL เรียบร้อยแล้ว');
+                      }}
+                      className="text-[11px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer bg-slate-700/60 hover:bg-slate-700 px-2.5 py-1 rounded-lg transition-colors"
+                    >
+                      <Copy className="w-3 h-3" /> คัดลอก URL
+                    </button>
+                  </div>
+                  <code className="text-[11px] font-mono text-slate-300 break-all select-all block bg-slate-950/70 p-2 rounded-lg border border-slate-800">
+                    https://firestore.googleapis.com/v1/projects/promising-imagery-l09p9/databases/ai-studio-doe-984116b9-6043-43c8-97a4-66738b218bdc/documents/system_issues
+                  </code>
+                </div>
+              </div>
+            </div>
+
             {/* Quick Restore Standard Offices Card */}
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-3 md:col-span-2">
               <div className="flex items-center gap-2 font-bold text-sm text-slate-900">
@@ -1882,6 +2246,43 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 >
                   <RotateCcw className="w-4 h-4" />
                   <span>กู้คืนจังหวัด/สำนักงานมาตรฐานทั้งหมด ({EMPLOYMENT_OFFICES.length} แห่ง)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Clear All Reports For Production Card */}
+            <div className="bg-amber-50/70 rounded-2xl p-5 border border-amber-300 space-y-3 md:col-span-2">
+              <div className="flex items-center gap-2 font-bold text-sm text-amber-950">
+                <Trash2 className="w-4 h-4 text-amber-700" />
+                <span>ล้างประวัติการรายงานและหมายเหตุทั้งหมดเพื่อเริ่มใช้งานจริง (Clear All Reports for Production)</span>
+              </div>
+              <p className="text-xs text-amber-800">
+                ล้างรายงานผลการปฏิบัติงานและบันทึกเพิ่มเติมทั้งหมดออกจากระบบและฐานข้อมูล Cloud Firestore เพื่อให้ระบบพร้อมสำหรับการเริ่มบันทึกข้อมูลจริงของหน่วยงาน (รายชื่อสำนักงาน 87 แห่งและตั้งค่าระบบยังคงอยู่ครบถ้วน)
+              </p>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmModal({
+                      isOpen: true,
+                      title: 'ยืนยันล้างประวัติการรายงานทั้งหมดเพื่อเริ่มใช้งานจริง',
+                      message:
+                        'คุณแน่ใจหรือไม่ว่าต้องการล้างประวัติรายงานผลการปฏิบัติงานและหมายเหตุทั้งหมด? ข้อมูลรายงานการปฏิบัติงานเดิมจะถูกลบออกจากฐานข้อมูลอย่างถาวรเพื่อให้พร้อมเริ่มใช้งานจริงในระดับปฏิบัติการ',
+                      confirmText: 'ยืนยันล้างประวัติรายงานทั้งหมด',
+                      cancelText: 'ยกเลิก',
+                      isDanger: true,
+                      iconType: 'trash',
+                      onConfirm: () => {
+                        if (onClearAllReportsForProduction) {
+                          onClearAllReportsForProduction();
+                        }
+                      },
+                    });
+                  }}
+                  className="text-xs font-bold px-4 py-2.5 bg-amber-700 hover:bg-amber-800 text-white rounded-xl shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>ล้างประวัติการรายงานและหมายเหตุทั้งหมดเพื่อขึ้นใช้งานจริง</span>
                 </button>
               </div>
             </div>
