@@ -11,6 +11,7 @@ import {
   FileText,
   HelpCircle,
   Trash2,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { EmploymentOffice, SystemIssueReport } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
@@ -30,6 +31,7 @@ interface DOEAssistantMascotProps {
 }
 
 const STORAGE_KEY_ISSUES = 'doe_assistant_reported_issues_v1';
+const STORAGE_KEY_POSITION = 'doe_assistant_mascot_position_v1';
 
 export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
   offices = [],
@@ -38,6 +40,30 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [showGreetingBubble, setShowGreetingBubble] = useState(true);
+
+  // Position state: 'left' or 'right'
+  const [position, setPosition] = useState<'left' | 'right'>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_POSITION);
+      if (saved === 'left' || saved === 'right') return saved;
+    } catch {
+      // ignore
+    }
+    return 'left';
+  });
+
+  const togglePosition = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setPosition((prev) => {
+      const next = prev === 'left' ? 'right' : 'left';
+      try {
+        localStorage.setItem(STORAGE_KEY_POSITION, next);
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   // Issue Reporting Form State (ตัดประเภทข้อขัดข้องออก ตามความต้องการของผู้ใช้)
   const [issueTitle, setIssueTitle] = useState('');
@@ -181,8 +207,12 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
 
   return (
     <>
-      {/* ================= MASCOT FLOATING AVATAR (BOTTOM LEFT) ================= */}
-      <div className="fixed bottom-5 left-5 z-40 flex flex-col items-start select-none">
+      {/* ================= MASCOT FLOATING AVATAR ================= */}
+      <div
+        className={`fixed bottom-5 z-40 flex flex-col select-none transition-all duration-300 ${
+          position === 'left' ? 'left-4 sm:left-5 items-start' : 'right-4 sm:right-5 items-end'
+        }`}
+      >
         {/* Floating Greeting Bubble (when panel is closed) */}
         {!isOpen && showGreetingBubble && (
           <div className="mb-2.5 max-w-[270px] bg-white text-slate-800 p-3.5 rounded-2xl shadow-2xl border-2 border-amber-300 ring-4 ring-amber-400/25 animate-in fade-in slide-in-from-bottom-2 duration-300 relative">
@@ -206,7 +236,11 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
               </div>
             </div>
             {/* Small speech triangle pointer */}
-            <div className="absolute -bottom-2 left-7 w-3.5 h-3.5 bg-white border-r-2 border-b-2 border-amber-300 rotate-45" />
+            <div
+              className={`absolute -bottom-2 w-3.5 h-3.5 bg-white border-r-2 border-b-2 border-amber-300 rotate-45 ${
+                position === 'left' ? 'left-7' : 'right-7'
+              }`}
+            />
           </div>
         )}
 
@@ -314,34 +348,59 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
             </span>
           )}
         </button>
+
+        {/* Quick Position Switcher Pill (ย้ายหุ่นยนต์ซ้าย/ขวา) */}
+        <button
+          type="button"
+          onClick={togglePosition}
+          title={position === 'left' ? 'ย้ายหุ่นยนต์ไปไว้ฝั่งขวาของหน้าจอ' : 'ย้ายหุ่นยนต์ไปไว้ฝั่งซ้ายของหน้าจอ'}
+          className="mt-1 px-2.5 py-0.5 rounded-full bg-slate-900/90 hover:bg-slate-950 text-amber-300 border border-amber-400/60 shadow-md text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer backdrop-blur-xs hover:scale-105 active:scale-95"
+        >
+          <ArrowLeftRight className="w-3 h-3 text-amber-300" />
+          <span>{position === 'left' ? 'ย้ายไปขวา ➔' : '⬅ ย้ายไปซ้าย'}</span>
+        </button>
       </div>
 
       {/* ================= ISSUE REPORTING WINDOW PANEL ================= */}
       {isOpen && (
-        <div className="fixed bottom-20 left-4 sm:left-5 z-50 w-[94vw] sm:w-[410px] max-w-[440px] h-[580px] max-h-[85vh] bg-white rounded-3xl shadow-2xl border border-slate-200 ring-1 ring-slate-950/10 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 font-sans">
+        <div
+          className={`fixed bottom-20 z-50 w-[94vw] sm:w-[420px] max-w-[450px] h-[580px] max-h-[85vh] bg-white rounded-3xl shadow-2xl border border-slate-200 ring-1 ring-slate-950/10 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 font-sans transition-all ${
+            position === 'left' ? 'left-3 sm:left-5' : 'right-3 sm:right-5'
+          }`}
+        >
           {/* 1. Panel Header - Bright, Friendly Theme */}
-          <div className="bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 text-slate-950 p-3.5 px-4 flex items-center justify-between border-b border-amber-300 shrink-0 shadow-md">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center shadow-md border-2 border-amber-500 shrink-0">
-                <span className="text-xl">🤖</span>
+          <div className="bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 text-slate-950 p-3 px-3.5 sm:p-3.5 sm:px-4 flex items-center justify-between border-b border-amber-300 shrink-0 shadow-md">
+            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white flex items-center justify-center shadow-md border-2 border-amber-500 shrink-0">
+                <span className="text-lg sm:text-xl">🤖</span>
               </div>
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <h3 className="font-black text-sm sm:text-base text-slate-950 tracking-tight font-['Prompt']">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1 sm:gap-1.5">
+                  <h3 className="font-black text-xs sm:text-base text-slate-950 tracking-tight font-['Prompt'] truncate">
                     NAIJEABKUB (แจ้งข้อขัดข้อง)
                   </h3>
-                  <span className="text-[10px] bg-slate-950 text-amber-300 font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                  <span className="text-[9px] sm:text-[10px] bg-slate-950 text-amber-300 font-black px-1.5 sm:px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                     Helpdesk
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-800 font-semibold leading-none mt-0.5">
+                <p className="text-[10px] sm:text-[11px] text-slate-800 font-semibold leading-none mt-0.5 truncate">
                   หุ่นยนต์ผู้ช่วยรับแจ้งปัญหาและข้อขัดข้องระบบ
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0 ml-1">
+              {/* Position Switcher in Header */}
+              <button
+                type="button"
+                onClick={togglePosition}
+                className="px-2 py-1.5 rounded-xl bg-slate-900/15 hover:bg-slate-900/25 text-slate-950 flex items-center gap-1 transition-colors cursor-pointer text-[11px] font-bold shadow-2xs"
+                title={position === 'left' ? 'ย้ายหน้าต่างไปฝั่งขวา' : 'ย้ายหน้าต่างไปฝั่งซ้าย'}
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5 text-slate-950" />
+                <span>{position === 'left' ? 'ย้ายไปขวา' : 'ย้ายไปซ้าย'}</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
