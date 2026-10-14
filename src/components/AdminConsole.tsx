@@ -8,6 +8,7 @@ import {
   SystemIssueReport,
 } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
+import { sortOfficesByRegion } from '../utils/officeUtils';
 import { DOELogo } from './DOELogo';
 import { ConfirmDialogModal } from './ConfirmDialogModal';
 import {
@@ -76,6 +77,8 @@ interface AdminConsoleProps {
   onRestoreAllDeletedReports?: () => void;
   onClearAllReportsForProduction?: () => void;
   onNotify: (msg: string) => void;
+  onAdminAuthenticated?: () => void;
+  onAdminLoggedOut?: () => void;
 }
 
 export type AdminSubTab = 'sections' | 'offices' | 'branding' | 'reporters' | 'issues' | 'database';
@@ -100,6 +103,8 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   onRestoreAllDeletedReports,
   onClearAllReportsForProduction,
   onNotify,
+  onAdminAuthenticated,
+  onAdminLoggedOut,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<AdminSubTab>('sections');
 
@@ -180,6 +185,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         sessionStorage.setItem('doe_admin_authenticated', 'true');
       } catch {}
       setPinError(false);
+      onAdminAuthenticated?.();
       onNotify('ยืนยันสิทธิ์ผู้ดูแลระบบ (Admin) สำเร็จ');
     } else {
       setPinError(true);
@@ -192,6 +198,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       sessionStorage.removeItem('doe_admin_authenticated');
     } catch {}
     setPinInput('');
+    onAdminLoggedOut?.();
     onNotify('ออกจากระบบสิทธิ์ผู้ดูแลระบบเรียบร้อย');
   };
 
@@ -216,9 +223,9 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [logoInputMode, setLogoInputMode] = useState<'upload' | 'url'>('upload');
   const [logoUrlInput, setLogoUrlInput] = useState(systemConfig.customLogoUrl || '');
 
-  // Filtered offices
+  // Filtered offices sorted by region
   const filteredOffices = useMemo(() => {
-    return offices.filter((o) => {
+    const list = offices.filter((o) => {
       const matchRegion =
         officeRegionFilter === 'ทั้งหมด' || o.region === officeRegionFilter;
       const q = officeSearch.toLowerCase().trim();
@@ -229,6 +236,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         o.region.toLowerCase().includes(q);
       return matchRegion && matchSearch;
     });
+    return sortOfficesByRegion(list);
   }, [offices, officeSearch, officeRegionFilter]);
 
   // 1. SAVE REPORT HEADER & TITLES CONFIG
@@ -564,33 +572,28 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
         <form onSubmit={handleVerifyPin} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">
-              รหัสผ่านผู้ดูแลระบบ (Admin Password)
+            <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+              <span>รหัสผ่านผู้ดูแลระบบ (Admin Password)</span>
+              <span className="text-[11px] text-slate-400 font-normal">
+                (ซ่อนรหัสเป็นเครื่องหมายดอกจัน *)
+              </span>
             </label>
             <div className="relative">
               <input
-                type={showPin ? 'text' : 'password'}
+                type="password"
                 maxLength={30}
-                placeholder="ระบุรหัสผ่านผู้ดูแลระบบ"
+                placeholder="••••••••"
                 value={pinInput}
                 onChange={(e) => {
                   setPinInput(e.target.value);
                   setPinError(false);
                 }}
-                className={`w-full text-center text-lg px-9 py-2.5 bg-slate-50 border rounded-xl font-mono font-bold focus:bg-white focus:outline-hidden focus:ring-2 ${
+                className={`w-full text-center text-lg tracking-widest px-9 py-2.5 bg-slate-50 border rounded-xl font-mono font-bold focus:bg-white focus:outline-hidden focus:ring-2 ${
                   pinError ? 'border-rose-400 focus:ring-rose-400' : 'border-slate-300 focus:ring-sky-500'
                 }`}
                 autoFocus
               />
               <Key className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
-              <button
-                type="button"
-                onClick={() => setShowPin(!showPin)}
-                className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition-colors p-0.5 cursor-pointer"
-                title={showPin ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
-              >
-                {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
             </div>
             {pinError && (
               <div className="text-xs text-rose-600 mt-2 flex items-center gap-1.5 justify-center">
@@ -789,22 +792,31 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
-                  <Key className="w-3.5 h-3.5 text-blue-700" />
-                  <span>รหัสผ่านเข้าสู่ระบบผู้ดูแลระบบ (Admin Password)</span>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Key className="w-3.5 h-3.5 text-blue-700" />
+                    <span>รหัสผ่านเข้าสู่ระบบผู้ดูแลระบบ (Admin Password)</span>
+                  </span>
+                  <span className="text-[11px] text-slate-400 font-normal">
+                    (ซ่อนรหัสเป็นเครื่องหมายดอกจัน *)
+                  </span>
                 </label>
-                <input
-                  type="text"
-                  value={configForm.adminPin || '0841543524'}
-                  onChange={(e) =>
-                    setConfigForm({ ...configForm, adminPin: e.target.value })
-                  }
-                  placeholder="เช่น 0841543524"
-                  className="w-full text-sm px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-mono"
-                />
-                <p className="text-[11px] text-slate-400 mt-1">
-                  กำหนดรหัสผ่านสำหรับเข้าสู่ระบบเมนูตั้งค่าผู้ดูแลระบบ
-                </p>
+                <div className="relative">
+                  <input
+                    type="password"
+                    value={configForm.adminPin || '0841543524'}
+                    onChange={(e) =>
+                      setConfigForm({ ...configForm, adminPin: e.target.value })
+                    }
+                    placeholder="••••••••"
+                    className="w-full text-sm px-3.5 py-2 pl-9 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-mono tracking-widest"
+                  />
+                  <Key className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-slate-500 mt-1">
+                  <span>🔒 กำหนดรหัสผ่านผู้ดูแลระบบ (ระบบจะแสดงผลเป็นเครื่องหมายดอกจัน * เสมอเพื่อความปลอดภัย)</span>
+                  <span className="font-mono text-slate-400">********</span>
+                </div>
               </div>
             </div>
           </div>

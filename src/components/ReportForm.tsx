@@ -2,6 +2,8 @@ import React, { useState, useEffect, useId, useMemo } from 'react';
 import { DOEReport, EmploymentOffice, ReportCategory, ReporterProfile } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { formatThaiDateFull, formatNumber, getTodayIsoDate } from '../utils/thaiDate';
+import { groupAndSortOfficesByRegion } from '../utils/officeUtils';
+import { AdminPinModal } from './AdminPinModal';
 import {
   Save,
   User,
@@ -16,6 +18,8 @@ import {
   Minus,
   Truck,
   RotateCcw,
+  Lock,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const MOBILE_UNIT_CENTER_NAME =
@@ -29,6 +33,9 @@ interface ReportFormProps {
   offices?: EmploymentOffice[];
   categories?: ReportCategory[];
   reporters?: ReporterProfile[];
+  isAdmin?: boolean;
+  adminPin?: string;
+  onAdminAuthenticated?: () => void;
 }
 
 export const ReportForm: React.FC<ReportFormProps> = ({
@@ -39,12 +46,30 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   offices,
   categories,
   reporters,
+  isAdmin = false,
+  adminPin = '0841543524',
+  onAdminAuthenticated,
 }) => {
   const searchInputId = useId();
   const [officeSearch, setOfficeSearch] = useState('');
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>(
-    initialReport?.officeId || 'chiangrai'
+    initialReport?.officeId || EMPLOYMENT_OFFICES[0]?.id || 'bkk_1'
   );
+
+  // Admin Verification Modal for protected fields (Center Name & Notes)
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [adminActionTitle, setAdminActionTitle] = useState('');
+  const [pendingAdminAction, setPendingAdminAction] = useState<(() => void) | null>(null);
+
+  const requireAdmin = (actionTitle: string, actionFn: () => void) => {
+    if (isAdmin) {
+      actionFn();
+    } else {
+      setAdminActionTitle(actionTitle);
+      setPendingAdminAction(() => actionFn);
+      setAdminModalOpen(true);
+    }
+  };
 
   const officeList = useMemo(() => {
     return offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES;
@@ -66,17 +91,18 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   }, [categories]);
 
   const todayIso = getTodayIsoDate();
+  const initialDefaultOffice = EMPLOYMENT_OFFICES[0];
 
   const [formData, setFormData] = useState<Omit<DOEReport, 'id' | 'createdAt' | 'updatedAt'>>({
     reportDate: initialReport?.reportDate || todayIso,
     reportDateThaiStr: initialReport?.reportDateThaiStr || formatThaiDateFull(todayIso),
-    officeId: initialReport?.officeId || 'chiangrai',
-    officeName: initialReport?.officeName || 'สำนักงานจัดหางานจังหวัดเชียงราย',
-    officeNameEn: initialReport?.officeNameEn || 'Chiangrai Provincial Employment Office',
+    officeId: initialReport?.officeId || initialDefaultOffice.id,
+    officeName: initialReport?.officeName || initialDefaultOffice.name,
+    officeNameEn: initialReport?.officeNameEn || initialDefaultOffice.nameEn,
     centerName:
       initialReport?.centerName ||
-      'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดเชียงราย',
-    region: initialReport?.region || 'ภาคเหนือ',
+      initialDefaultOffice.centerName,
+    region: initialReport?.region || initialDefaultOffice.region,
     reporterName: initialReport?.reporterName || '',
     reporterPosition: initialReport?.reporterPosition || '',
     phoneNumber: initialReport?.phoneNumber || '',
@@ -102,20 +128,20 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
   useEffect(() => {
     if (initialReport) {
-      setSelectedOfficeId(initialReport.officeId || 'chiangrai');
+      setSelectedOfficeId(initialReport.officeId || initialDefaultOffice.id);
       setFormData({
         reportDate: initialReport.reportDate || todayIso,
         reportDateThaiStr:
           initialReport.reportDateThaiStr ||
           formatThaiDateFull(initialReport.reportDate || todayIso),
-        officeId: initialReport.officeId || 'chiangrai',
-        officeName: initialReport.officeName || 'สำนักงานจัดหางานจังหวัดเชียงราย',
+        officeId: initialReport.officeId || initialDefaultOffice.id,
+        officeName: initialReport.officeName || initialDefaultOffice.name,
         officeNameEn:
-          initialReport.officeNameEn || 'Chiangrai Provincial Employment Office',
+          initialReport.officeNameEn || initialDefaultOffice.nameEn,
         centerName:
           initialReport.centerName ||
-          'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดเชียงราย',
-        region: initialReport.region || 'ภาคเหนือ',
+          initialDefaultOffice.centerName,
+        region: initialReport.region || initialDefaultOffice.region,
         reporterName: initialReport.reporterName || '',
         reporterPosition: initialReport.reporterPosition || '',
         phoneNumber: initialReport.phoneNumber || '',
@@ -293,12 +319,28 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     }
   };
 
-  // Filtered offices list for search
-  const filteredOffices = officeList.filter((o) =>
-    o.name.includes(officeSearch) ||
-    o.nameEn.toLowerCase().includes(officeSearch.toLowerCase()) ||
-    o.region.includes(officeSearch)
-  );
+  const [selectedRegionFilter, setSelectedRegionFilter] = useState('ทั้งหมด');
+
+  // Filtered offices list for search and region
+  const filteredOffices = useMemo(() => {
+    return officeList.filter((o) => {
+      const matchRegion =
+        selectedRegionFilter === 'ทั้งหมด' || o.region === selectedRegionFilter;
+      const q = officeSearch.toLowerCase().trim();
+      const matchSearch =
+        !q ||
+        o.name.toLowerCase().includes(q) ||
+        (o.centerName && o.centerName.toLowerCase().includes(q)) ||
+        o.nameEn.toLowerCase().includes(q) ||
+        o.region.toLowerCase().includes(q);
+      return matchRegion && matchSearch;
+    });
+  }, [officeList, officeSearch, selectedRegionFilter]);
+
+  // Group and sort filtered offices by standard region
+  const groupedFilteredOffices = useMemo(() => {
+    return groupAndSortOfficesByRegion(filteredOffices);
+  }, [filteredOffices]);
 
   const stepCustomCategory = (catId: string, delta: number) => {
     const current = (formData.customCategoryValues && formData.customCategoryValues[catId]) || 0;
@@ -315,30 +357,59 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* สำนักงานจัดหางาน */}
+          {/* สำนักงานจัดหางาน และศูนย์บริการ */}
           <div className="md:col-span-2">
-            <label htmlFor={searchInputId} className="block text-sm font-bold text-slate-800 mb-1.5">
-              สำนักงานจัดหางาน (76 จังหวัด + กทม. 10 พื้นที่) <span className="text-rose-500">*</span>
+            <label htmlFor={searchInputId} className="block text-sm font-bold text-slate-800 mb-1.5 flex items-center justify-between flex-wrap gap-1">
+              <span>สำนักงานจัดหางาน และศูนย์บริการ (เรียงตามภูมิภาค) <span className="text-rose-500">*</span></span>
+              <span className="text-xs text-sky-700 font-normal">
+                พบ {filteredOffices.length} แห่ง ({groupedFilteredOffices.length} ภูมิภาค)
+              </span>
             </label>
             <div className="space-y-2">
-              <input
-                id={searchInputId}
-                type="text"
-                placeholder="พิมพ์ค้นหาจังหวัดหรือพื้นที่... เช่น เชียงราย, ชลบุรี, กทม.พื้นที่ 5"
-                value={officeSearch}
-                onChange={(e) => setOfficeSearch(e.target.value)}
-                className="w-full min-w-0 text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-sky-500"
-              />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="sm:col-span-2">
+                  <input
+                    id={searchInputId}
+                    type="text"
+                    placeholder="พิมพ์ค้นหาจังหวัด, ศูนย์, หรือพื้นที่... เช่น เชียงราย, ชลบุรี, กทม.พื้นที่ 5"
+                    value={officeSearch}
+                    onChange={(e) => setOfficeSearch(e.target.value)}
+                    className="w-full min-w-0 text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
+                  />
+                </div>
+                <div>
+                  <select
+                    value={selectedRegionFilter}
+                    onChange={(e) => setSelectedRegionFilter(e.target.value)}
+                    aria-label="กรองตามภูมิภาค"
+                    className="w-full text-sm px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-semibold text-slate-700"
+                  >
+                    <option value="ทั้งหมด">🌐 ทุกภูมิภาค</option>
+                    <option value="กรุงเทพมหานคร">🏛️ กรุงเทพมหานคร</option>
+                    <option value="ภาคกลางและตะวันตก">🌾 ภาคกลางและตะวันตก</option>
+                    <option value="ภาคตะวันออก">🌊 ภาคตะวันออก</option>
+                    <option value="ภาคตะวันออกเฉียงเหนือ">☀️ ภาคตะวันออกเฉียงเหนือ</option>
+                    <option value="ภาคเหนือ">⛰️ ภาคเหนือ</option>
+                    <option value="ภาคใต้">🏝️ ภาคใต้</option>
+                    <option value="เฉพาะกิจ">🚚 เฉพาะกิจ</option>
+                  </select>
+                </div>
+              </div>
+
               <select
                 value={selectedOfficeId}
                 onChange={(e) => handleOfficeChange(e.target.value)}
-                aria-label="เลือกสำนักงานจัดหางาน"
-                className="w-full min-w-0 text-sm sm:text-base px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-semibold"
+                aria-label="เลือกสำนักงานจัดหางานและศูนย์บริการ"
+                className="w-full min-w-0 text-sm sm:text-base px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-semibold text-slate-900"
               >
-                {filteredOffices.map((office) => (
-                  <option key={office.id} value={office.id}>
-                    [{office.region}] {office.name}
-                  </option>
+                {groupedFilteredOffices.map((group) => (
+                  <optgroup key={group.region} label={group.regionLabel}>
+                    {group.offices.map((office) => (
+                      <option key={office.id} value={office.id}>
+                        {office.name} {office.centerName ? `• ${office.centerName}` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>
@@ -364,22 +435,36 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
           {/* ชื่อศูนย์บริการ */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="block text-sm font-bold text-slate-800">
-                ชื่อศูนย์บริการ (ระบุในหัวเรื่องโปสเตอร์)
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <label className="block text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                <span>ชื่อศูนย์บริการ (ระบุในหัวเรื่องโปสเตอร์)</span>
+                {!isAdmin && <Lock className="w-3.5 h-3.5 text-amber-600" />}
               </label>
-              {formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-              formData.centerName?.includes('Mobile Unit') ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                  <Truck className="w-3 h-3" />
-                  หน่วยบริการเคลื่อนที่
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-sky-100 text-sky-800 border border-sky-200">
-                  <Building2 className="w-3 h-3" />
-                  ชื่อศูนย์ตามระบุ
-                </span>
-              )}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {!isAdmin ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                    <Lock className="w-3 h-3 text-amber-700" />
+                    ห้ามแก้ไข (สิทธิ์เฉพาะ Admin)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                    สิทธิ์ Admin: แก้ไขได้
+                  </span>
+                )}
+                {formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+                formData.centerName?.includes('Mobile Unit') ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    <Truck className="w-3 h-3" />
+                    หน่วยบริการเคลื่อนที่
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-sky-100 text-sky-800 border border-sky-200">
+                    <Building2 className="w-3 h-3" />
+                    ชื่อศูนย์ตามระบุ
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Selector: ชื่อศูนย์ตามระบุ vs หน่วยบริการเคลื่อนที่ (Mobile Unit) */}
@@ -387,14 +472,20 @@ export const ReportForm: React.FC<ReportFormProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
-                  const targetName =
-                    currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
-                  const updated = { ...formData, centerName: targetName };
-                  setFormData(updated);
-                  triggerPreview(updated);
+                  requireAdmin('เปลี่ยนรูปแบบชื่อศูนย์บริการเป็น "ชื่อศูนย์ตามระบุ"', () => {
+                    const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
+                    const targetName =
+                      currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+                    const updated = { ...formData, centerName: targetName };
+                    setFormData(updated);
+                    triggerPreview(updated);
+                  });
                 }}
                 className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  !isAdmin
+                    ? 'opacity-90 bg-slate-50/70 border-slate-200 hover:border-amber-300'
+                    : ''
+                } ${
                   !(
                     formData.centerName === MOBILE_UNIT_CENTER_NAME ||
                     formData.centerName?.includes('Mobile Unit')
@@ -417,8 +508,9 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900">
-                      ชื่อศูนย์ตามระบุ
+                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1">
+                      <span>ชื่อศูนย์ตามระบุ</span>
+                      {!isAdmin && <Lock className="w-3 h-3 text-amber-600" />}
                     </span>
                     {!(
                       formData.centerName === MOBILE_UNIT_CENTER_NAME ||
@@ -435,11 +527,17 @@ export const ReportForm: React.FC<ReportFormProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const updated = { ...formData, centerName: MOBILE_UNIT_CENTER_NAME };
-                  setFormData(updated);
-                  triggerPreview(updated);
+                  requireAdmin('เปลี่ยนรูปแบบชื่อศูนย์บริการเป็น "หน่วยบริการเคลื่อนที่ (Mobile Unit)"', () => {
+                    const updated = { ...formData, centerName: MOBILE_UNIT_CENTER_NAME };
+                    setFormData(updated);
+                    triggerPreview(updated);
+                  });
                 }}
                 className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  !isAdmin
+                    ? 'opacity-90 bg-slate-50/70 border-slate-200 hover:border-amber-300'
+                    : ''
+                } ${
                   formData.centerName === MOBILE_UNIT_CENTER_NAME ||
                   formData.centerName?.includes('Mobile Unit')
                     ? 'bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
@@ -458,8 +556,9 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900">
-                      หน่วยบริการเคลื่อนที่ (Mobile Unit)
+                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1">
+                      <span>หน่วยบริการเคลื่อนที่ (Mobile Unit)</span>
+                      {!isAdmin && <Lock className="w-3 h-3 text-amber-600" />}
                     </span>
                     {(formData.centerName === MOBILE_UNIT_CENTER_NAME ||
                       formData.centerName?.includes('Mobile Unit')) && (
@@ -473,41 +572,73 @@ export const ReportForm: React.FC<ReportFormProps> = ({
               </button>
             </div>
 
-            <div className="space-y-1">
-              <input
-                type="text"
-                value={formData.centerName}
-                onChange={(e) => {
-                  const updated = { ...formData, centerName: e.target.value };
-                  setFormData(updated);
-                  triggerPreview(updated);
-                }}
-                className="w-full min-w-0 text-sm px-3.5 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium text-slate-800"
-                placeholder="ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว..."
-              />
-              <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 pt-0.5">
-                <span>
-                  {formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-                  formData.centerName?.includes('Mobile Unit')
-                    ? '💡 สามารถระบุจุดบริการหรืออำเภอต่อท้ายได้ เช่น (Mobile Unit) - อ.แม่สาย'
-                    : '💡 สามารถปรับแต่งชื่อศูนย์บริการตามต้องการ หรือกดคืนค่าตามสำนักงาน'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
-                    const defaultName =
-                      currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
-                    const updated = { ...formData, centerName: defaultName };
+            <div className="space-y-1.5">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={formData.centerName}
+                  readOnly={!isAdmin}
+                  onChange={(e) => {
+                    if (!isAdmin) return;
+                    const updated = { ...formData, centerName: e.target.value };
                     setFormData(updated);
                     triggerPreview(updated);
                   }}
-                  className="text-sky-600 hover:text-sky-700 font-medium underline shrink-0 ml-2 cursor-pointer flex items-center gap-1"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>คืนค่าตามสำนักงาน</span>
-                </button>
+                  className={`w-full min-w-0 text-sm px-3.5 py-2.5 rounded-lg font-medium transition-colors ${
+                    !isAdmin
+                      ? 'bg-slate-100 text-slate-600 border border-slate-200 cursor-not-allowed select-none'
+                      : 'bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 text-slate-800'
+                  }`}
+                  placeholder="ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว..."
+                />
+                {!isAdmin && (
+                  <div className="absolute right-3 top-2.5 flex items-center gap-1 text-xs text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-md border border-amber-300">
+                    <Lock className="w-3 h-3 text-amber-700" />
+                    <span>ล็อกสิทธิ์ Admin</span>
+                  </div>
+                )}
               </div>
+
+              {!isAdmin ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-amber-50/80 border border-amber-200 text-xs text-amber-950">
+                  <div className="flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                    <span>ชื่อศูนย์บริการห้ามแก้ไข สิทธิ์การแก้ไขสงวนไว้สำหรับผู้ดูแลระบบ (Admin) เท่านั้น</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminActionTitle('ปลดล็อกสิทธิ์เพื่อแก้ไขชื่อศูนย์บริการ');
+                      setAdminModalOpen(true);
+                    }}
+                    className="font-bold underline text-amber-800 hover:text-amber-950 cursor-pointer flex items-center gap-1 text-[11px] bg-white px-2 py-0.5 rounded-md border border-amber-300 shadow-2xs"
+                  >
+                    <ShieldCheck className="w-3 h-3 text-amber-600" />
+                    <span>ปลดล็อกสิทธิ์ Admin</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 pt-0.5">
+                  <span className="text-emerald-700 font-medium">
+                    ✓ สิทธิ์ Admin: สามารถปรับแต่งชื่อศูนย์บริการ หรือกดคืนค่าตามสำนักงานได้
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
+                      const defaultName =
+                        currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+                      const updated = { ...formData, centerName: defaultName };
+                      setFormData(updated);
+                      triggerPreview(updated);
+                    }}
+                    className="text-sky-600 hover:text-sky-700 font-medium underline shrink-0 ml-2 cursor-pointer flex items-center gap-1"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>คืนค่าตามสำนักงาน</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -744,25 +875,76 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
       {/* SECTION 4: หมายเหตุ / บันทึกเพิ่มเติม */}
       <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-xs space-y-4">
-        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-blue-900 font-bold text-base">
-          <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
-          <span>4. หมายเหตุ / บันทึกเพิ่มเติมประจำวัน</span>
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100 flex-wrap gap-2">
+          <div className="flex items-center gap-2 text-blue-900 font-bold text-base">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
+            <span>4. หมายเหตุ / บันทึกเพิ่มเติมประจำวัน</span>
+            {!isAdmin && <Lock className="w-3.5 h-3.5 text-amber-600" />}
+          </div>
+          {!isAdmin ? (
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+              <Lock className="w-3 h-3 text-amber-700" />
+              เฉพาะสิทธิ์ Admin
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+              <ShieldCheck className="w-3 h-3 text-emerald-600" />
+              สิทธิ์ Admin: บันทึก/แก้ไขได้
+            </span>
+          )}
         </div>
 
+        {!isAdmin && (
+          <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-amber-50/90 border border-amber-200 text-xs text-amber-950">
+            <div className="flex items-center gap-2">
+              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="font-medium">
+                เมนูหมายเหตุ/บันทึกเพิ่มเติม สงวนสิทธิ์การแก้ไขหรือบันทึกเฉพาะผู้ดูแลระบบ (Admin) เท่านั้น
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAdminActionTitle('ปลดล็อกสิทธิ์เพื่อแก้ไขหรือบันทึกหมายเหตุ/บันทึกเพิ่มเติม');
+                setAdminModalOpen(true);
+              }}
+              className="font-bold underline text-amber-900 hover:text-amber-950 cursor-pointer flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-amber-300 shadow-2xs text-[11px]"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+              <span>ยืนยันสิทธิ์ Admin</span>
+            </button>
+          </div>
+        )}
+
         <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">
-            บันทึกการปฏิบัติงานหรือข้อสังเกตเพิ่มเติม (รายละเอียดที่บันทึกเข้ามา)
+          <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+            <span>บันทึกการปฏิบัติงานหรือข้อสังเกตเพิ่มเติม (รายละเอียดที่บันทึกเข้ามา)</span>
+            {!isAdmin && (
+              <span className="text-[11px] text-amber-700 font-medium flex items-center gap-1">
+                <Lock className="w-3 h-3" /> ล็อกการแก้ไข (ต้องใช้สิทธิ์ Admin)
+              </span>
+            )}
           </label>
           <textarea
             rows={3}
             value={formData.notes || ''}
+            readOnly={!isAdmin}
             onChange={(e) => {
+              if (!isAdmin) return;
               const updated = { ...formData, notes: e.target.value };
               setFormData(updated);
               triggerPreview(updated);
             }}
-            className="w-full text-sm px-3 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 leading-relaxed"
-            placeholder="ระบุรายละเอียด ข้อสังเกต หรือสรุปสถานการณ์ประจำวัน เช่น การให้บริการเป็นไปด้วยความเรียบร้อย ไม่มีข้อติดขัด"
+            className={`w-full text-sm px-3 py-2.5 rounded-lg leading-relaxed transition-colors ${
+              !isAdmin
+                ? 'bg-slate-100 text-slate-600 border border-slate-200 cursor-not-allowed select-none'
+                : 'bg-white border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-sky-500 text-slate-800'
+            }`}
+            placeholder={
+              !isAdmin
+                ? '🔒 สงวนสิทธิ์การบันทึกหรือแก้ไขหมายเหตุเพิ่มเติมเฉพาะ Admin เท่านั้น (เข้าสู่ระบบ Admin เพื่อเปิดใช้งาน)'
+                : 'ระบุรายละเอียด ข้อสังเกต หรือสรุปสถานการณ์ประจำวัน เช่น การให้บริการเป็นไปด้วยความเรียบร้อย ไม่มีข้อติดขัด'
+            }
           />
         </div>
       </div>
@@ -787,6 +969,25 @@ export const ReportForm: React.FC<ReportFormProps> = ({
           <span>บันทึกรายงานผลการปฏิบัติงาน</span>
         </button>
       </div>
+
+      {/* Admin Authentication Modal */}
+      <AdminPinModal
+        isOpen={adminModalOpen}
+        adminPin={adminPin}
+        actionTitle={adminActionTitle}
+        description="การแก้ไขชื่อศูนย์บริการ หรือการบันทึกหมายเหตุ/ข้อสังเกตเพิ่มเติม ต้องใช้สิทธิ์ผู้ดูแลระบบ (Admin)"
+        onClose={() => {
+          setAdminModalOpen(false);
+          setPendingAdminAction(null);
+        }}
+        onSuccess={() => {
+          onAdminAuthenticated?.();
+          if (pendingAdminAction) {
+            pendingAdminAction();
+            setPendingAdminAction(null);
+          }
+        }}
+      />
     </form>
   );
 };

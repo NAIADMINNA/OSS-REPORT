@@ -217,6 +217,23 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [isEditingExistingReport, setIsEditingExistingReport] = useState<boolean>(false);
+
+  // Admin authentication state across tabs
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('doe_admin_authenticated') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleAdminAuthenticated = () => {
+    setIsAdmin(true);
+    try {
+      sessionStorage.setItem('doe_admin_authenticated', 'true');
+    } catch {}
+  };
+
   const [currentReport, setCurrentReport] = useState<DOEReport>(() =>
     createEmptyReportTemplate(EMPLOYMENT_OFFICES[0])
   );
@@ -724,6 +741,7 @@ export default function App() {
         customLogoUrl={systemConfig.customLogoUrl}
         systemTitle={systemConfig.reportTitle}
         isOnlineDatabase={isFirestoreOnline}
+        isAdmin={isAdmin}
       />
 
       {/* Toast Alert with Action / Undo Support */}
@@ -823,6 +841,9 @@ export default function App() {
                   offices={offices}
                   categories={categories}
                   reporters={reporters}
+                  isAdmin={isAdmin}
+                  adminPin={systemConfig.adminPin || '0841543524'}
+                  onAdminAuthenticated={handleAdminAuthenticated}
                 />
               </div>
 
@@ -885,7 +906,12 @@ export default function App() {
 
         {/* TAB 4: DAILY OPERATIONAL NOTES & REMARKS (หมายเหตุ / บันทึกเพิ่มเติมประจำวัน) */}
         {activeTab === 'notes' && (
-          <DailyNotesTable reports={reports} />
+          <DailyNotesTable
+            reports={reports}
+            isAdmin={isAdmin}
+            adminPin={systemConfig.adminPin || '0841543524'}
+            onAdminAuthenticated={handleAdminAuthenticated}
+          />
         )}
 
         {/* TAB 5: ADMIN CONSOLE (สิทธิ์ ADMIN) */}
@@ -910,6 +936,8 @@ export default function App() {
             onRestoreAllDeletedReports={handleRestoreAllDeletedReports}
             onClearAllReportsForProduction={handleClearAllReportsForProduction}
             onNotify={showToast}
+            onAdminAuthenticated={handleAdminAuthenticated}
+            onAdminLoggedOut={() => setIsAdmin(false)}
           />
         )}
       </main>

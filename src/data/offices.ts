@@ -1,6 +1,7 @@
 import { EmploymentOffice } from '../types/doe';
+import { sortOfficesByRegion } from '../utils/officeUtils';
 
-export const EMPLOYMENT_OFFICES: EmploymentOffice[] = [
+const RAW_EMPLOYMENT_OFFICES: EmploymentOffice[] = [
   // ภาคเหนือ
   {
     id: 'chiangrai',
@@ -807,3 +808,5 @@ export const EMPLOYMENT_OFFICES: EmploymentOffice[] = [
     defaultLine: '@doecentral',
   },
 ];
+
+export const EMPLOYMENT_OFFICES: EmploymentOffice[] = sortOfficesByRegion(RAW_EMPLOYMENT_OFFICES);

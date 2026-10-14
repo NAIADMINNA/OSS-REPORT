@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   AlertTriangle,
   Send,
@@ -13,6 +13,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { EmploymentOffice, SystemIssueReport } from '../types/doe';
+import { EMPLOYMENT_OFFICES } from '../data/offices';
+import { groupAndSortOfficesByRegion } from '../utils/officeUtils';
 import {
   reportSystemIssueOnline,
   subscribeSystemIssues,
@@ -55,6 +57,27 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
     }
     return [];
   });
+
+  // Office search & region filter
+  const [officeSearchTerm, setOfficeSearchTerm] = useState('');
+  const [selectedMascotRegion, setSelectedMascotRegion] = useState<string>('ทั้งหมด');
+
+  // Group and sort offices by standard region
+  const groupedOffices = useMemo(() => {
+    const list = offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES;
+    const filtered = list.filter((o) => {
+      const matchRegion =
+        selectedMascotRegion === 'ทั้งหมด' || o.region === selectedMascotRegion;
+      const q = officeSearchTerm.toLowerCase().trim();
+      const matchSearch =
+        !q ||
+        o.name.toLowerCase().includes(q) ||
+        (o.centerName && o.centerName.toLowerCase().includes(q)) ||
+        o.region.toLowerCase().includes(q);
+      return matchRegion && matchSearch;
+    });
+    return groupAndSortOfficesByRegion(filtered);
+  }, [offices, officeSearchTerm, selectedMascotRegion]);
 
   // Keep office in sync if currentOfficeName changes
   useEffect(() => {
@@ -377,21 +400,56 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
               </div>
 
               {/* 1. สำนักงานที่พบปัญหา */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                  <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                  <span>สำนักงานจัดหางาน / ศูนย์บริการที่พบปัญหา</span>
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                    <span>สำนักงานจัดหางาน / ศูนย์บริการที่พบปัญหา (เรียงตามภูมิภาค)</span>
+                  </span>
+                  <span className="text-[11px] text-sky-700 font-normal">
+                    {groupedOffices.reduce((acc, g) => acc + g.offices.length, 0)} แห่ง
+                  </span>
                 </label>
+
+                {/* Quick search & Region filter for Mascot */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  <input
+                    type="text"
+                    value={officeSearchTerm}
+                    onChange={(e) => setOfficeSearchTerm(e.target.value)}
+                    placeholder="ค้นหาสำนักงานหรือศูนย์..."
+                    className="w-full text-xs px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 font-medium"
+                  />
+                  <select
+                    value={selectedMascotRegion}
+                    onChange={(e) => setSelectedMascotRegion(e.target.value)}
+                    className="w-full text-xs px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 font-medium text-slate-700"
+                  >
+                    <option value="ทั้งหมด">🌐 ทุกภูมิภาค</option>
+                    <option value="กรุงเทพมหานคร">🏛️ กรุงเทพมหานคร</option>
+                    <option value="ภาคกลางและตะวันตก">🌾 ภาคกลางและตะวันตก</option>
+                    <option value="ภาคตะวันออก">🌊 ภาคตะวันออก</option>
+                    <option value="ภาคตะวันออกเฉียงเหนือ">☀️ ภาคตะวันออกเฉียงเหนือ</option>
+                    <option value="ภาคเหนือ">⛰️ ภาคเหนือ</option>
+                    <option value="ภาคใต้">🏝️ ภาคใต้</option>
+                    <option value="เฉพาะกิจ">🚚 เฉพาะกิจ</option>
+                  </select>
+                </div>
+
                 <select
                   value={issueOffice}
                   onChange={(e) => setIssueOffice(e.target.value)}
-                  className="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 font-medium"
+                  className="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 font-medium text-slate-900"
                 >
-                  <option value={currentOfficeName}>{currentOfficeName} (ปัจจุบัน)</option>
-                  {offices.map((o) => (
-                    <option key={o.id} value={o.name}>
-                      [{o.region}] {o.name}
-                    </option>
+                  <option value={currentOfficeName}>📍 {currentOfficeName} (สำนักงานปัจจุบัน)</option>
+                  {groupedOffices.map((group) => (
+                    <optgroup key={group.region} label={group.regionLabel}>
+                      {group.offices.map((o) => (
+                        <option key={o.id} value={o.centerName ? `${o.name} (${o.centerName})` : o.name}>
+                          {o.name} {o.centerName ? `• ${o.centerName}` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>

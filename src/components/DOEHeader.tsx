@@ -13,6 +13,7 @@ interface DOEHeaderProps {
   customLogoUrl?: string | null;
   systemTitle?: string;
   isOnlineDatabase?: boolean;
+  isAdmin?: boolean;
 }
 
 export const DOEHeader: React.FC<DOEHeaderProps> = ({
@@ -24,6 +25,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
   customLogoUrl,
   systemTitle,
   isOnlineDatabase = true,
+  isAdmin = false,
 }) => {
   return (
     <header className="bg-gradient-to-r from-blue-700 via-indigo-700 to-sky-700 text-white shadow-md sticky top-0 z-30 border-b border-sky-400/30">
@@ -130,11 +132,16 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
               className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'admin'
                   ? 'bg-amber-400 text-slate-950 shadow-sm ring-1 ring-amber-300 font-extrabold text-sm'
+                  : isAdmin
+                  ? 'bg-amber-400/20 text-amber-200 border border-amber-300/40 hover:bg-amber-400/30 text-sm font-bold'
                   : 'text-amber-200 hover:text-white hover:bg-white/15 text-sm font-semibold'
               }`}
             >
               <ShieldCheck className="w-4 h-4" />
               <span>สิทธิ์ Admin</span>
+              {isAdmin && (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-xs" title="เข้าสู่ระบบสิทธิ์ Admin แล้ว" />
+              )}
             </button>
           </nav>
         </div>

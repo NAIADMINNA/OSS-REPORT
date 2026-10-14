@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { DOELogo } from './DOELogo';
 import { AuthUser, UserRole } from '../types/auth';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
+import { groupAndSortOfficesByRegion } from '../utils/officeUtils';
 import {
   ShieldCheck,
   Building2,
@@ -33,6 +34,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   const [officerName, setOfficerName] = useState('นางสาวสิริพร สุขเกษม');
   const [officerPosition, setOfficerPosition] = useState('นักวิชาการแรงงานชำนาญการ');
   const [officerPassword, setOfficerPassword] = useState('••••••••');
+
+  const groupedOffices = useMemo(() => {
+    return groupAndSortOfficesByRegion(EMPLOYMENT_OFFICES);
+  }, []);
 
   const handleExecutiveSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -192,10 +197,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                         className="w-full text-xs sm:text-sm pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-600 font-semibold text-slate-900"
                         required
                       >
-                        {EMPLOYMENT_OFFICES.map((office) => (
-                          <option key={office.id} value={office.id}>
-                            [{office.region}] {office.name}
-                          </option>
+                        {groupedOffices.map((group) => (
+                          <optgroup key={group.region} label={group.regionLabel}>
+                            {group.offices.map((office) => (
+                              <option key={office.id} value={office.id}>
+                                {office.name} {office.centerName ? `• ${office.centerName}` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
                         ))}
                       </select>
                       <Building2 className="w-4 h-4 text-slate-500 absolute left-3 top-3" />

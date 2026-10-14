@@ -8,6 +8,7 @@ import {
   formatThaiDateRange,
   getTodayIsoDate,
 } from '../utils/thaiDate';
+import { REGION_ORDER, getRegionLabel } from '../utils/officeUtils';
 import {
   TrendingUp,
   Users,
@@ -165,6 +166,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       return matchDate && matchRegion && matchSearch;
     });
   }, [reports, filterStartDate, filterEndDate, selectedRegion, searchQuery]);
+
+  // Group and sort reported list by region
+  const groupedReportedList = useMemo(() => {
+    const groups: Record<string, DOEReport[]> = {};
+    for (const r of reportedList) {
+      const reg = r.region || 'อื่นๆ';
+      if (!groups[reg]) groups[reg] = [];
+      groups[reg].push(r);
+    }
+    for (const reg in groups) {
+      groups[reg].sort((a, b) => a.officeName.localeCompare(b.officeName, 'th'));
+    }
+    return REGION_ORDER
+      .filter((reg) => groups[reg] && groups[reg].length > 0)
+      .map((reg) => ({
+        region: reg,
+        regionLabel: getRegionLabel(reg),
+        reports: groups[reg],
+      }));
+  }, [reportedList]);
 
   // Reports belonging to the selected office
   const selectedOfficeReports = useMemo(() => {
@@ -628,17 +649,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 className="bg-transparent font-bold text-blue-950 focus:outline-hidden cursor-pointer text-sm"
               >
                 <option value="ทั้งหมด">ภาพรวมทั้งประเทศ (ทุกภาค)</option>
-                <option value="ภาคเหนือ">ภาคเหนือ (17 จังหวัด)</option>
                 <option value="กรุงเทพมหานคร">กรุงเทพมหานคร (10 พื้นที่)</option>
                 <option value="ภาคกลางและตะวันตก">ภาคกลางและตะวันตก (16 จังหวัด)</option>
                 <option value="ภาคตะวันออก">ภาคตะวันออก (8 จังหวัด)</option>
                 <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ (20 จังหวัด)</option>
+                <option value="ภาคเหนือ">ภาคเหนือ (17 จังหวัด)</option>
                 <option value="ภาคใต้">ภาคใต้ (14 จังหวัด)</option>
-                <option value="เฉพาะกิจ">เฉพาะกิจ</option>
+                <option value="เฉพาะกิจ">เฉพาะกิจ (Mobile Unit)</option>
               </select>
             </div>
 
-            {/* Province Quick Selector */}
+            {/* Province Quick Selector (Grouped by Region) */}
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm shadow-2xs">
               <Building2 className="w-4.5 h-4.5 text-slate-500 shrink-0" />
               <label htmlFor="dashboard-province-filter" className="text-slate-700 font-bold text-sm shrink-0">เลือกจังหวัด:</label>
@@ -649,10 +670,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 className="bg-transparent font-bold text-blue-950 focus:outline-hidden cursor-pointer max-w-[200px] truncate text-sm"
               >
                 <option value="all">ดูภาพรวมทั้งหมด ({reportedList.length} แห่ง)</option>
-                {reportedList.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.officeName} ({formatThaiDateShort(r.reportDate)})
-                  </option>
+                {groupedReportedList.map((group) => (
+                  <optgroup key={group.region} label={group.regionLabel}>
+                    {group.reports.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.officeName} {r.centerName ? `• ${r.centerName}` : ''} ({formatThaiDateShort(r.reportDate)})
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>

@@ -2,6 +2,7 @@ import React, { useState, useId, useMemo } from 'react';
 import { DOEReport } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { formatNumber, formatThaiDateShort, formatThaiDateFull } from '../utils/thaiDate';
+import { REGION_ORDER, sortOfficesByRegion } from '../utils/officeUtils';
 import {
   Search,
   Eye,
@@ -12,7 +13,6 @@ import {
   FileSpreadsheet,
   Plus,
   Clock,
-  Phone,
   CheckCircle2,
   Building2,
   Calendar,
@@ -115,7 +115,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
   // 2. Compute Pending Offices (ยังไม่รายงาน ตามรอบวันที่ตรวจสอบ)
   const pendingOfficesList = useMemo(() => {
-    return EMPLOYMENT_OFFICES.filter((office) => {
+    const list = EMPLOYMENT_OFFICES.filter((office) => {
       // Check if office has a report for the selected pendingCheckDate
       const hasReport = reports.some(
         (r) =>
@@ -137,6 +137,8 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
       return matchesRegion && matchesSearch;
     });
+
+    return sortOfficesByRegion(list);
   }, [reports, pendingCheckDate, selectedRegion, searchTerm]);
 
   // Total pending count across all regions for badge
@@ -241,8 +243,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
       `จำนวนทั้งหมด: ${pendingOfficesList.length} แห่ง`,
       '══════════════════════════',
       ...pendingOfficesList.map(
-        (o, i) =>
-          `${i + 1}. ${o.name} [${o.region}]\n   📞 โทร: ${o.defaultPhone || '-'} | LINE: ${o.defaultLine || '-'}`
+        (o, i) => `${i + 1}. ${o.name} [${o.region}]`
       ),
       '══════════════════════════',
       'กรุณาดำเนินการรายงานผลการปฏิบัติงานผ่านระบบ DOE',
@@ -429,13 +430,13 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
             className="text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
           >
             <option value="ทั้งหมด">ทุกภูมิภาค</option>
-            <option value="ภาคเหนือ">ภาคเหนือ</option>
-            <option value="กรุงเทพมหานคร">กรุงเทพมหานคร</option>
-            <option value="ภาคกลางและตะวันตก">ภาคกลางและตะวันตก</option>
-            <option value="ภาคตะวันออก">ภาคตะวันออก</option>
-            <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ</option>
-            <option value="ภาคใต้">ภาคใต้</option>
-            <option value="เฉพาะกิจ">เฉพาะกิจ</option>
+            <option value="กรุงเทพมหานคร">🏛️ กรุงเทพมหานคร (10 พื้นที่)</option>
+            <option value="ภาคกลางและตะวันตก">🌾 ภาคกลางและตะวันตก (16 จังหวัด)</option>
+            <option value="ภาคตะวันออก">🌊 ภาคตะวันออก (8 จังหวัด)</option>
+            <option value="ภาคตะวันออกเฉียงเหนือ">☀️ ภาคตะวันออกเฉียงเหนือ (20 จังหวัด)</option>
+            <option value="ภาคเหนือ">⛰️ ภาคเหนือ (17 จังหวัด)</option>
+            <option value="ภาคใต้">🏝️ ภาคใต้ (14 จังหวัด)</option>
+            <option value="เฉพาะกิจ">🚚 เฉพาะกิจ (Mobile Unit)</option>
           </select>
 
           {/* Date Selector for Pending tab */}
@@ -476,12 +477,22 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
           {activeHistoryTab === 'reported' ? (
             <button
-              onClick={handleExportCSV}
-              className="text-sm font-bold px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition-colors flex items-center gap-2 cursor-pointer"
-              title="ส่งออกรายงานทั้งหมดเป็นไฟล์ CSV / Excel"
+              onClick={() =>
+                executeProtectedAction(
+                  'ส่งออกรายงานผลทั้งหมดเป็นไฟล์ CSV (Excel)',
+                  handleExportCSV
+                )
+              }
+              className="text-sm font-bold px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition-colors flex items-center gap-2 cursor-pointer shadow-2xs"
+              title={
+                isAdmin
+                  ? 'ส่งออกรายงานทั้งหมดเป็นไฟล์ CSV / Excel (สิทธิ์ Admin)'
+                  : 'ส่งออก CSV (Excel) - เฉพาะสิทธิ์ Admin'
+              }
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
               <span>ส่งออก CSV (Excel)</span>
+              {!isAdmin && <Lock className="w-3.5 h-3.5 text-amber-600" />}
             </button>
           ) : (
             <button
@@ -693,15 +704,13 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                   <th className="py-3.5 px-4 whitespace-nowrap">สถานะ</th>
                   <th className="py-3.5 px-4">สำนักงานจัดหางาน</th>
                   <th className="py-3.5 px-4">ภูมิภาค</th>
-                  <th className="py-3.5 px-4">เบอร์โทรศัพท์ติดต่อ</th>
-                  <th className="py-3.5 px-4">LINE ID</th>
                   <th className="py-3.5 px-4 text-right">ดำเนินการ</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {pendingOfficesList.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-slate-400">
+                    <td colSpan={4} className="py-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-1.5">
                         <CheckCircle2 className="w-8 h-8 text-emerald-500" />
                         <p className="font-bold text-slate-800 text-base">
@@ -740,30 +749,6 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                         <span className="px-2.5 py-1 rounded-md bg-slate-100 text-slate-700 font-medium text-xs sm:text-sm">
                           {office.region}
                         </span>
-                      </td>
-
-                      {/* Phone */}
-                      <td className="py-3.5 px-4 whitespace-nowrap text-sm">
-                        {office.defaultPhone ? (
-                          <div className="flex items-center gap-1.5 font-medium text-slate-700">
-                            <Phone className="w-4 h-4 text-slate-400" />
-                            <span>{office.defaultPhone}</span>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400">-</span>
-                        )}
-                      </td>
-
-                      {/* Line */}
-                      <td className="py-3.5 px-4 whitespace-nowrap text-sm">
-                        {office.defaultLine ? (
-                          <div className="flex items-center gap-1.5 font-medium text-emerald-700">
-                            <MessageCircle className="w-4 h-4 text-emerald-500" />
-                            <span>{office.defaultLine}</span>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400">-</span>
-                        )}
                       </td>
 
                       {/* Action: Record report directly for this office */}
@@ -929,20 +914,23 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
             <form onSubmit={handleVerifyAdminPin} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  รหัสผ่านผู้ดูแลระบบ (Admin Password)
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                  <span>รหัสผ่านผู้ดูแลระบบ (Admin Password)</span>
+                  <span className="text-[11px] text-slate-400 font-normal">
+                    (ซ่อนรหัสเป็นเครื่องหมายดอกจัน *)
+                  </span>
                 </label>
                 <div className="relative">
                   <input
-                    type={showAdminPin ? 'text' : 'password'}
+                    type="password"
                     maxLength={30}
-                    placeholder="ระบุรหัสผ่านผู้ดูแลระบบ"
+                    placeholder="••••••••"
                     value={adminPinInput}
                     onChange={(e) => {
                       setAdminPinInput(e.target.value);
                       setAdminPinError(false);
                     }}
-                    className={`w-full text-center text-base px-9 py-2.5 bg-slate-50 border rounded-xl font-mono font-bold focus:bg-white focus:outline-hidden focus:ring-2 ${
+                    className={`w-full text-center text-lg tracking-widest px-9 py-2.5 bg-slate-50 border rounded-xl font-mono font-bold focus:bg-white focus:outline-hidden focus:ring-2 ${
                       adminPinError
                         ? 'border-rose-400 focus:ring-rose-400'
                         : 'border-slate-300 focus:ring-sky-500'
@@ -950,14 +938,6 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                     autoFocus
                   />
                   <Key className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
-                  <button
-                    type="button"
-                    onClick={() => setShowAdminPin(!showAdminPin)}
-                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition-colors p-0.5 cursor-pointer"
-                    title={showAdminPin ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
-                  >
-                    {showAdminPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
                 </div>
                 {adminPinError && (
                   <div className="text-xs text-rose-600 mt-2 flex items-center gap-1.5 justify-center">

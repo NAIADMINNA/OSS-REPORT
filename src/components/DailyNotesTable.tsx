@@ -1,6 +1,7 @@
 import React, { useState, useId, useMemo } from 'react';
 import { DOEReport } from '../types/doe';
 import { formatThaiDateShort, formatThaiDateFull } from '../utils/thaiDate';
+import { AdminPinModal } from './AdminPinModal';
 import {
   FileText,
   Search,
@@ -16,14 +17,22 @@ import {
   MessageSquare,
   Sparkles,
   ClipboardList,
+  Lock,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface DailyNotesTableProps {
   reports: DOEReport[];
+  isAdmin?: boolean;
+  adminPin?: string;
+  onAdminAuthenticated?: () => void;
 }
 
 export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
   reports,
+  isAdmin = false,
+  adminPin = '0841543524',
+  onAdminAuthenticated,
 }) => {
   const searchInputId = useId();
   const [searchTerm, setSearchTerm] = useState('');
@@ -31,6 +40,21 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
   const [selectedDate, setSelectedDate] = useState('ทั้งหมด');
   const [onlyWithNotes, setOnlyWithNotes] = useState(false);
   const [copiedSummary, setCopiedSummary] = useState(false);
+
+  // Admin authentication state for protected actions (Copy Summary & Export Excel)
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [adminActionTitle, setAdminActionTitle] = useState('');
+  const [pendingAdminAction, setPendingAdminAction] = useState<(() => void) | null>(null);
+
+  const executeProtectedAction = (actionTitle: string, actionFn: () => void) => {
+    if (isAdmin) {
+      actionFn();
+    } else {
+      setAdminActionTitle(actionTitle);
+      setPendingAdminAction(() => actionFn);
+      setAdminModalOpen(true);
+    }
+  };
 
   // Available distinct dates from reports
   const availableDates = useMemo(() => {
@@ -215,13 +239,13 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
             className="text-xs sm:text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-semibold text-slate-700 cursor-pointer"
           >
             <option value="ทั้งหมด">ทุกภูมิภาค</option>
-            <option value="ภาคเหนือ">ภาคเหนือ</option>
-            <option value="กรุงเทพมหานคร">กรุงเทพมหานคร</option>
-            <option value="ภาคกลางและตะวันตก">ภาคกลางและตะวันตก</option>
-            <option value="ภาคตะวันออก">ภาคตะวันออก</option>
-            <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ</option>
-            <option value="ภาคใต้">ภาคใต้</option>
-            <option value="เฉพาะกิจ">เฉพาะกิจ</option>
+            <option value="กรุงเทพมหานคร">🏛️ กรุงเทพมหานคร (10 พื้นที่)</option>
+            <option value="ภาคกลางและตะวันตก">🌾 ภาคกลางและตะวันตก (16 จังหวัด)</option>
+            <option value="ภาคตะวันออก">🌊 ภาคตะวันออก (8 จังหวัด)</option>
+            <option value="ภาคตะวันออกเฉียงเหนือ">☀️ ภาคตะวันออกเฉียงเหนือ (20 จังหวัด)</option>
+            <option value="ภาคเหนือ">⛰️ ภาคเหนือ (17 จังหวัด)</option>
+            <option value="ภาคใต้">🏝️ ภาคใต้ (14 จังหวัด)</option>
+            <option value="เฉพาะกิจ">🚚 เฉพาะกิจ (Mobile Unit)</option>
           </select>
 
           {/* Date Selector */}
@@ -255,12 +279,25 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            onClick={handleCopySummary}
-            className="text-xs font-bold px-3.5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
-            title="คัดลอกสรุปข้อสังเกตเพื่อส่งกลุ่ม LINE หรือรายงานผู้บริหาร"
+            onClick={() =>
+              executeProtectedAction(
+                'คัดลอกสรุปข้อสังเกตเพื่อส่งกลุ่ม LINE หรือรายงานผู้บริหาร',
+                handleCopySummary
+              )
+            }
+            className={`text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer ${
+              !isAdmin
+                ? 'bg-amber-400 hover:bg-amber-500 text-slate-950'
+                : 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+            }`}
+            title={
+              isAdmin
+                ? 'คัดลอกสรุปข้อสังเกตเพื่อส่งกลุ่ม LINE หรือรายงานผู้บริหาร (สิทธิ์ Admin)'
+                : 'คัดลอกสรุปข้อสังเกต (เฉพาะสิทธิ์ Admin)'
+            }
           >
             {copiedSummary ? (
               <>
@@ -271,18 +308,29 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
               <>
                 <Copy className="w-4 h-4" />
                 <span>คัดลอกสรุปข้อสังเกต</span>
+                {!isAdmin && <Lock className="w-3.5 h-3.5 text-slate-950 ml-0.5" />}
               </>
             )}
           </button>
 
           <button
             type="button"
-            onClick={handleExportCSV}
+            onClick={() =>
+              executeProtectedAction(
+                'ส่งออกตารางหมายเหตุและบันทึกเพิ่มเติมเป็นไฟล์ CSV (Excel)',
+                handleExportCSV
+              )
+            }
             className="text-xs font-bold px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
-            title="ส่งออกตารางเป็นไฟล์ CSV (Excel)"
+            title={
+              isAdmin
+                ? 'ส่งออกตารางเป็นไฟล์ CSV (Excel) (สิทธิ์ Admin)'
+                : 'ส่งออก Excel / CSV (เฉพาะสิทธิ์ Admin)'
+            }
           >
             <Download className="w-4 h-4" />
             <span>ส่งออก Excel / CSV</span>
+            {!isAdmin && <Lock className="w-3.5 h-3.5 text-emerald-200 ml-0.5" />}
           </button>
         </div>
       </div>
@@ -413,6 +461,26 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Admin Authentication Modal */}
+      <AdminPinModal
+        isOpen={adminModalOpen}
+        adminPin={adminPin}
+        actionTitle={adminActionTitle}
+        description="การใช้งานเมนูคัดลอกสรุปข้อสังเกต และการส่งออกข้อมูล Excel ต้องใช้สิทธิ์ผู้ดูแลระบบ (Admin)"
+        onClose={() => {
+          setAdminModalOpen(false);
+          setPendingAdminAction(null);
+        }}
+        onSuccess={() => {
+          onAdminAuthenticated?.();
+          if (pendingAdminAction) {
+            pendingAdminAction();
+            setPendingAdminAction(null);
+          }
+        }}
+      />
     </div>
   );
 };
+
