@@ -282,22 +282,9 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            onClick={() =>
-              executeProtectedAction(
-                'คัดลอกสรุปข้อสังเกตเพื่อส่งกลุ่ม LINE หรือรายงานผู้บริหาร',
-                handleCopySummary
-              )
-            }
-            className={`text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer ${
-              !isAdmin
-                ? 'bg-amber-400 hover:bg-amber-500 text-slate-950'
-                : 'bg-amber-500 hover:bg-amber-600 text-slate-950'
-            }`}
-            title={
-              isAdmin
-                ? 'คัดลอกสรุปข้อสังเกตเพื่อส่งกลุ่ม LINE หรือรายงานผู้บริหาร (สิทธิ์ Admin)'
-                : 'คัดลอกสรุปข้อสังเกต (เฉพาะสิทธิ์ Admin)'
-            }
+            onClick={handleCopySummary}
+            className="text-xs font-bold px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            title="คัดลอกสรุปข้อสังเกตเพื่อส่งกลุ่ม LINE หรือรายงานผู้บริหาร"
           >
             {copiedSummary ? (
               <>
@@ -308,29 +295,18 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
               <>
                 <Copy className="w-4 h-4" />
                 <span>คัดลอกสรุปข้อสังเกต</span>
-                {!isAdmin && <Lock className="w-3.5 h-3.5 text-slate-950 ml-0.5" />}
               </>
             )}
           </button>
 
           <button
             type="button"
-            onClick={() =>
-              executeProtectedAction(
-                'ส่งออกตารางหมายเหตุและบันทึกเพิ่มเติมเป็นไฟล์ CSV (Excel)',
-                handleExportCSV
-              )
-            }
+            onClick={handleExportCSV}
             className="text-xs font-bold px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
-            title={
-              isAdmin
-                ? 'ส่งออกตารางเป็นไฟล์ CSV (Excel) (สิทธิ์ Admin)'
-                : 'ส่งออก Excel / CSV (เฉพาะสิทธิ์ Admin)'
-            }
+            title="ส่งออกตารางเป็นไฟล์ CSV (Excel)"
           >
             <Download className="w-4 h-4" />
             <span>ส่งออก Excel / CSV</span>
-            {!isAdmin && <Lock className="w-3.5 h-3.5 text-emerald-200 ml-0.5" />}
           </button>
         </div>
       </div>

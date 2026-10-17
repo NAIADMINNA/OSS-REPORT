@@ -438,20 +438,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
             <div className="flex items-center justify-between flex-wrap gap-2">
               <label className="block text-sm font-bold text-slate-800 flex items-center gap-1.5">
                 <span>ชื่อศูนย์บริการ (ระบุในหัวเรื่องโปสเตอร์)</span>
-                {!isAdmin && <Lock className="w-3.5 h-3.5 text-amber-600" />}
               </label>
               <div className="flex items-center gap-1.5 flex-wrap">
-                {!isAdmin ? (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
-                    <Lock className="w-3 h-3 text-amber-700" />
-                    ห้ามแก้ไข (สิทธิ์เฉพาะ Admin)
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                    สิทธิ์ Admin: แก้ไขได้
-                  </span>
-                )}
                 {formData.centerName === MOBILE_UNIT_CENTER_NAME ||
                 formData.centerName?.includes('Mobile Unit') ? (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
@@ -472,20 +460,14 @@ export const ReportForm: React.FC<ReportFormProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  requireAdmin('เปลี่ยนรูปแบบชื่อศูนย์บริการเป็น "ชื่อศูนย์ตามระบุ"', () => {
-                    const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
-                    const targetName =
-                      currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
-                    const updated = { ...formData, centerName: targetName };
-                    setFormData(updated);
-                    triggerPreview(updated);
-                  });
+                  const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
+                  const targetName =
+                    currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+                  const updated = { ...formData, centerName: targetName };
+                  setFormData(updated);
+                  triggerPreview(updated);
                 }}
                 className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                  !isAdmin
-                    ? 'opacity-90 bg-slate-50/70 border-slate-200 hover:border-amber-300'
-                    : ''
-                } ${
                   !(
                     formData.centerName === MOBILE_UNIT_CENTER_NAME ||
                     formData.centerName?.includes('Mobile Unit')
@@ -508,9 +490,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1">
-                      <span>ชื่อศูนย์ตามระบุ</span>
-                      {!isAdmin && <Lock className="w-3 h-3 text-amber-600" />}
+                    <span className="text-xs font-bold text-slate-900">
+                      ชื่อศูนย์ตามระบุ
                     </span>
                     {!(
                       formData.centerName === MOBILE_UNIT_CENTER_NAME ||
@@ -527,17 +508,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  requireAdmin('เปลี่ยนรูปแบบชื่อศูนย์บริการเป็น "หน่วยบริการเคลื่อนที่ (Mobile Unit)"', () => {
-                    const updated = { ...formData, centerName: MOBILE_UNIT_CENTER_NAME };
-                    setFormData(updated);
-                    triggerPreview(updated);
-                  });
+                  const updated = { ...formData, centerName: MOBILE_UNIT_CENTER_NAME };
+                  setFormData(updated);
+                  triggerPreview(updated);
                 }}
                 className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                  !isAdmin
-                    ? 'opacity-90 bg-slate-50/70 border-slate-200 hover:border-amber-300'
-                    : ''
-                } ${
                   formData.centerName === MOBILE_UNIT_CENTER_NAME ||
                   formData.centerName?.includes('Mobile Unit')
                     ? 'bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
@@ -556,9 +531,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1">
-                      <span>หน่วยบริการเคลื่อนที่ (Mobile Unit)</span>
-                      {!isAdmin && <Lock className="w-3 h-3 text-amber-600" />}
+                    <span className="text-xs font-bold text-slate-900">
+                      หน่วยบริการเคลื่อนที่ (Mobile Unit)
                     </span>
                     {(formData.centerName === MOBILE_UNIT_CENTER_NAME ||
                       formData.centerName?.includes('Mobile Unit')) && (
@@ -577,68 +551,36 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 <input
                   type="text"
                   value={formData.centerName}
-                  readOnly={!isAdmin}
                   onChange={(e) => {
-                    if (!isAdmin) return;
                     const updated = { ...formData, centerName: e.target.value };
                     setFormData(updated);
                     triggerPreview(updated);
                   }}
-                  className={`w-full min-w-0 text-sm px-3.5 py-2.5 rounded-lg font-medium transition-colors ${
-                    !isAdmin
-                      ? 'bg-slate-100 text-slate-600 border border-slate-200 cursor-not-allowed select-none'
-                      : 'bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 text-slate-800'
-                  }`}
+                  className="w-full min-w-0 text-sm px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 text-slate-800 font-medium"
                   placeholder="ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว..."
                 />
-                {!isAdmin && (
-                  <div className="absolute right-3 top-2.5 flex items-center gap-1 text-xs text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-md border border-amber-300">
-                    <Lock className="w-3 h-3 text-amber-700" />
-                    <span>ล็อกสิทธิ์ Admin</span>
-                  </div>
-                )}
               </div>
 
-              {!isAdmin ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-amber-50/80 border border-amber-200 text-xs text-amber-950">
-                  <div className="flex items-center gap-1.5">
-                    <Lock className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                    <span>ชื่อศูนย์บริการห้ามแก้ไข สิทธิ์การแก้ไขสงวนไว้สำหรับผู้ดูแลระบบ (Admin) เท่านั้น</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdminActionTitle('ปลดล็อกสิทธิ์เพื่อแก้ไขชื่อศูนย์บริการ');
-                      setAdminModalOpen(true);
-                    }}
-                    className="font-bold underline text-amber-800 hover:text-amber-950 cursor-pointer flex items-center gap-1 text-[11px] bg-white px-2 py-0.5 rounded-md border border-amber-300 shadow-2xs"
-                  >
-                    <ShieldCheck className="w-3 h-3 text-amber-600" />
-                    <span>ปลดล็อกสิทธิ์ Admin</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 pt-0.5">
-                  <span className="text-emerald-700 font-medium">
-                    ✓ สิทธิ์ Admin: สามารถปรับแต่งชื่อศูนย์บริการ หรือกดคืนค่าตามสำนักงานได้
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
-                      const defaultName =
-                        currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
-                      const updated = { ...formData, centerName: defaultName };
-                      setFormData(updated);
-                      triggerPreview(updated);
-                    }}
-                    className="text-sky-600 hover:text-sky-700 font-medium underline shrink-0 ml-2 cursor-pointer flex items-center gap-1"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>คืนค่าตามสำนักงาน</span>
-                  </button>
-                </div>
-              )}
+              <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 pt-0.5">
+                <span className="text-slate-600">
+                  สามารถปรับแต่งชื่อศูนย์บริการ หรือกดคืนค่าตามสำนักงานได้ตามต้องการ
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
+                    const defaultName =
+                      currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+                    const updated = { ...formData, centerName: defaultName };
+                    setFormData(updated);
+                    triggerPreview(updated);
+                  }}
+                  className="text-sky-600 hover:text-sky-700 font-medium underline shrink-0 ml-2 cursor-pointer flex items-center gap-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>คืนค่าตามสำนักงาน</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -879,72 +821,26 @@ export const ReportForm: React.FC<ReportFormProps> = ({
           <div className="flex items-center gap-2 text-blue-900 font-bold text-base">
             <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
             <span>4. หมายเหตุ / บันทึกเพิ่มเติมประจำวัน</span>
-            {!isAdmin && <Lock className="w-3.5 h-3.5 text-amber-600" />}
           </div>
-          {!isAdmin ? (
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
-              <Lock className="w-3 h-3 text-amber-700" />
-              เฉพาะสิทธิ์ Admin
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-              <ShieldCheck className="w-3 h-3 text-emerald-600" />
-              สิทธิ์ Admin: บันทึก/แก้ไขได้
-            </span>
-          )}
+          <span className="text-xs text-slate-500">
+            ระบุข้อสังเกตหรือข้อมูลเพิ่มเติมของสำนักงาน (บันทึกได้โดยตรง)
+          </span>
         </div>
 
-        {!isAdmin && (
-          <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-amber-50/90 border border-amber-200 text-xs text-amber-950">
-            <div className="flex items-center gap-2">
-              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
-              <span className="font-medium">
-                เมนูหมายเหตุ/บันทึกเพิ่มเติม สงวนสิทธิ์การแก้ไขหรือบันทึกเฉพาะผู้ดูแลระบบ (Admin) เท่านั้น
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setAdminActionTitle('ปลดล็อกสิทธิ์เพื่อแก้ไขหรือบันทึกหมายเหตุ/บันทึกเพิ่มเติม');
-                setAdminModalOpen(true);
-              }}
-              className="font-bold underline text-amber-900 hover:text-amber-950 cursor-pointer flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-amber-300 shadow-2xs text-[11px]"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-              <span>ยืนยันสิทธิ์ Admin</span>
-            </button>
-          </div>
-        )}
-
         <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
-            <span>บันทึกการปฏิบัติงานหรือข้อสังเกตเพิ่มเติม (รายละเอียดที่บันทึกเข้ามา)</span>
-            {!isAdmin && (
-              <span className="text-[11px] text-amber-700 font-medium flex items-center gap-1">
-                <Lock className="w-3 h-3" /> ล็อกการแก้ไข (ต้องใช้สิทธิ์ Admin)
-              </span>
-            )}
+          <label className="block text-xs font-semibold text-slate-700 mb-1">
+            บันทึกการปฏิบัติงานหรือข้อสังเกตเพิ่มเติม (รายละเอียดที่บันทึกเข้ามา)
           </label>
           <textarea
             rows={3}
             value={formData.notes || ''}
-            readOnly={!isAdmin}
             onChange={(e) => {
-              if (!isAdmin) return;
               const updated = { ...formData, notes: e.target.value };
               setFormData(updated);
               triggerPreview(updated);
             }}
-            className={`w-full text-sm px-3 py-2.5 rounded-lg leading-relaxed transition-colors ${
-              !isAdmin
-                ? 'bg-slate-100 text-slate-600 border border-slate-200 cursor-not-allowed select-none'
-                : 'bg-white border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-sky-500 text-slate-800'
-            }`}
-            placeholder={
-              !isAdmin
-                ? '🔒 สงวนสิทธิ์การบันทึกหรือแก้ไขหมายเหตุเพิ่มเติมเฉพาะ Admin เท่านั้น (เข้าสู่ระบบ Admin เพื่อเปิดใช้งาน)'
-                : 'ระบุรายละเอียด ข้อสังเกต หรือสรุปสถานการณ์ประจำวัน เช่น การให้บริการเป็นไปด้วยความเรียบร้อย ไม่มีข้อติดขัด'
-            }
+            className="w-full text-sm px-3 py-2.5 rounded-lg leading-relaxed bg-white border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-sky-500 text-slate-800"
+            placeholder="ระบุรายละเอียด ข้อสังเกต หรือสรุปสถานการณ์ประจำวัน เช่น การให้บริการเป็นไปด้วยความเรียบร้อย ไม่มีข้อติดขัด"
           />
         </div>
       </div>

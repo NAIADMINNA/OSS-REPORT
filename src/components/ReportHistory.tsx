@@ -477,22 +477,12 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
           {activeHistoryTab === 'reported' ? (
             <button
-              onClick={() =>
-                executeProtectedAction(
-                  'ส่งออกรายงานผลทั้งหมดเป็นไฟล์ CSV (Excel)',
-                  handleExportCSV
-                )
-              }
+              onClick={handleExportCSV}
               className="text-sm font-bold px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition-colors flex items-center gap-2 cursor-pointer shadow-2xs"
-              title={
-                isAdmin
-                  ? 'ส่งออกรายงานทั้งหมดเป็นไฟล์ CSV / Excel (สิทธิ์ Admin)'
-                  : 'ส่งออก CSV (Excel) - เฉพาะสิทธิ์ Admin'
-              }
+              title="ส่งออกรายงานผลทั้งหมดเป็นไฟล์ CSV / Excel"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
               <span>ส่งออก CSV (Excel)</span>
-              {!isAdmin && <Lock className="w-3.5 h-3.5 text-amber-600" />}
             </button>
           ) : (
             <button
@@ -618,10 +608,19 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                       <button
                         type="button"
                         onClick={() => handleProtectedDuplicate(r)}
-                        className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                        className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                          isAdmin
+                            ? 'text-slate-600 hover:bg-slate-100'
+                            : 'text-slate-500 hover:text-amber-700 hover:bg-amber-50'
+                        }`}
                         title={isAdmin ? 'คัดลอกสร้างรายงานใหม่ (สิทธิ์ Admin)' : 'คัดลอกสร้างรายงานใหม่ (เฉพาะ Admin)'}
                       >
-                        <Copy className="w-4 h-4" />
+                        <div className="relative">
+                          <Copy className="w-4 h-4" />
+                          {!isAdmin && (
+                            <Lock className="w-2.5 h-2.5 text-amber-600 absolute -bottom-1 -right-1" />
+                          )}
+                        </div>
                       </button>
                       <button
                         type="button"

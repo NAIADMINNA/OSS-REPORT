@@ -1247,23 +1247,13 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     <option value="เฉพาะกิจ">เฉพาะกิจ</option>
                   </select>
                 </div>
-                <div className="sm:col-span-2">
+                <div className="sm:col-span-3">
                   <label className="text-[11px] font-semibold text-slate-600">ชื่อศูนย์บริการ (แสดงในโปสเตอร์)</label>
                   <input
                     type="text"
                     placeholder="เช่น ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดบึงกาฬ"
                     value={newOffice.centerName || ''}
                     onChange={(e) => setNewOffice({ ...newOffice, centerName: e.target.value })}
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-600">เบอร์โทรศัพท์เริ่มต้น</label>
-                  <input
-                    type="text"
-                    placeholder="เช่น 042-491234"
-                    value={newOffice.defaultPhone || ''}
-                    onChange={(e) => setNewOffice({ ...newOffice, defaultPhone: e.target.value })}
                     className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg"
                   />
                 </div>
@@ -1293,7 +1283,6 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   <th className="py-2.5 px-3">ภูมิภาค</th>
                   <th className="py-2.5 px-3">สำนักงานจัดหางาน</th>
                   <th className="py-2.5 px-3">ชื่อศูนย์บริการ</th>
-                  <th className="py-2.5 px-3">เบอร์ติดต่อ</th>
                   <th className="py-2.5 px-3 text-right">ดำเนินการ</th>
                 </tr>
               </thead>
@@ -1355,20 +1344,6 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                             className="w-full text-xs p-1 bg-white border rounded"
                           />
                         </td>
-                        <td className="p-2 space-y-1">
-                          <input
-                            type="text"
-                            value={editingOffice.defaultPhone || ''}
-                            onChange={(e) =>
-                              setEditingOffice({
-                                ...editingOffice,
-                                defaultPhone: e.target.value,
-                              })
-                            }
-                            placeholder="เบอร์โทรศัพท์"
-                            className="w-full text-[11px] p-1 bg-white border rounded"
-                          />
-                        </td>
                         <td className="p-2 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
@@ -1415,9 +1390,6 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                       </td>
                       <td className="py-2.5 px-3 text-slate-700 max-w-[280px] truncate">
                         {office.centerName}
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
-                        {office.defaultPhone || '-'}
                       </td>
                       <td className="py-2.5 px-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
