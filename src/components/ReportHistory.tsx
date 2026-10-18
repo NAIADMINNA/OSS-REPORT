@@ -1,5 +1,5 @@
 import React, { useState, useId, useMemo } from 'react';
-import { DOEReport } from '../types/doe';
+import { DOEReport, ReportCategory } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { formatNumber, formatThaiDateShort, formatThaiDateFull } from '../utils/thaiDate';
 import { REGION_ORDER, sortOfficesByRegion } from '../utils/officeUtils';
@@ -31,6 +31,7 @@ import {
 
 interface ReportHistoryProps {
   reports: DOEReport[];
+  categories?: ReportCategory[];
   deletedReports?: DOEReport[];
   adminPin?: string;
   onViewPoster: (report: DOEReport) => void;
@@ -45,6 +46,7 @@ interface ReportHistoryProps {
 
 export const ReportHistory: React.FC<ReportHistoryProps> = ({
   reports,
+  categories,
   deletedReports = [],
   adminPin = '0841543524',
   onViewPoster,
@@ -58,6 +60,59 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 }) => {
   const searchInputId = useId();
   const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
+
+  // Active categories list
+  const activeCategories = useMemo(() => {
+    if (categories && categories.length > 0) {
+      return categories.filter((c) => c.isActive);
+    }
+    return null;
+  }, [categories]);
+
+  // Determine active group count (defaults to actual activeCategories.length or 8)
+  const activeGroupsCount = useMemo(() => {
+    if (activeCategories && activeCategories.length > 0) {
+      return activeCategories.length;
+    }
+    return 8;
+  }, [activeCategories]);
+
+  // Calculate actual total across all categories for any given report
+  const calculateReportTotalSections = (r: DOEReport): number => {
+    if (activeCategories && activeCategories.length > 0) {
+      return activeCategories.reduce((sum, cat) => {
+        let val = 0;
+        if (cat.id === 'section59') val = Number(r.section59) || 0;
+        else if (cat.id === 'section62') val = Number(r.section62) || 0;
+        else if (cat.id === 'section63_1') val = Number(r.section63_1) || 0;
+        else if (cat.id === 'section63_2') val = Number(r.section63_2) || 0;
+        else if (cat.id === 'section64') val = Number(r.section64) || 0;
+        else if (cat.id === 'modifyDetails') val = Number(r.modifyDetails) || 0;
+        else if (cat.id === 'substituteCard') val = Number(r.substituteCard) || 0;
+        else {
+          val = Number(r.customCategoryValues?.[cat.id]) || 0;
+        }
+        return sum + val;
+      }, 0);
+    }
+
+    // Comprehensive fallback: sum all known standard properties + all customCategoryValues
+    const customSum = Object.values(r.customCategoryValues || {}).reduce(
+      (sum, val) => sum + (Number(val) || 0),
+      0
+    );
+    return (
+      (Number(r.section59) || 0) +
+      (Number(r.section62) || 0) +
+      (Number(r.section63_1) || 0) +
+      (Number(r.section63_2) || 0) +
+      (Number(r.section64) || 0) +
+      (Number(r.modifyDetails) || 0) +
+      (Number(r.substituteCard) || 0) +
+      customSum
+    );
+  };
+
   // Admin authentication state
   const [isAdmin, setIsAdmin] = useState<boolean>(() => {
     try {
@@ -156,6 +211,20 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
   const handleExportCSV = () => {
     if (reports.length === 0) return;
 
+    const exportCats = (activeCategories && activeCategories.length > 0)
+      ? activeCategories
+      : [
+          { id: 'section59', title: 'กลุ่มมาตรา 59' },
+          { id: 'section62', title: 'กลุ่มมาตรา 62' },
+          { id: 'section63_1', title: 'กลุ่มมาตรา 63/1' },
+          { id: 'section63_2', title: 'กลุ่มมาตรา 63/2' },
+          { id: 'section64', title: 'กลุ่มมาตรา 64' },
+          { id: 'modifyDetails', title: 'เปลี่ยนแปลงรายการในใบอนุญาตทำงาน' },
+          { id: 'substituteCard', title: 'ใบแทนใบอนุญาตทำงาน' },
+        ];
+
+    const categoryHeaders = exportCats.map((c) => `"${c.title} (คน)"`);
+
     const headers = [
       'วันที่รายงาน',
       'สำนักงานจัดหางาน',
@@ -165,14 +234,8 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
       'ตำแหน่ง',
       'เบอร์โทรศัพท์',
       'LINE ID',
-      'กลุ่มมาตรา 59 (คน)',
-      'กลุ่มมาตรา 62 (คน)',
-      'กลุ่มมาตรา 63/1 (คน)',
-      'กลุ่มมาตรา 63/2 (คน)',
-      'กลุ่มมาตรา 64 (คน)',
-      'เปลี่ยนแปลงรายการ (คน)',
-      'ใบแทนใบอนุญาต (คน)',
-      'รวม 7 กลุ่ม (คน)',
+      ...categoryHeaders,
+      `"รวม ${exportCats.length} กลุ่ม (คน)"`,
       'คิวนัดหมาย (คิว)',
       'ออกบัตร (ใบ)',
       'ยืนยันตัวตน (คน)',
@@ -183,14 +246,18 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
     ];
 
     const rows = reports.map((r) => {
-      const totalSec =
-        r.section59 +
-        r.section62 +
-        r.section63_1 +
-        r.section63_2 +
-        r.section64 +
-        r.modifyDetails +
-        r.substituteCard;
+      const categoryValues = exportCats.map((c) => {
+        if (c.id === 'section59') return Number(r.section59) || 0;
+        if (c.id === 'section62') return Number(r.section62) || 0;
+        if (c.id === 'section63_1') return Number(r.section63_1) || 0;
+        if (c.id === 'section63_2') return Number(r.section63_2) || 0;
+        if (c.id === 'section64') return Number(r.section64) || 0;
+        if (c.id === 'modifyDetails') return Number(r.modifyDetails) || 0;
+        if (c.id === 'substituteCard') return Number(r.substituteCard) || 0;
+        return Number(r.customCategoryValues?.[c.id]) || 0;
+      });
+
+      const totalSec = calculateReportTotalSections(r);
 
       return [
         `"${r.reportDate}"`,
@@ -201,13 +268,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
         `"${r.reporterPosition.replace(/"/g, '""')}"`,
         `"${r.phoneNumber || ''}"`,
         `"${r.lineId || ''}"`,
-        r.section59,
-        r.section62,
-        r.section63_1,
-        r.section63_2,
-        r.section64,
-        r.modifyDetails,
-        r.substituteCard,
+        ...categoryValues,
         totalSec,
         r.queueAppointment,
         r.cardsIssued,
@@ -517,14 +578,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
             </div>
           ) : (
             filteredReported.map((r) => {
-              const totalSec =
-                r.section59 +
-                r.section62 +
-                r.section63_1 +
-                r.section63_2 +
-                r.section64 +
-                r.modifyDetails +
-                r.substituteCard;
+              const totalSec = calculateReportTotalSections(r);
 
               return (
                 <div
@@ -584,12 +638,18 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                       </div>
                     </div>
 
-                    {/* 7 Groups highlights */}
+                    {/* Groups highlights */}
                     <div className="mt-3 flex items-center justify-between text-xs sm:text-sm text-slate-600 px-1">
-                      <span>
-                        รวม 7 กลุ่ม: <b className="text-slate-900 font-bold">{formatNumber(totalSec)}</b> คน
+                      <span
+                        className="cursor-help hover:text-blue-900 transition-colors"
+                        title={`ยอดรวมผู้รับบริการทั้ง ${activeGroupsCount} กลุ่มมาตรา ของรายงานฉบับนี้`}
+                      >
+                        รวม {activeGroupsCount} กลุ่ม: <b className="text-slate-900 font-bold">{formatNumber(totalSec)}</b> คน
                       </span>
-                      <span>
+                      <span
+                        className="cursor-help hover:text-emerald-900 transition-colors"
+                        title="อัตราความสำเร็จ: คำนวณจาก (จำนวนออกบัตรสำเร็จ ÷ จำนวนคิวนัดหมาย) × 100"
+                      >
                         สำเร็จ: <b className="text-emerald-700 font-bold">{r.queueAppointment > 0 ? Math.round((r.cardsIssued / r.queueAppointment) * 100) : 0}%</b>
                       </span>
                     </div>

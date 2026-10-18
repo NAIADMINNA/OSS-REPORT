@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useId, useMemo } from 'react';
+import React, { useState, useEffect, useId, useMemo, useRef } from 'react';
 import { DOEReport, EmploymentOffice, ReportCategory, ReporterProfile } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { formatThaiDateFull, formatNumber, getTodayIsoDate } from '../utils/thaiDate';
@@ -20,6 +20,10 @@ import {
   RotateCcw,
   Lock,
   ShieldCheck,
+  Search,
+  X,
+  MapPin,
+  Check,
 } from 'lucide-react';
 
 export const MOBILE_UNIT_CENTER_NAME =
@@ -126,8 +130,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     notes: initialReport?.notes || '',
   });
 
+  const lastReportIdRef = useRef<string | undefined>(initialReport?.id);
+
   useEffect(() => {
-    if (initialReport) {
+    if (initialReport && initialReport.id !== lastReportIdRef.current) {
+      lastReportIdRef.current = initialReport.id;
       setSelectedOfficeId(initialReport.officeId || initialDefaultOffice.id);
       setFormData({
         reportDate: initialReport.reportDate || todayIso,
@@ -165,7 +172,15 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         notes: initialReport.notes || '',
       });
     }
-  }, [initialReport, todayIso]);
+  }, [initialReport?.id, todayIso, initialDefaultOffice]);
+
+  // Determine if active center is Mobile Unit or Office Standard
+  const isMobileCenter = useMemo(() => {
+    return (
+      formData.centerName === MOBILE_UNIT_CENTER_NAME ||
+      Boolean(formData.centerName?.includes('Mobile Unit'))
+    );
+  }, [formData.centerName]);
 
   // Calculate live sums across all active categories (both default and custom)
   const totalSections = useMemo(() => {
@@ -187,21 +202,20 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
   // Handle Office Selection
   const handleOfficeChange = (officeId: string) => {
+    if (!officeId) return;
     setSelectedOfficeId(officeId);
     const office = officeList.find((o) => o.id === officeId);
     if (office) {
       // Check if a registered reporter belongs to this office
       const matchingReporter = reporters?.find((r) => r.officeId === office.id);
-      const isMobile =
-        formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-        formData.centerName.includes('Mobile Unit');
+      const targetCenterName = office.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
 
       const updated = {
         ...formData,
         officeId: office.id,
         officeName: office.name,
         officeNameEn: office.nameEn,
-        centerName: isMobile ? formData.centerName : office.centerName,
+        centerName: targetCenterName,
         region: office.region,
         phoneNumber: matchingReporter?.phoneNumber || formData.phoneNumber || '',
         lineId: matchingReporter?.lineId || formData.lineId || '',
@@ -337,6 +351,21 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     });
   }, [officeList, officeSearch, selectedRegionFilter]);
 
+  // Check if current selected office is within the filtered list
+  const isSelectedInFiltered = useMemo(() => {
+    return filteredOffices.some((o) => o.id === selectedOfficeId);
+  }, [filteredOffices, selectedOfficeId]);
+
+  // Auto-select when search query results in a single office match
+  useEffect(() => {
+    if (officeSearch.trim().length >= 2 && filteredOffices.length === 1) {
+      const singleMatch = filteredOffices[0];
+      if (singleMatch && singleMatch.id !== selectedOfficeId) {
+        handleOfficeChange(singleMatch.id);
+      }
+    }
+  }, [officeSearch, filteredOffices, selectedOfficeId]);
+
   // Group and sort filtered offices by standard region
   const groupedFilteredOffices = useMemo(() => {
     return groupAndSortOfficesByRegion(filteredOffices);
@@ -367,15 +396,36 @@ export const ReportForm: React.FC<ReportFormProps> = ({
             </label>
             <div className="space-y-2">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <div className="sm:col-span-2">
-                  <input
-                    id={searchInputId}
-                    type="text"
-                    placeholder="พิมพ์ค้นหาจังหวัด, ศูนย์, หรือพื้นที่... เช่น เชียงราย, ชลบุรี, กทม.พื้นที่ 5"
-                    value={officeSearch}
-                    onChange={(e) => setOfficeSearch(e.target.value)}
-                    className="w-full min-w-0 text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
-                  />
+                <div className="sm:col-span-2 relative">
+                  <div className="relative">
+                    <input
+                      id={searchInputId}
+                      type="text"
+                      placeholder="พิมพ์ค้นหาจังหวัด, ศูนย์, หรือพื้นที่... เช่น เชียงราย, ชลบุรี, กทม.พื้นที่ 5"
+                      value={officeSearch}
+                      onChange={(e) => setOfficeSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (filteredOffices.length > 0) {
+                            handleOfficeChange(filteredOffices[0].id);
+                          }
+                        }
+                      }}
+                      className="w-full min-w-0 text-sm pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
+                    />
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
+                    {officeSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setOfficeSearch('')}
+                        className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-700 p-0.5 rounded-full hover:bg-slate-200 transition-colors cursor-pointer"
+                        title="ล้างคำค้นหา"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <select
@@ -396,12 +446,91 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </div>
               </div>
 
+              {/* Instant Search Results Suggestions Panel */}
+              {officeSearch.trim() && (
+                <div className="bg-sky-50/80 border border-sky-200 rounded-xl p-2.5 space-y-1.5 shadow-xs">
+                  <div className="flex items-center justify-between px-1 text-[11px] font-bold text-sky-900">
+                    <span className="flex items-center gap-1.5">
+                      <Search className="w-3.5 h-3.5 text-sky-600" />
+                      <span>ผลการค้นพบตรง ({filteredOffices.length} แห่ง) - คลิกเลือกได้ทันที:</span>
+                    </span>
+                    {filteredOffices.length === 1 && (
+                      <span className="text-emerald-700 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-md text-[10px] flex items-center gap-1 font-semibold">
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        เลือกศูนย์นี้อัตโนมัติแล้ว
+                      </span>
+                    )}
+                  </div>
+                  {filteredOffices.length === 0 ? (
+                    <div className="p-3 text-center text-slate-500 text-xs bg-white rounded-lg border border-dashed border-slate-300">
+                      ไม่พบสำนักงานหรือชื่อศูนย์ที่ตรงกับคำค้นหา "{officeSearch}"
+                    </div>
+                  ) : (
+                    <div className="max-h-48 overflow-y-auto space-y-1 pr-0.5">
+                      {filteredOffices.slice(0, 8).map((office) => {
+                        const isSelected = office.id === selectedOfficeId;
+                        return (
+                          <button
+                            key={office.id}
+                            type="button"
+                            onClick={() => {
+                              handleOfficeChange(office.id);
+                            }}
+                            className={`w-full text-left p-2 rounded-lg transition-all flex items-center justify-between gap-2.5 cursor-pointer border ${
+                              isSelected
+                                ? 'bg-sky-600 text-white font-bold border-sky-700 shadow-xs'
+                                : 'bg-white hover:bg-sky-100/70 text-slate-800 border-slate-200'
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-xs font-semibold flex items-center gap-1.5">
+                                <Building2 className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-white' : 'text-sky-600'}`} />
+                                <span>{office.name}</span>
+                              </div>
+                              {office.centerName && (
+                                <div
+                                  className={`truncate text-[11px] mt-0.5 flex items-center gap-1 font-medium ${
+                                    isSelected ? 'text-sky-100' : 'text-blue-700'
+                                  }`}
+                                  title={office.centerName}
+                                >
+                                  <MapPin className={`w-3 h-3 shrink-0 ${isSelected ? 'text-sky-200' : 'text-amber-600'}`} />
+                                  <span>{office.centerName}</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span
+                                className={`text-[10px] px-2 py-0.5 rounded-md font-medium ${
+                                  isSelected
+                                    ? 'bg-sky-700 text-white'
+                                    : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                }`}
+                              >
+                                {office.region}
+                              </span>
+                              {isSelected && <Check className="w-4 h-4 text-white" />}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Select Dropdown */}
               <select
-                value={selectedOfficeId}
+                value={isSelectedInFiltered ? selectedOfficeId : ''}
                 onChange={(e) => handleOfficeChange(e.target.value)}
                 aria-label="เลือกสำนักงานจัดหางานและศูนย์บริการ"
-                className="w-full min-w-0 text-sm sm:text-base px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-semibold text-slate-900"
+                className="w-full min-w-0 text-sm sm:text-base px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-semibold text-slate-900 shadow-2xs"
               >
+                {!isSelectedInFiltered && (
+                  <option value="" disabled>
+                    -- กรุณาคลิกเลือกสำนักงาน / ศูนย์บริการที่ค้นพบ ({filteredOffices.length} แห่ง) --
+                  </option>
+                )}
                 {groupedFilteredOffices.map((group) => (
                   <optgroup key={group.region} label={group.regionLabel}>
                     {group.offices.map((office) => (
@@ -438,51 +567,27 @@ export const ReportForm: React.FC<ReportFormProps> = ({
             <div className="flex items-center justify-between flex-wrap gap-2">
               <label className="block text-sm font-bold text-slate-800 flex items-center gap-1.5">
                 <span>ชื่อศูนย์บริการ (ระบุในหัวเรื่องโปสเตอร์)</span>
-                {!isAdmin && <Lock className="w-3.5 h-3.5 text-amber-600" />}
               </label>
               <div className="flex items-center gap-1.5 flex-wrap">
-                {!isAdmin ? (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
-                    <Lock className="w-3 h-3 text-amber-700" />
-                    ล็อกชื่อศูนย์ (ไม่อนุญาตให้แก้ไข)
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                    สิทธิ์ Admin: แก้ไขได้
-                  </span>
-                )}
-                {formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-                formData.centerName?.includes('Mobile Unit') ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                {isMobileCenter ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
                     <Truck className="w-3 h-3" />
                     หน่วยบริการเคลื่อนที่
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-sky-100 text-sky-800 border border-sky-200">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-sky-100 text-sky-800 border border-sky-200">
                     <Building2 className="w-3 h-3" />
-                    ชื่อศูนย์ตามระบุ
+                    ชื่อศูนย์ตามสำนักงาน
                   </span>
                 )}
               </div>
             </div>
 
-            {/* Selector: ชื่อศูนย์ตามระบุ vs หน่วยบริการเคลื่อนที่ (Mobile Unit) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {/* Selector: ชื่อศูนย์ตามสำนักงาน vs หน่วยบริการเคลื่อนที่ (Mobile Unit) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <button
                 type="button"
                 onClick={() => {
-                  if (!isAdmin) {
-                    requireAdmin('เปลี่ยนรูปแบบชื่อศูนย์บริการเป็น "ชื่อศูนย์ตามระบุ"', () => {
-                      const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
-                      const targetName =
-                        currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
-                      const updated = { ...formData, centerName: targetName };
-                      setFormData(updated);
-                      triggerPreview(updated);
-                    });
-                    return;
-                  }
                   const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
                   const targetName =
                     currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
@@ -490,23 +595,15 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                   setFormData(updated);
                   triggerPreview(updated);
                 }}
-                className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                  !isAdmin ? 'opacity-90 bg-slate-50/70 border-slate-200 hover:border-amber-300' : ''
-                } ${
-                  !(
-                    formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-                    formData.centerName?.includes('Mobile Unit')
-                  )
+                className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  !isMobileCenter
                     ? 'bg-sky-50/90 border-sky-500 ring-2 ring-sky-500/20 shadow-xs'
                     : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 text-slate-600'
                 }`}
               >
                 <div
-                  className={`p-1.5 rounded-lg shrink-0 ${
-                    !(
-                      formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-                      formData.centerName?.includes('Mobile Unit')
-                    )
+                  className={`p-2 rounded-lg shrink-0 ${
+                    !isMobileCenter
                       ? 'bg-sky-600 text-white'
                       : 'bg-slate-100 text-slate-500'
                   }`}
@@ -515,16 +612,12 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1">
-                      <span>ชื่อศูนย์ตามระบุ</span>
-                      {!isAdmin && <Lock className="w-3 h-3 text-amber-600" />}
+                    <span className="text-xs font-bold text-slate-900">
+                      ชื่อศูนย์ตามสำนักงาน
                     </span>
-                    {!(
-                      formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-                      formData.centerName?.includes('Mobile Unit')
-                    ) && <span className="w-2 h-2 rounded-full bg-sky-600" />}
+                    {!isMobileCenter && <span className="w-2 h-2 rounded-full bg-sky-600" />}
                   </div>
-                  <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                  <p className="text-[11px] text-slate-600 truncate mt-0.5" title={officeList.find((o) => o.id === selectedOfficeId)?.centerName}>
                     {officeList.find((o) => o.id === selectedOfficeId)?.centerName ||
                       'ตามที่ระบุประจำสำนักงาน'}
                   </p>
@@ -534,31 +627,19 @@ export const ReportForm: React.FC<ReportFormProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (!isAdmin) {
-                    requireAdmin('เปลี่ยนรูปแบบชื่อศูนย์บริการเป็น "หน่วยบริการเคลื่อนที่ (Mobile Unit)"', () => {
-                      const updated = { ...formData, centerName: MOBILE_UNIT_CENTER_NAME };
-                      setFormData(updated);
-                      triggerPreview(updated);
-                    });
-                    return;
-                  }
                   const updated = { ...formData, centerName: MOBILE_UNIT_CENTER_NAME };
                   setFormData(updated);
                   triggerPreview(updated);
                 }}
-                className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                  !isAdmin ? 'opacity-90 bg-slate-50/70 border-slate-200 hover:border-amber-300' : ''
-                } ${
-                  formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-                  formData.centerName?.includes('Mobile Unit')
+                className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  isMobileCenter
                     ? 'bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
                     : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 text-slate-600'
                 }`}
               >
                 <div
-                  className={`p-1.5 rounded-lg shrink-0 ${
-                    formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-                    formData.centerName?.includes('Mobile Unit')
+                  className={`p-2 rounded-lg shrink-0 ${
+                    isMobileCenter
                       ? 'bg-emerald-600 text-white'
                       : 'bg-slate-100 text-slate-500'
                   }`}
@@ -567,89 +648,31 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1">
-                      <span>หน่วยบริการเคลื่อนที่ (Mobile Unit)</span>
-                      {!isAdmin && <Lock className="w-3 h-3 text-amber-600" />}
+                    <span className="text-xs font-bold text-slate-900">
+                      หน่วยบริการเคลื่อนที่
                     </span>
-                    {(formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-                      formData.centerName?.includes('Mobile Unit')) && (
+                    {isMobileCenter && (
                       <span className="w-2 h-2 rounded-full bg-emerald-600" />
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500 truncate mt-0.5">
-                    หน่วยบริการใบอนุญาตทำงานแบบเคลื่อนที่
+                  <p className="text-[11px] text-slate-600 truncate mt-0.5">
+                    หน่วยบริการเคลื่อนที่ (Mobile Unit)
                   </p>
                 </div>
               </button>
             </div>
 
-            <div className="space-y-1.5">
-              <div className="relative">
-                <input
-                  type="text"
-                  value={formData.centerName}
-                  readOnly={!isAdmin}
-                  onChange={(e) => {
-                    if (!isAdmin) return;
-                    const updated = { ...formData, centerName: e.target.value };
-                    setFormData(updated);
-                    triggerPreview(updated);
-                  }}
-                  className={`w-full min-w-0 text-sm px-3.5 py-2.5 rounded-lg font-medium transition-colors ${
-                    !isAdmin
-                      ? 'bg-slate-100 text-slate-600 border border-slate-200 cursor-not-allowed select-none'
-                      : 'bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 text-slate-800'
-                  }`}
-                  placeholder="ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว..."
-                />
-                {!isAdmin && (
-                  <div className="absolute right-3 top-2.5 flex items-center gap-1 text-xs text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-md border border-amber-300">
-                    <Lock className="w-3 h-3 text-amber-700" />
-                    <span>ล็อกสิทธิ์ Admin</span>
-                  </div>
-                )}
+            {/* กล่องแสดงชื่อศูนย์บริการที่จะแสดงบนโปสเตอร์ */}
+            <div className="px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-slate-500 shrink-0 font-medium">ชื่อศูนย์ในรายงาน:</span>
+                <span className="font-bold text-slate-800 truncate" title={formData.centerName}>
+                  {formData.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'}
+                </span>
               </div>
-
-              {!isAdmin ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-amber-50/80 border border-amber-200 text-xs text-amber-950">
-                  <div className="flex items-center gap-1.5">
-                    <Lock className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                    <span>ชื่อศูนย์บริการถูกล็อคตามมาตรฐานสำนักงาน ไม่อนุญาตให้ผู้ใช้งานทั่วไปแก้ไข</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdminActionTitle('ปลดล็อกสิทธิ์เพื่อแก้ไขชื่อศูนย์บริการ');
-                      setAdminModalOpen(true);
-                    }}
-                    className="font-bold underline text-amber-800 hover:text-amber-950 cursor-pointer flex items-center gap-1 text-[11px] bg-white px-2 py-0.5 rounded-md border border-amber-300 shadow-2xs"
-                  >
-                    <ShieldCheck className="w-3 h-3 text-amber-600" />
-                    <span>ปลดล็อกสิทธิ์ Admin</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 pt-0.5">
-                  <span className="text-emerald-700 font-medium">
-                    ✓ สิทธิ์ Admin: สามารถปรับแต่งชื่อศูนย์บริการ หรือกดคืนค่าตามสำนักงานได้
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
-                      const defaultName =
-                        currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
-                      const updated = { ...formData, centerName: defaultName };
-                      setFormData(updated);
-                      triggerPreview(updated);
-                    }}
-                    className="text-sky-600 hover:text-sky-700 font-medium underline shrink-0 ml-2 cursor-pointer flex items-center gap-1"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>คืนค่าตามสำนักงาน</span>
-                  </button>
-                </div>
-              )}
+              <span className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md font-medium shrink-0">
+                {!isMobileCenter ? 'ประจำสำนักงาน' : 'หน่วยเคลื่อนที่'}
+              </span>
             </div>
           </div>
 

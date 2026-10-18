@@ -891,6 +891,7 @@ export default function App() {
         {activeTab === 'history' && (
           <ReportHistory
             reports={reports}
+            categories={categories}
             deletedReports={deletedReports}
             adminPin={systemConfig.adminPin || '0841543524'}
             onViewPoster={handleOpenPosterModal}
