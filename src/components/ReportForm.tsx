@@ -205,13 +205,35 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     }
   }, [initialReport?.id, todayIso, initialDefaultOffice, activeCategories]);
 
+  // Current selected office object and its default standard center name
+  const currentSelectedOffice = useMemo(() => {
+    return officeList.find((o) => o.id === selectedOfficeId) || officeList[0];
+  }, [officeList, selectedOfficeId]);
+
+  const standardOfficeCenterName = useMemo(() => {
+    return currentSelectedOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+  }, [currentSelectedOffice]);
+
   // Determine if active center is Mobile Unit or Office Standard
   const isMobileCenter = useMemo(() => {
     return (
       formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-      Boolean(formData.centerName?.includes('Mobile Unit'))
+      Boolean(formData.centerName?.includes('Mobile Unit')) ||
+      Boolean(formData.centerName?.includes('หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่'))
     );
   }, [formData.centerName]);
+
+  // Switch between Standard Office Center and Mobile Unit
+  const handleCenterTypeChange = (type: 'standard' | 'mobile') => {
+    const nextCenterName =
+      type === 'mobile' ? MOBILE_UNIT_CENTER_NAME : standardOfficeCenterName;
+    const updated = {
+      ...formData,
+      centerName: nextCenterName,
+    };
+    setFormData(updated);
+    triggerPreview(updated);
+  };
 
   // Calculate live sums across all active categories (both default and custom)
   const totalSections = useMemo(() => {
@@ -226,7 +248,9 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     if (office) {
       // Check if a registered reporter belongs to this office
       const matchingReporter = reporters?.find((r) => r.officeId === office.id);
-      const targetCenterName = office.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+      const targetCenterName = isMobileCenter
+        ? formData.centerName || MOBILE_UNIT_CENTER_NAME
+        : office.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
 
       const updated = {
         ...formData,
@@ -637,19 +661,36 @@ export const ReportForm: React.FC<ReportFormProps> = ({
             </div>
           </div>
 
-          {/* ชื่อศูนย์บริการประจำสำนักงาน (เป็นค่าทางการของสำนักงานที่เลือก) */}
-          <div className="space-y-1.5 md:col-span-2">
+          {/* ชื่อศูนย์บริการประจำสำนักงาน หรือ หน่วยบริการเคลื่อนที่ (Mobile Unit) */}
+          <div className="space-y-2 md:col-span-2">
             <label className="block text-sm font-bold text-slate-800 flex items-center justify-between flex-wrap gap-2">
               <span className="flex items-center gap-1.5">
                 <Building2 className="w-4 h-4 text-sky-700" />
                 <span>สำนักงานและชื่อศูนย์บริการทางการที่แสดงในรายงาน</span>
               </span>
-              <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                <Check className="w-3 h-3 text-emerald-600" />
-                เชื่อมโยงตรงตามสำนักงานที่เลือกอัตโนมัติ
+              <span
+                className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1 border ${
+                  isMobileCenter
+                    ? 'text-amber-900 bg-amber-50 border-amber-300'
+                    : 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                }`}
+              >
+                {isMobileCenter ? (
+                  <>
+                    <Truck className="w-3.5 h-3.5 text-amber-600" />
+                    <span>โหมดหน่วยบริการเคลื่อนที่ (Mobile Unit)</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-600" />
+                    <span>เชื่อมโยงตรงตามสำนักงานที่เลือกอัตโนมัติ</span>
+                  </>
+                )}
               </span>
             </label>
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3 text-xs">
+              {/* ข้อมูลสำนักงานที่เลือก */}
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
@@ -657,7 +698,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                   </div>
                   <div className="min-w-0">
                     <span className="text-[10.5px] text-slate-500 font-semibold block">
-                      สำนักงานจัดหางาน:
+                      สำนักงานจัดหางานผู้รายงาน:
                     </span>
                     <span className="font-extrabold text-slate-900 text-xs sm:text-sm truncate block" title={formData.officeName}>
                       {formData.officeName || 'สำนักงานจัดหางาน'}
@@ -669,9 +710,116 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </span>
               </div>
 
+              {/* ตัวเลือกประเภทศูนย์บริการ: ศูนย์ประจำสำนักงาน vs หน่วยบริการเคลื่อนที่ (Mobile Unit) */}
+              <div className="pt-2.5 border-t border-slate-200/80 space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold text-slate-700">
+                    เลือกรูปแบบศูนย์บริการที่แสดงในรายงานและโปสเตอร์:
+                  </span>
+                  <span className="text-[10.5px] text-slate-500">
+                    คลิกสลับระหว่างศูนย์บริการประจำสำนักงาน หรือ Mobile Unit ได้ทันที
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* ปุ่มเลือกที่ 1: ศูนย์บริการประจำสำนักงาน */}
+                  <button
+                    type="button"
+                    onClick={() => handleCenterTypeChange('standard')}
+                    className={`text-left p-2.5 rounded-xl border transition-all flex items-start gap-2.5 cursor-pointer ${
+                      !isMobileCenter
+                        ? 'bg-white border-sky-500 ring-2 ring-sky-500/20 shadow-xs'
+                        : 'bg-white/70 hover:bg-white border-slate-200 text-slate-600'
+                    }`}
+                  >
+                    <div
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                        !isMobileCenter
+                          ? 'bg-sky-600 text-white'
+                          : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      <MapPin className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span
+                          className={`text-xs font-extrabold ${
+                            !isMobileCenter ? 'text-sky-950' : 'text-slate-700'
+                          }`}
+                        >
+                          ศูนย์บริการประจำสำนักงาน
+                        </span>
+                        {!isMobileCenter && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0">
+                            กำลังใช้งาน
+                          </span>
+                        )}
+                      </div>
+                      <span
+                        className="text-[11px] text-slate-500 truncate block mt-0.5"
+                        title={standardOfficeCenterName}
+                      >
+                        {standardOfficeCenterName}
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* ปุ่มเลือกที่ 2: หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit) */}
+                  <button
+                    type="button"
+                    onClick={() => handleCenterTypeChange('mobile')}
+                    className={`text-left p-2.5 rounded-xl border transition-all flex items-start gap-2.5 cursor-pointer ${
+                      isMobileCenter
+                        ? 'bg-amber-50/70 border-amber-500 ring-2 ring-amber-500/25 shadow-xs'
+                        : 'bg-white/70 hover:bg-white border-slate-200 text-slate-600'
+                    }`}
+                  >
+                    <div
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                        isMobileCenter
+                          ? 'bg-amber-500 text-white'
+                          : 'bg-amber-100/70 text-amber-700'
+                      }`}
+                    >
+                      <Truck className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span
+                          className={`text-xs font-extrabold ${
+                            isMobileCenter ? 'text-amber-950' : 'text-slate-800'
+                          }`}
+                        >
+                          หน่วยบริการเคลื่อนที่ (Mobile Unit)
+                        </span>
+                        {isMobileCenter && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-200/80 text-amber-950 shrink-0">
+                            กำลังใช้งาน
+                          </span>
+                        )}
+                      </div>
+                      <span
+                        className="text-[11px] text-slate-500 truncate block mt-0.5"
+                        title={MOBILE_UNIT_CENTER_NAME}
+                      >
+                        {MOBILE_UNIT_CENTER_NAME}
+                      </span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* แสดงผลชื่อศูนย์บริการที่จะปรากฏบนหัวเรื่องรายงานและโปสเตอร์ */}
               <div className="pt-2 border-t border-slate-200/80 flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
-                  <MapPin className="w-4 h-4" />
+                <div
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    isMobileCenter
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-blue-100 text-blue-800'
+                  }`}
+                >
+                  {isMobileCenter ? <Truck className="w-4 h-4" /> : <MapPin className="w-4 h-4" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <span className="text-[10.5px] text-slate-500 font-semibold block">
