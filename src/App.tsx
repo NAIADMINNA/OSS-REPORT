@@ -330,16 +330,11 @@ export default function App() {
     async function initOnlineDB() {
       setIsSyncing(true);
       try {
-        const isConnected = await testConnection();
-        setIsFirestoreOnline(isConnected);
-
-        // Ensure online Firestore has initial data if newly provisioned
-        await initializeFirestoreIfEmpty();
-
-        // 1. Subscribe to online reports (Realtime push via onSnapshot)
+        // 1. Subscribe to online reports immediately (Realtime push via onSnapshot)
         // Safeguard: Never allow an empty online array to wipe out existing local reports!
         const unsubReports = subscribeReports((onlineReports) => {
           if (!Array.isArray(onlineReports)) return;
+          setIsFirestoreOnline(true);
           const cleanOnline = sanitizeReportList(onlineReports);
           setReports((prevLocal) => {
             const cleanPrev = sanitizeReportList(prevLocal);
@@ -423,6 +418,13 @@ export default function App() {
           }
         });
         unsubs.push(unsubDelOffices);
+
+        // Run connection verification & initial seed check in parallel without blocking UI stream
+        const [isConnected] = await Promise.all([
+          testConnection(),
+          initializeFirestoreIfEmpty(),
+        ]);
+        setIsFirestoreOnline(isConnected);
       } catch (err) {
         console.warn('Firestore initialization or connection status:', err);
       } finally {

@@ -4,6 +4,7 @@ import {
   setDoc,
   deleteDoc,
   onSnapshot,
+  getDoc,
   getDocs,
   writeBatch,
 } from 'firebase/firestore';
@@ -65,7 +66,7 @@ export function subscribeReports(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, REPORTS_COLLECTION);
+      console.warn('Firestore reports stream status:', error);
     }
   );
 }
@@ -74,14 +75,23 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
   const sanitized = sanitizeReport(report);
   if (!sanitized) return;
   const docRef = doc(db, REPORTS_COLLECTION, sanitized.id);
-  try {
-    const cleanReport = JSON.parse(
-      JSON.stringify(sanitized, (_, val) => (val === undefined ? null : val))
-    );
-    await setDoc(docRef, cleanReport, { merge: true });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `${REPORTS_COLLECTION}/${sanitized.id}`);
+  const cleanReport = JSON.parse(
+    JSON.stringify(sanitized, (_, val) => (val === undefined ? null : val))
+  );
+
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await setDoc(docRef, cleanReport, { merge: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 600));
+      }
+    }
   }
+  handleFirestoreError(lastError, OperationType.WRITE, `${REPORTS_COLLECTION}/${sanitized.id}`);
 }
 
 export async function deleteReportOnline(report: DOEReport): Promise<void> {
@@ -151,7 +161,7 @@ export function subscribeDeletedReports(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, DELETED_REPORTS_COLLECTION);
+      console.warn('Firestore deleted_reports stream status:', error);
     }
   );
 }
@@ -173,7 +183,7 @@ export function subscribeOffices(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, OFFICES_COLLECTION);
+      console.warn('Firestore offices stream status:', error);
     }
   );
 }
@@ -225,7 +235,7 @@ export function subscribeDeletedOffices(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, DELETED_OFFICES_COLLECTION);
+      console.warn('Firestore deleted_offices stream status:', error);
     }
   );
 }
@@ -247,7 +257,7 @@ export function subscribeCategories(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, CATEGORIES_COLLECTION);
+      console.warn('Firestore categories stream status:', error);
     }
   );
 }
@@ -291,7 +301,7 @@ export function subscribeQueueMetrics(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, QUEUE_METRICS_COLLECTION);
+      console.warn('Firestore queue_metrics stream status:', error);
     }
   );
 }
@@ -344,7 +354,7 @@ export function subscribeReporters(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, REPORTERS_COLLECTION);
+      console.warn('Firestore reporters stream status:', error);
     }
   );
 }
@@ -387,7 +397,7 @@ export function subscribeSystemConfig(
     },
     (error) => {
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.GET, `${CONFIG_COLLECTION}/${CONFIG_DOC_ID}`);
+      console.warn('Firestore system_config stream status:', error);
     }
   );
 }
@@ -425,16 +435,27 @@ export async function initializeFirestoreIfEmpty(): Promise<{
   reportsSeeded: boolean;
   officesSeeded: boolean;
 }> {
-  let reportsSeeded = false;
+  const reportsSeeded = false;
   let officesSeeded = false;
 
   try {
-    // For Production: Do NOT seed mock demo reports into REPORTS_COLLECTION
+    // Fast-path check: if system_config/main_config already exists, skip full collection scans
+    // so concurrent users don't trigger 5 collection reads on every page load
+    const configDocRef = doc(db, CONFIG_COLLECTION, CONFIG_DOC_ID);
+    const configDocSnap = await getDoc(configDocRef);
+    if (configDocSnap.exists()) {
+      return { reportsSeeded: false, officesSeeded: false };
+    }
 
-    // Check offices collection
-    const officesSnap = await getDocs(collection(db, OFFICES_COLLECTION));
+    // Parallel check when initializing for the very first time
+    const [officesSnap, categoriesSnap, queueMetricsSnap, reportersSnap] = await Promise.all([
+      getDocs(collection(db, OFFICES_COLLECTION)),
+      getDocs(collection(db, CATEGORIES_COLLECTION)),
+      getDocs(collection(db, QUEUE_METRICS_COLLECTION)),
+      getDocs(collection(db, REPORTERS_COLLECTION)),
+    ]);
+
     if (officesSnap.empty) {
-      // Seed initial offices in chunks of 450 (Firestore limit is 500)
       const chunkSize = 200;
       for (let i = 0; i < EMPLOYMENT_OFFICES.length; i += chunkSize) {
         const chunk = EMPLOYMENT_OFFICES.slice(i, i + chunkSize);
@@ -448,8 +469,6 @@ export async function initializeFirestoreIfEmpty(): Promise<{
       officesSeeded = true;
     }
 
-    // Check categories
-    const categoriesSnap = await getDocs(collection(db, CATEGORIES_COLLECTION));
     if (categoriesSnap.empty) {
       const batch = writeBatch(db);
       for (const cat of DEFAULT_CATEGORIES) {
@@ -459,8 +478,6 @@ export async function initializeFirestoreIfEmpty(): Promise<{
       await batch.commit();
     }
 
-    // Check queue metrics (สถานะคิวและการให้บริการประจำวัน)
-    const queueMetricsSnap = await getDocs(collection(db, QUEUE_METRICS_COLLECTION));
     if (queueMetricsSnap.empty) {
       const batch = writeBatch(db);
       for (const qm of DEFAULT_QUEUE_METRICS) {
@@ -470,8 +487,6 @@ export async function initializeFirestoreIfEmpty(): Promise<{
       await batch.commit();
     }
 
-    // Check reporters
-    const reportersSnap = await getDocs(collection(db, REPORTERS_COLLECTION));
     if (reportersSnap.empty) {
       const batch = writeBatch(db);
       for (const rep of DEFAULT_REPORTERS) {
@@ -481,12 +496,7 @@ export async function initializeFirestoreIfEmpty(): Promise<{
       await batch.commit();
     }
 
-    // Check config
-    const configDocRef = doc(db, CONFIG_COLLECTION, CONFIG_DOC_ID);
-    const configSnap = await getDocs(collection(db, CONFIG_COLLECTION));
-    if (configSnap.empty) {
-      await setDoc(configDocRef, DEFAULT_SYSTEM_CONFIG);
-    }
+    await setDoc(configDocRef, DEFAULT_SYSTEM_CONFIG, { merge: true });
   } catch (err) {
     console.warn('Initial online sync warning:', err);
   }
