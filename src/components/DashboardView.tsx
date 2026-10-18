@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { DOEReport, EmploymentOffice, ReportCategory } from '../types/doe';
+import React, { useState, useMemo, useEffect } from 'react';
+import { DOEReport, EmploymentOffice, QueueMetricCategory, ReportCategory } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import {
   formatNumber,
@@ -9,6 +9,7 @@ import {
   getTodayIsoDate,
 } from '../utils/thaiDate';
 import { REGION_ORDER, getRegionLabel } from '../utils/officeUtils';
+import { calculateReportTotalSections } from '../utils/doeUtils';
 import {
   TrendingUp,
   Users,
@@ -34,6 +35,7 @@ import {
 interface DashboardViewProps {
   reports: DOEReport[];
   categories?: ReportCategory[];
+  queueMetrics?: QueueMetricCategory[];
   currentReport?: DOEReport | null;
   onSelectReport: (report: DOEReport) => void;
   onNewReport: (preselectedOfficeId?: string) => void;
@@ -41,18 +43,41 @@ interface DashboardViewProps {
   onEditReport?: (report: DOEReport) => void;
   onViewPendingInHistory?: () => void;
   offices?: EmploymentOffice[];
+  resetSignal?: number;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   reports,
   categories,
+  queueMetrics,
   currentReport,
   onSelectReport,
   onNewReport,
   onViewPendingInHistory,
   offices,
+  resetSignal,
 }) => {
   const todayStr = useMemo(() => getTodayIsoDate(), []);
+
+  // Helper to look up configured queue metric titles & units
+  const getQueueMetric = (id: string, defaultTitle: string, defaultUnit: string) => {
+    const found = queueMetrics?.find((m) => m.id === id);
+    if (!found) return { title: defaultTitle, unit: defaultUnit };
+    const title =
+      id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร'
+        ? 'บัตรเสีย'
+        : found.title || defaultTitle;
+    const unit =
+      id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร' && found.unit === 'คน'
+        ? 'ใบ'
+        : found.unit || defaultUnit;
+    return { title, unit };
+  };
+
+  const issuedMetricInfo = getQueueMetric('cardsIssued', 'ออกบัตรสำเร็จ', 'ใบ');
+  const missedMetricInfo = getQueueMetric('missedAppointment', 'ไม่มาตามนัด', 'คน');
+  const wrongDateMetricInfo = getQueueMetric('wrongAppointmentDate', 'มาไม่ตรงวันนัด', 'คน');
+  const notIssuedMetricInfo = getQueueMetric('cardsNotIssued', 'บัตรเสีย', 'ใบ');
 
   // Dynamic active categories from system config / props
   const activeCategories = useMemo(() => {
@@ -98,6 +123,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Selected Province/Report for drill-down to show specific province in cards and sections breakdown
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+
+  // Reset drill-down and filters when user clicks the logo to return to the summary dashboard
+  useEffect(() => {
+    if (resetSignal) {
+      setSelectedReportId(null);
+      setSelectedRegion('ทั้งหมด');
+      setSearchQuery('');
+    }
+  }, [resetSignal]);
 
   // Computed Date Range / Period Bounds
   const { filterStartDate, filterEndDate, isCycleMode, activePeriodLabel } = useMemo(() => {
@@ -148,21 +182,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // 1. In Dashboard: ONLY show reported reports matching the filter
   const reportedList = useMemo(() => {
     return reports.filter((r) => {
+      const rDate = r.reportDate || '';
       let matchDate = true;
       if (filterStartDate && filterEndDate) {
-        matchDate = r.reportDate >= filterStartDate && r.reportDate <= filterEndDate;
+        matchDate = rDate >= filterStartDate && rDate <= filterEndDate;
       } else if (filterStartDate) {
-        matchDate = r.reportDate >= filterStartDate;
+        matchDate = rDate >= filterStartDate;
       } else if (filterEndDate) {
-        matchDate = r.reportDate <= filterEndDate;
+        matchDate = rDate <= filterEndDate;
       }
       const matchRegion = selectedRegion === 'ทั้งหมด' || r.region === selectedRegion;
-      const q = searchQuery.toLowerCase().trim();
+      const q = (searchQuery || '').toLowerCase().trim();
       const matchSearch =
         !q ||
-        r.officeName.toLowerCase().includes(q) ||
-        r.centerName.toLowerCase().includes(q) ||
-        r.reporterName.toLowerCase().includes(q);
+        (r.officeName || '').toLowerCase().includes(q) ||
+        (r.centerName || '').toLowerCase().includes(q) ||
+        (r.reporterName || '').toLowerCase().includes(q);
       return matchDate && matchRegion && matchSearch;
     });
   }, [reports, filterStartDate, filterEndDate, selectedRegion, searchQuery]);
@@ -176,7 +211,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       groups[reg].push(r);
     }
     for (const reg in groups) {
-      groups[reg].sort((a, b) => a.officeName.localeCompare(b.officeName, 'th'));
+      groups[reg].sort((a, b) => (a.officeName || '').localeCompare(b.officeName || '', 'th'));
     }
     return REGION_ORDER
       .filter((reg) => groups[reg] && groups[reg].length > 0)
@@ -248,9 +283,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     let secSub = 0;
     const customSums: Record<string, number> = {};
 
+    let secMOU = 0;
     reportedList.forEach((report) => {
       totalQueue += report.queueAppointment || 0;
-      totalIssued += report.cardsIssued || 0;
+      const groupSum = calculateReportTotalSections(report, categories);
+      totalIssued += Math.max(report.cardsIssued || 0, groupSum);
       totalVerified += report.identityVerified || 0;
       totalNotIssued += report.cardsNotIssued || 0;
       totalMissed += report.missedAppointment || 0;
@@ -261,18 +298,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       sec63_1 += report.section63_1 || 0;
       sec63_2 += report.section63_2 || 0;
       sec64 += report.section64 || 0;
+      secMOU += report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0;
       secModify += report.modifyDetails || 0;
       secSub += report.substituteCard || 0;
 
       if (report.customCategoryValues) {
         Object.entries(report.customCategoryValues).forEach(([k, v]) => {
-          customSums[k] = (customSums[k] || 0) + (Number(v) || 0);
+          if (k !== 'mouGroup') {
+            customSums[k] = (customSums[k] || 0) + (Number(v) || 0);
+          }
         });
       }
     });
 
     const totalSections =
-      sec59 + sec62 + sec63_1 + sec63_2 + sec64 + secModify + secSub +
+      sec59 + sec62 + sec63_1 + sec63_2 + sec64 + secMOU + secModify + secSub +
       Object.values(customSums).reduce((a, b) => a + b, 0);
     const successRate =
       totalQueue > 0 ? ((totalIssued / totalQueue) * 100).toFixed(1) : '0';
@@ -305,6 +345,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         sec63_1,
         sec63_2,
         sec64,
+        secMOU,
         secModify,
         secSub,
         customSums,
@@ -331,9 +372,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       let secSub = 0;
       const customSums: Record<string, number> = {};
 
+      let secMOU = 0;
       selectedOfficeReports.forEach((r) => {
         totalQueue += r.queueAppointment || 0;
-        totalIssued += r.cardsIssued || 0;
+        const groupSum = calculateReportTotalSections(r, categories);
+        totalIssued += Math.max(r.cardsIssued || 0, groupSum);
         totalVerified += r.identityVerified || 0;
         totalNotIssued += r.cardsNotIssued || 0;
         totalMissed += r.missedAppointment || 0;
@@ -343,17 +386,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         sec63_1 += r.section63_1 || 0;
         sec63_2 += r.section63_2 || 0;
         sec64 += r.section64 || 0;
+        secMOU += r.mouGroup || r.customCategoryValues?.['mouGroup'] || 0;
         secModify += r.modifyDetails || 0;
         secSub += r.substituteCard || 0;
         if (r.customCategoryValues) {
           Object.entries(r.customCategoryValues).forEach(([k, v]) => {
-            customSums[k] = (customSums[k] || 0) + (Number(v) || 0);
+            if (k !== 'mouGroup') {
+              customSums[k] = (customSums[k] || 0) + (Number(v) || 0);
+            }
           });
         }
       });
 
       const totalSections =
-        sec59 + sec62 + sec63_1 + sec63_2 + sec64 + secModify + secSub +
+        sec59 + sec62 + sec63_1 + sec63_2 + sec64 + secMOU + secModify + secSub +
         Object.values(customSums).reduce((a, b) => a + b, 0);
 
       const successRate =
@@ -387,6 +433,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         sec63_1,
         sec63_2,
         sec64,
+        secMOU,
         secModify,
         secSub,
         customSums,
@@ -396,8 +443,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return {
       isDrilldown: false,
       officeId: 'overview',
-      officeName: selectedRegion === 'ทั้งหมด' ? 'ภาพรวมทั้งประเทศ' : selectedRegion,
-      centerName: '',
+      officeName:
+        selectedRegion === 'ทั้งหมด'
+          ? 'ภาพรวมทั้งประเทศ'
+          : selectedRegion === 'เฉพาะกิจ'
+          ? 'รวมศูนย์เฉพาะกิจ'
+          : selectedRegion,
+      centerName: selectedRegion === 'เฉพาะกิจ' ? 'รวมศูนย์เฉพาะกิจ' : '',
       reportDate: activePeriodLabel,
       totalQueue: nationalStats.totalQueue,
       totalIssued: nationalStats.totalIssued,
@@ -415,6 +467,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       sec63_1: nationalStats.sec63_1,
       sec63_2: nationalStats.sec63_2,
       sec64: nationalStats.sec64,
+      secMOU: nationalStats.secMOU,
       secModify: nationalStats.secModify,
       secSub: nationalStats.secSub,
       customSums: nationalStats.customSums,
@@ -431,9 +484,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       ? reportedList
       : reportedList.filter((r) => r.officeId === targetOfficeId);
 
+    const targetOfficeObj =
+      offices?.find((o) => o.id === targetOfficeId) ||
+      EMPLOYMENT_OFFICES.find((o) => o.id === targetOfficeId);
+
     const baseRep =
       targetReports[0] ||
       reports.find((r) => r.officeId === targetOfficeId) ||
+      (targetOfficeObj
+        ? ({
+            officeId: targetOfficeObj.id,
+            officeName: targetOfficeObj.name,
+            officeNameEn: targetOfficeObj.nameEn,
+            centerName: targetOfficeObj.centerName,
+            region: targetOfficeObj.region,
+          } as DOEReport)
+        : null) ||
       reports[0];
 
     let totalQueue = 0;
@@ -449,6 +515,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     let sec63_1 = 0;
     let sec63_2 = 0;
     let sec64 = 0;
+    let secMOU = 0;
     let secModify = 0;
     let secSub = 0;
 
@@ -456,7 +523,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
     targetReports.forEach((r) => {
       totalQueue += r.queueAppointment || 0;
-      totalIssued += r.cardsIssued || 0;
+      const grpSum = calculateReportTotalSections(r, categories);
+      totalIssued += Math.max(r.cardsIssued || 0, grpSum);
       totalVerified += r.identityVerified || 0;
       totalNotIssued += r.cardsNotIssued || 0;
       totalMissed += r.missedAppointment || 0;
@@ -468,12 +536,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       sec63_1 += r.section63_1 || 0;
       sec63_2 += r.section63_2 || 0;
       sec64 += r.section64 || 0;
+      secMOU += r.mouGroup || r.customCategoryValues?.['mouGroup'] || 0;
       secModify += r.modifyDetails || 0;
       secSub += r.substituteCard || 0;
 
       if (r.customCategoryValues) {
         Object.entries(r.customCategoryValues).forEach(([k, v]) => {
-          posterCustomSums[k] = (posterCustomSums[k] || 0) + (Number(v) || 0);
+          if (k !== 'mouGroup') {
+            posterCustomSums[k] = (posterCustomSums[k] || 0) + (Number(v) || 0);
+          }
         });
       }
     });
@@ -482,19 +553,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       ? selectedRegion === 'ทั้งหมด'
         ? 'ศูนย์บริการใบอนุญาตทำงาน (ภาพรวมทั้งประเทศ)'
         : `ศูนย์บริการใบอนุญาตทำงาน (${selectedRegion})`
-      : baseRep?.officeName || 'สำนักงานจัดหางาน';
+      : targetOfficeObj?.name || baseRep?.officeName || 'สำนักงานจัดหางาน';
 
     const officeNameEn = isOverview
       ? selectedRegion === 'ทั้งหมด'
         ? 'Foreign Workers Employment Center (National Overview)'
+        : selectedRegion === 'เฉพาะกิจ'
+        ? 'Foreign Workers Employment Center (Special Task Force)'
         : `Foreign Workers Employment Center (${selectedRegion})`
-      : baseRep?.officeNameEn || 'Provincial Employment Office';
+      : targetOfficeObj?.nameEn || baseRep?.officeNameEn || 'Provincial Employment Office';
 
     const centerName = isOverview
       ? selectedRegion === 'ทั้งหมด'
         ? 'ภาพรวม 76 จังหวัด + กทม. 10 พื้นที่'
+        : selectedRegion === 'เฉพาะกิจ'
+        ? 'รวมศูนย์เฉพาะกิจ'
         : `รวมสำนักงานจัดหางานในพื้นที่ ${selectedRegion}`
-      : baseRep?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+      : targetOfficeObj?.centerName || baseRep?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
 
     return {
       id: `poster-cycle-${Date.now()}`,
@@ -520,6 +595,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       section63_1: sec63_1,
       section63_2: sec63_2,
       section64: sec64,
+      mouGroup: secMOU,
       modifyDetails: secModify,
       substituteCard: secSub,
       customCategoryValues: posterCustomSums,
@@ -546,6 +622,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       else if (cat.id === 'section63_1') count = displayedStats.sec63_1;
       else if (cat.id === 'section63_2') count = displayedStats.sec63_2;
       else if (cat.id === 'section64') count = displayedStats.sec64;
+      else if (cat.id === 'mouGroup') count = displayedStats.secMOU;
       else if (cat.id === 'modifyDetails') count = displayedStats.secModify;
       else if (cat.id === 'substituteCard') count = displayedStats.secSub;
       else count = displayedStats.customSums?.[cat.id] || 0;
@@ -556,6 +633,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       else if (cat.id === 'section63_1') color = 'bg-indigo-500';
       else if (cat.id === 'section63_2') color = 'bg-blue-800';
       else if (cat.id === 'section64') color = 'bg-teal-500';
+      else if (cat.id === 'mouGroup') color = 'bg-emerald-600';
       else if (cat.id === 'modifyDetails') color = 'bg-violet-600';
       else if (cat.id === 'substituteCard') color = 'bg-amber-500';
 
@@ -844,7 +922,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </span>
               </div>
               <div className="text-xs sm:text-sm text-slate-600 mt-0.5">
-                กำลังแสดงผลข้อมูลในการ์ดสถิติ และยอดผู้รับบริการ 7 กลุ่มมาตรา ของจังหวัดนี้
+                กำลังแสดงผลข้อมูลในการ์ดสถิติ และยอดผู้รับบริการ {activeCategories.length} กลุ่มมาตรา ของจังหวัดนี้
               </div>
             </div>
           </div>
@@ -947,13 +1025,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 3. HERO METRICS: Row 2 - Four Outcome Cards (ออกบัตรสำเร็จ / ไม่มาตามนัด / มาไม่ตรงวันนัด / ไม่ออกบัตร) */}
+      {/* 3. HERO METRICS: Row 2 - Four Outcome Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Card 1: ออกบัตรสำเร็จ */}
         <div className="bg-gradient-to-b from-emerald-50/80 via-white to-white rounded-2xl p-4.5 border border-emerald-300 shadow-xs hover:shadow-md transition-all ring-1 ring-emerald-200/80 flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-base sm:text-lg font-bold text-emerald-950 tracking-tight font-['Prompt']">
-              ออกบัตรสำเร็จ
+              {issuedMetricInfo.title === 'ออกบัตร' ? 'ออกบัตรสำเร็จ' : issuedMetricInfo.title}
             </span>
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-xs flex items-center justify-center">
               <CheckCircle2 className="w-5 h-5" />
@@ -961,7 +1039,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="text-3xl sm:text-4xl font-black my-2.5 text-emerald-700 font-['Prompt'] tracking-tight flex items-baseline">
             {formatNumber(displayedStats.totalIssued)}
-            <span className="text-sm sm:text-base font-semibold ml-1.5 text-slate-500">ใบ</span>
+            <span className="text-sm sm:text-base font-semibold ml-1.5 text-slate-500">{issuedMetricInfo.unit}</span>
           </div>
           <div>
             <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200/90 shadow-2xs">
@@ -975,7 +1053,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="bg-gradient-to-b from-rose-50/80 via-white to-white rounded-2xl p-4.5 border border-rose-300 shadow-xs hover:shadow-md transition-all ring-1 ring-rose-200/80 flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-base sm:text-lg font-bold text-rose-950 tracking-tight font-['Prompt']">
-              ไม่มาตามนัด
+              {missedMetricInfo.title}
             </span>
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-xs flex items-center justify-center">
               <UserX className="w-5 h-5" />
@@ -983,7 +1061,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="text-3xl sm:text-4xl font-black my-2.5 text-rose-700 font-['Prompt'] tracking-tight flex items-baseline">
             {formatNumber(displayedStats.totalMissed)}
-            <span className="text-sm sm:text-base font-semibold ml-1.5 text-slate-500">คน</span>
+            <span className="text-sm sm:text-base font-semibold ml-1.5 text-slate-500">{missedMetricInfo.unit}</span>
           </div>
           <div>
             <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold px-3 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-200/90 shadow-2xs">
@@ -996,7 +1074,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="bg-gradient-to-b from-amber-50/80 via-white to-white rounded-2xl p-4.5 border border-amber-300 shadow-xs hover:shadow-md transition-all ring-1 ring-amber-200/80 flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-base sm:text-lg font-bold text-amber-950 tracking-tight font-['Prompt']">
-              มาไม่ตรงวันนัด
+              {wrongDateMetricInfo.title === 'ไม่ตรงวันนัด' ? 'มาไม่ตรงวันนัด' : wrongDateMetricInfo.title}
             </span>
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-white shadow-xs flex items-center justify-center">
               <CalendarX className="w-5 h-5" />
@@ -1004,7 +1082,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="text-3xl sm:text-4xl font-black my-2.5 text-amber-700 font-['Prompt'] tracking-tight flex items-baseline">
             {formatNumber(displayedStats.totalWrongDate)}
-            <span className="text-sm sm:text-base font-semibold ml-1.5 text-slate-500">คน</span>
+            <span className="text-sm sm:text-base font-semibold ml-1.5 text-slate-500">{wrongDateMetricInfo.unit}</span>
           </div>
           <div>
             <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200/90 shadow-2xs">
@@ -1013,11 +1091,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Card 4: ไม่ออกบัตร */}
+        {/* Card 4: บัตรเสีย (หรือชื่อที่ตั้งค่าไว้ใน Admin) */}
         <div className="bg-gradient-to-b from-slate-50/80 via-white to-white rounded-2xl p-4.5 border border-slate-300 shadow-xs hover:shadow-md transition-all ring-1 ring-slate-200/80 flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-base sm:text-lg font-bold text-slate-900 tracking-tight font-['Prompt']">
-              ไม่ออกบัตร
+              {notIssuedMetricInfo.title}
             </span>
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-slate-600 to-slate-700 text-white shadow-xs flex items-center justify-center">
               <XCircle className="w-5 h-5" />
@@ -1025,11 +1103,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="text-3xl sm:text-4xl font-black my-2.5 text-slate-800 font-['Prompt'] tracking-tight flex items-baseline">
             {formatNumber(displayedStats.totalNotIssued)}
-            <span className="text-sm sm:text-base font-semibold ml-1.5 text-slate-500">คน</span>
+            <span className="text-sm sm:text-base font-semibold ml-1.5 text-slate-500">{notIssuedMetricInfo.unit}</span>
           </div>
           <div>
             <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold px-3 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200/90 shadow-2xs">
-              <span>ไม่อนุมัติ {displayedStats.notIssuedRate}%</span>
+              <span>{notIssuedMetricInfo.title} {displayedStats.notIssuedRate}%</span>
             </span>
           </div>
         </div>
@@ -1069,7 +1147,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </span>
                 ) : (
                   <span className="text-slate-500 font-normal ml-1.5">
-                    • ภาพรวมสะสมทั้งประเทศ ({reportedList.length} สำนักงาน)
+                    •{' '}
+                    {selectedRegion === 'ทั้งหมด'
+                      ? `ภาพรวมสะสมทั้งประเทศ (${reportedList.length} สำนักงาน)`
+                      : selectedRegion === 'เฉพาะกิจ'
+                      ? `รวมศูนย์เฉพาะกิจ (${reportedList.length} แห่ง)`
+                      : `รวมสำนักงานจัดหางานในพื้นที่ ${selectedRegion} (${reportedList.length} แห่ง)`}
                   </span>
                 )}
               </p>

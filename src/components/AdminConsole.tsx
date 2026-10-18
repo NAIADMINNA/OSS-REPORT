@@ -2,12 +2,14 @@ import React, { useState, useId, useMemo, useEffect } from 'react';
 import {
   DOEReport,
   EmploymentOffice,
+  QueueMetricCategory,
   ReportCategory,
   ReporterProfile,
   SystemConfig,
   SystemIssueReport,
 } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
+import { DEFAULT_QUEUE_METRICS } from '../data/initialAdminData';
 import { sortOfficesByRegion } from '../utils/officeUtils';
 import { DOELogo } from './DOELogo';
 import { ConfirmDialogModal } from './ConfirmDialogModal';
@@ -49,11 +51,15 @@ import {
   Copy,
   Globe,
   Code,
+  Clock,
+  Check,
+  RefreshCw,
 } from 'lucide-react';
 
 interface AdminConsoleProps {
   offices: EmploymentOffice[];
   categories: ReportCategory[];
+  queueMetrics?: QueueMetricCategory[];
   reporters: ReporterProfile[];
   systemConfig: SystemConfig;
   reports: DOEReport[];
@@ -61,11 +67,13 @@ interface AdminConsoleProps {
   deletedReports?: DOEReport[];
   onUpdateOffices: (offices: EmploymentOffice[]) => void;
   onUpdateCategories: (categories: ReportCategory[]) => void;
+  onUpdateQueueMetrics?: (metrics: QueueMetricCategory[]) => void;
   onUpdateReporters: (reporters: ReporterProfile[]) => void;
   onUpdateSystemConfig: (config: SystemConfig) => void;
   onRestoreFullDatabase: (data: {
     offices?: EmploymentOffice[];
     categories?: ReportCategory[];
+    queueMetrics?: QueueMetricCategory[];
     reporters?: ReporterProfile[];
     systemConfig?: SystemConfig;
     reports?: DOEReport[];
@@ -76,23 +84,29 @@ interface AdminConsoleProps {
   onRestoreDeletedReport?: (reportId: string) => void;
   onRestoreAllDeletedReports?: () => void;
   onClearAllReportsForProduction?: () => void;
+  onRestoreBackupReports?: () => void;
+  onSyncAllReportsToOnline?: () => void;
   onNotify: (msg: string) => void;
+  initialSubTab?: AdminSubTab;
   onAdminAuthenticated?: () => void;
   onAdminLoggedOut?: () => void;
 }
 
-export type AdminSubTab = 'sections' | 'offices' | 'branding' | 'reporters' | 'issues' | 'database';
+export type AdminSubTab = 'sections' | 'queue_metrics' | 'offices' | 'branding' | 'reporters' | 'issues' | 'database';
 
 export const AdminConsole: React.FC<AdminConsoleProps> = ({
   offices,
   categories,
+  queueMetrics = DEFAULT_QUEUE_METRICS,
   reporters,
   systemConfig,
   reports,
   deletedOffices = [],
   deletedReports = [],
+  initialSubTab,
   onUpdateOffices,
   onUpdateCategories,
+  onUpdateQueueMetrics,
   onUpdateReporters,
   onUpdateSystemConfig,
   onRestoreFullDatabase,
@@ -102,11 +116,19 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   onRestoreDeletedReport,
   onRestoreAllDeletedReports,
   onClearAllReportsForProduction,
+  onRestoreBackupReports,
+  onSyncAllReportsToOnline,
   onNotify,
   onAdminAuthenticated,
   onAdminLoggedOut,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<AdminSubTab>('sections');
+  const [activeSubTab, setActiveSubTab] = useState<AdminSubTab>(initialSubTab || 'sections');
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
 
   // Issues management states
   const [reportedIssues, setReportedIssues] = useState<SystemIssueReport[]>(() => {
@@ -153,6 +175,14 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState<Partial<ReportCategory>>({
     color: 'from-blue-600 to-indigo-600',
+    isActive: true,
+  });
+
+  // Queue & Daily Service Metrics states
+  const [editingQueueMetric, setEditingQueueMetric] = useState<QueueMetricCategory | null>(null);
+  const [isAddingQueueMetric, setIsAddingQueueMetric] = useState(false);
+  const [newQueueMetric, setNewQueueMetric] = useState<Partial<QueueMetricCategory>>({
+    unit: 'คน',
     isActive: true,
   });
 
@@ -310,6 +340,82 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         ? `เปิดใช้งานหัวข้อ "${cat.title}" แล้ว`
         : `ซ่อนหัวข้อ "${cat?.title}" จากรายงานแล้ว`
     );
+  };
+
+  // 2.1 QUEUE & DAILY SERVICES METRICS ACTIONS (3. สถานะคิวและการให้บริการประจำวัน)
+  const handleSaveQueueMetric = (qm: QueueMetricCategory) => {
+    const list = queueMetrics || DEFAULT_QUEUE_METRICS;
+    const updated = list.map((m) => (m.id === qm.id ? qm : m));
+    onUpdateQueueMetrics?.(updated);
+    setEditingQueueMetric(null);
+    onNotify(`บันทึกการแก้ไขหัวข้อสถานะคิว "${qm.title}" สำเร็จ`);
+  };
+
+  const handleAddQueueMetric = () => {
+    if (!newQueueMetric.title?.trim()) {
+      onNotify('⚠️ กรุณาระบุชื่อหัวข้อสถานะคิว');
+      return;
+    }
+    const id = `custom_queue_${Date.now()}`;
+    const item: QueueMetricCategory = {
+      id,
+      title: newQueueMetric.title.trim(),
+      unit: newQueueMetric.unit?.trim() || 'คน',
+      subLabel: newQueueMetric.subLabel?.trim() || '',
+      badgeColor: 'text-indigo-700 bg-indigo-50 border-indigo-200',
+      isActive: true,
+      isDefault: false,
+    };
+    const list = queueMetrics || DEFAULT_QUEUE_METRICS;
+    onUpdateQueueMetrics?.([...list, item]);
+    setIsAddingQueueMetric(false);
+    setNewQueueMetric({ unit: 'คน', isActive: true });
+    onNotify(`เพิ่มหัวข้อสถานะคิวใหม่ "${item.title}" เรียบร้อยแล้ว`);
+  };
+
+  const handleDeleteQueueMetric = (qmId: string) => {
+    const list = queueMetrics || DEFAULT_QUEUE_METRICS;
+    const target = list.find((m) => m.id === qmId);
+    if (!target) return;
+
+    setConfirmModal({
+      isOpen: true,
+      title: `ยืนยันการลบหัวข้อ "${target.title}"`,
+      message: target.isDefault
+        ? `หัวข้อ "${target.title}" เป็นหัวข้อมาตรฐานของสถานะคิว หากลบจะถูกนำออกจากแบบฟอร์มบันทึกและโปสเตอร์ (คุณสามารถซ่อนการแสดงผลแทนการลบได้) ต้องการลบหรือไม่?`
+        : `คุณแน่ใจหรือไม่ว่าต้องการลบหัวข้อสถานะคิว "${target.title}" ออกจากระบบ?`,
+      confirmText: 'ยืนยันลบหัวข้อนี้',
+      cancelText: 'ยกเลิก',
+      isDanger: true,
+      iconType: 'trash',
+      onConfirm: () => {
+        const updated = list.filter((m) => m.id !== qmId);
+        onUpdateQueueMetrics?.(updated);
+        if (editingQueueMetric?.id === qmId) {
+          setEditingQueueMetric(null);
+        }
+        onNotify(`ลบหัวข้อสถานะคิว "${target.title}" เรียบร้อยแล้ว`);
+      },
+    });
+  };
+
+  const handleToggleQueueMetricActive = (qmId: string) => {
+    const list = queueMetrics || DEFAULT_QUEUE_METRICS;
+    const updated = list.map((m) =>
+      m.id === qmId ? { ...m, isActive: !m.isActive } : m
+    );
+    onUpdateQueueMetrics?.(updated);
+    const m = updated.find((item) => item.id === qmId);
+    onNotify(
+      m?.isActive
+        ? `เปิดใช้งานหัวข้อสถานะคิว "${m.title}" แล้ว`
+        : `ซ่อนหัวข้อสถานะคิว "${m?.title}" จากรายงานแล้ว`
+    );
+  };
+
+  const handleResetQueueMetrics = () => {
+    onUpdateQueueMetrics?.(DEFAULT_QUEUE_METRICS);
+    onNotify('คืนค่าหัวข้อสถานะคิวเป็นค่าเริ่มต้นของกรมฯ เรียบร้อยแล้ว');
   };
 
   // 3. OFFICE & CENTER ACTIONS
@@ -678,7 +784,19 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           }`}
         >
           <FolderTree className="w-4 h-4" />
-          <span>1. จัดการหัวข้อ & กลุ่มมาตรา</span>
+          <span>1. จัดการหัวข้อ & กลุ่มมาตรา ({categories.length} กลุ่ม)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('queue_metrics')}
+          className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 cursor-pointer ${
+            activeSubTab === 'queue_metrics'
+              ? 'bg-teal-700 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Clock className="w-4 h-4 text-teal-300" />
+          <span>2. สถานะคิว & การให้บริการ ({queueMetrics.length} หัวข้อ)</span>
         </button>
 
         <button
@@ -690,7 +808,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           }`}
         >
           <Building2 className="w-4 h-4" />
-          <span>2. จัดการชื่อศูนย์ & สำนักงาน ({offices.length})</span>
+          <span>3. จัดการชื่อศูนย์ & สำนักงาน ({offices.length})</span>
         </button>
 
         <button
@@ -702,7 +820,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           }`}
         >
           <ImageIcon className="w-4 h-4" />
-          <span>3. แก้ไขรูป & ตราสัญลักษณ์</span>
+          <span>4. แก้ไขรูป & ตราสัญลักษณ์</span>
         </button>
 
         <button
@@ -714,7 +832,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           }`}
         >
           <Users className="w-4 h-4" />
-          <span>4. จัดการข้อมูลผู้รายงาน ({reporters.length})</span>
+          <span>5. จัดการข้อมูลผู้รายงาน ({reporters.length})</span>
         </button>
 
         <button
@@ -726,7 +844,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           }`}
         >
           <AlertTriangle className="w-4 h-4 text-rose-500" />
-          <span>5. ข้อขัดข้องที่แจ้งเข้ามา ({reportedIssues.filter((i) => i.status === 'pending').length})</span>
+          <span>6. ข้อขัดข้องที่แจ้งเข้ามา ({reportedIssues.filter((i) => i.status === 'pending').length})</span>
         </button>
 
         <button
@@ -738,7 +856,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           }`}
         >
           <Database className="w-4 h-4 text-emerald-500" />
-          <span>6. การเก็บข้อมูลลงฐานข้อมูล</span>
+          <span>7. การเก็บข้อมูลลงฐานข้อมูล</span>
         </button>
       </div>
 
@@ -1074,10 +1192,565 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
               })}
             </div>
           </div>
+
+          {/* Queue & Daily Services Metrics Management (3. สถานะคิวและการให้บริการประจำวัน) */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-teal-500" />
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                    <span>3. สถานะคิวและการให้บริการประจำวัน ({queueMetrics.length} หัวข้อ)</span>
+                  </h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-teal-100 text-teal-800 border border-teal-200">
+                    หัวข้อ Admin กำหนดได้
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  หัวข้อในส่วนนี้ให้ Admin สามารถเพิ่ม ลบ หรือแก้ไขชื่อหัวข้อและหน่วยนับได้ตามต้องการ โดยจะสะท้อนในแบบฟอร์มบันทึกและรายงานทันที
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleResetQueueMetrics}
+                  className="text-xs font-semibold px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors border border-slate-300 flex items-center gap-1 cursor-pointer"
+                  title="คืนค่าเป็นหัวข้อมาตรฐานของกรมฯ"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                  <span>คืนค่าเริ่มต้น</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAddingQueueMetric(true)}
+                  className="text-xs font-bold px-3.5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มหัวข้อคิว/บริการใหม่</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal/Form: Add Queue Metric */}
+            {isAddingQueueMetric && (
+              <div className="bg-teal-50/70 p-4 rounded-xl border border-teal-200 space-y-3">
+                <div className="font-bold text-xs text-teal-900 flex items-center gap-1.5">
+                  <Plus className="w-4 h-4 text-teal-600" />
+                  <span>เพิ่มหัวข้อสถานะคิวและการให้บริการใหม่</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      ชื่อหัวข้อ (เช่น คิวนัดหมาย, คิว Walk-in, ส่งต่อ รพ.) <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="เช่น คิว Walk-in"
+                      value={newQueueMetric.title || ''}
+                      onChange={(e) =>
+                        setNewQueueMetric({ ...newQueueMetric, title: e.target.value })
+                      }
+                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      หน่วยนับ (เช่น คิว, คน, ใบ, ราย)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="เช่น คน หรือ คิว"
+                      value={newQueueMetric.unit || 'คน'}
+                      onChange={(e) =>
+                        setNewQueueMetric({ ...newQueueMetric, unit: e.target.value })
+                      }
+                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      คำอธิบายย่อย
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="เช่น ผู้มารับบริการโดยไม่ได้นัดหมายล่วงหน้า"
+                      value={newQueueMetric.subLabel || ''}
+                      onChange={(e) =>
+                        setNewQueueMetric({ ...newQueueMetric, subLabel: e.target.value })
+                      }
+                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingQueueMetric(false)}
+                    className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddQueueMetric}
+                    className="text-xs font-bold px-4 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg shadow-xs cursor-pointer"
+                  >
+                    บันทึกหัวข้อใหม่
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Queue Metrics List */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {queueMetrics.map((qm, idx) => {
+                const isEditing = editingQueueMetric?.id === qm.id;
+
+                if (isEditing && editingQueueMetric) {
+                  return (
+                    <div
+                      key={qm.id}
+                      className="p-3.5 rounded-xl border-2 border-teal-400 bg-teal-50/50 space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between text-xs font-bold text-teal-900">
+                        <span>แก้ไขหัวข้อสถานะคิวที่ {idx + 1}</span>
+                        <span className="text-[10px] text-slate-500 font-mono">ID: {qm.id}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-600">ชื่อหัวข้อ</label>
+                          <input
+                            type="text"
+                            value={editingQueueMetric.title}
+                            onChange={(e) =>
+                              setEditingQueueMetric({ ...editingQueueMetric, title: e.target.value })
+                            }
+                            className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-teal-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-600">หน่วยนับ</label>
+                          <input
+                            type="text"
+                            value={editingQueueMetric.unit}
+                            onChange={(e) =>
+                              setEditingQueueMetric({ ...editingQueueMetric, unit: e.target.value })
+                            }
+                            className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-teal-500"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold text-slate-600">คำอธิบายย่อย</label>
+                        <input
+                          type="text"
+                          value={editingQueueMetric.subLabel || ''}
+                          onChange={(e) =>
+                            setEditingQueueMetric({ ...editingQueueMetric, subLabel: e.target.value })
+                          }
+                          className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-teal-500"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteQueueMetric(qm.id)}
+                          className="text-xs text-rose-600 hover:text-rose-800 font-semibold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>ลบหัวข้อนี้</span>
+                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingQueueMetric(null)}
+                            className="text-xs px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
+                          >
+                            ยกเลิก
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveQueueMetric(editingQueueMetric)}
+                            className="text-xs font-bold px-3.5 py-1 bg-teal-700 hover:bg-teal-600 text-white rounded-lg shadow-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            <span>บันทึก</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    key={qm.id}
+                    className={`p-3.5 rounded-xl border flex items-center justify-between transition-all ${
+                      qm.isActive
+                        ? 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
+                        : 'bg-slate-50 border-dashed border-slate-300 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-teal-100 text-teal-900 font-bold text-xs flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-slate-900 truncate">
+                            {qm.title}
+                          </span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-teal-50 text-teal-800 border border-teal-200">
+                            {qm.unit}
+                          </span>
+                          {!qm.isActive && (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-100 text-rose-700 font-bold">
+                              ปิดใช้งาน
+                            </span>
+                          )}
+                          {qm.isDefault && (
+                            <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-500 font-medium">
+                              ระบบ
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                          {qm.subLabel || 'ไม่มีคำอธิบายย่อย'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleQueueMetricActive(qm.id)}
+                        className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-colors border cursor-pointer ${
+                          qm.isActive
+                            ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 border-slate-200'
+                            : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border-emerald-300'
+                        }`}
+                        title={qm.isActive ? 'กดเพื่อซ่อนหัวข้อนี้จากแบบฟอร์ม' : 'กดเพื่อเปิดใช้งานหัวข้อนี้'}
+                      >
+                        {qm.isActive ? 'แสดงอยู่' : 'ซ่อน'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setEditingQueueMetric(qm)}
+                        className="p-1.5 text-teal-700 hover:text-white hover:bg-teal-600 border border-teal-200 hover:border-teal-600 rounded-lg transition-all cursor-pointer shadow-2xs"
+                        title="แก้ไขหัวข้อ"
+                        aria-label="แก้ไขหัวข้อ"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteQueueMetric(qm.id)}
+                        className="p-1.5 text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg transition-all cursor-pointer shadow-2xs"
+                        title="ลบหัวข้อนี้"
+                        aria-label="ลบหัวข้อ"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* 4. SUB-TAB 2: จัดการชื่อศูนย์ & สำนักงาน */}
+      {/* SUB-TAB 2: จัดการสถานะคิวและการให้บริการประจำวัน (หัวข้อ Admin) */}
+      {activeSubTab === 'queue_metrics' && (
+        <div className="space-y-6">
+          <div className="bg-gradient-to-r from-teal-900 via-teal-800 to-slate-900 text-white rounded-2xl p-5 border border-teal-700 shadow-md flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-teal-500/20 border border-teal-400/30 flex items-center justify-center shrink-0">
+                <Clock className="w-6 h-6 text-teal-300" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider bg-teal-500/30 text-teal-200 px-2.5 py-0.5 rounded-full border border-teal-400/30">
+                    หัวข้อ Admin กำหนดได้
+                  </span>
+                  <span className="text-xs text-teal-200">
+                    หัวข้อ 3: สถานะคิวและการให้บริการประจำวัน
+                  </span>
+                </div>
+                <h3 className="text-lg sm:text-xl font-black mt-0.5 font-['Prompt']">
+                  จัดการหัวข้อสถานะคิวและการให้บริการประจำวัน ({queueMetrics.length} หัวข้อ)
+                </h3>
+                <p className="text-xs text-teal-100/80 mt-1 max-w-2xl">
+                  Admin สามารถเพิ่ม ลบ แก้ไขชื่อหัวข้อ หน่วยนับ หรือคำอธิบายย่อยได้ตามต้องการ ข้อมูลที่ปรับแก้จะสะท้อนในแบบฟอร์มบันทึกและรายงานผลทันที
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetQueueMetrics}
+                className="text-xs font-semibold px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl border border-white/20 flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="คืนค่าเป็นหัวข้อมาตรฐานของกรมฯ"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>คืนค่าเริ่มต้น</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsAddingQueueMetric(true)}
+                className="text-xs font-bold px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>เพิ่มหัวข้อคิว/บริการใหม่</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
+            {/* Modal/Form: Add Queue Metric */}
+            {isAddingQueueMetric && (
+              <div className="bg-teal-50/70 p-4 rounded-xl border border-teal-200 space-y-3">
+                <div className="font-bold text-xs text-teal-900 flex items-center gap-1.5">
+                  <Plus className="w-4 h-4 text-teal-600" />
+                  <span>เพิ่มหัวข้อสถานะคิวและการให้บริการใหม่</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      ชื่อหัวข้อ (เช่น คิวนัดหมาย, คิว Walk-in, ส่งต่อ รพ.) <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="เช่น คิว Walk-in"
+                      value={newQueueMetric.title || ''}
+                      onChange={(e) =>
+                        setNewQueueMetric({ ...newQueueMetric, title: e.target.value })
+                      }
+                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      หน่วยนับ (เช่น คิว, คน, ใบ, ราย)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="เช่น คน หรือ คิว"
+                      value={newQueueMetric.unit || 'คน'}
+                      onChange={(e) =>
+                        setNewQueueMetric({ ...newQueueMetric, unit: e.target.value })
+                      }
+                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      คำอธิบายย่อย
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="เช่น ผู้มารับบริการโดยไม่ได้นัดหมายล่วงหน้า"
+                      value={newQueueMetric.subLabel || ''}
+                      onChange={(e) =>
+                        setNewQueueMetric({ ...newQueueMetric, subLabel: e.target.value })
+                      }
+                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingQueueMetric(false)}
+                    className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddQueueMetric}
+                    className="text-xs font-bold px-4 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg shadow-xs cursor-pointer"
+                  >
+                    บันทึกหัวข้อใหม่
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Queue Metrics List */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {queueMetrics.map((qm, idx) => {
+                const isEditing = editingQueueMetric?.id === qm.id;
+
+                if (isEditing && editingQueueMetric) {
+                  return (
+                    <div
+                      key={qm.id}
+                      className="p-3.5 rounded-xl border-2 border-teal-400 bg-teal-50/50 space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between text-xs font-bold text-teal-900">
+                        <span>แก้ไขหัวข้อสถานะคิวที่ {idx + 1}</span>
+                        <span className="text-[10px] text-slate-500 font-mono">ID: {qm.id}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-600">ชื่อหัวข้อ</label>
+                          <input
+                            type="text"
+                            value={editingQueueMetric.title}
+                            onChange={(e) =>
+                              setEditingQueueMetric({ ...editingQueueMetric, title: e.target.value })
+                            }
+                            className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-teal-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-600">หน่วยนับ</label>
+                          <input
+                            type="text"
+                            value={editingQueueMetric.unit}
+                            onChange={(e) =>
+                              setEditingQueueMetric({ ...editingQueueMetric, unit: e.target.value })
+                            }
+                            className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-teal-500"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold text-slate-600">คำอธิบายย่อย</label>
+                        <input
+                          type="text"
+                          value={editingQueueMetric.subLabel || ''}
+                          onChange={(e) =>
+                            setEditingQueueMetric({ ...editingQueueMetric, subLabel: e.target.value })
+                          }
+                          className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-teal-500"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteQueueMetric(qm.id)}
+                          className="text-xs text-rose-600 hover:text-rose-800 font-semibold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>ลบหัวข้อนี้</span>
+                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingQueueMetric(null)}
+                            className="text-xs px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
+                          >
+                            ยกเลิก
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveQueueMetric(editingQueueMetric)}
+                            className="text-xs font-bold px-3.5 py-1 bg-teal-700 hover:bg-teal-600 text-white rounded-lg shadow-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            <span>บันทึก</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    key={qm.id}
+                    className={`p-3.5 rounded-xl border flex items-center justify-between transition-all ${
+                      qm.isActive
+                        ? 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
+                        : 'bg-slate-50 border-dashed border-slate-300 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-teal-100 text-teal-900 font-bold text-xs flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-slate-900 truncate">
+                            {qm.title}
+                          </span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-teal-50 text-teal-800 border border-teal-200">
+                            {qm.unit}
+                          </span>
+                          {!qm.isActive && (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-100 text-rose-700 font-bold">
+                              ปิดใช้งาน
+                            </span>
+                          )}
+                          {qm.isDefault && (
+                            <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-500 font-medium">
+                              ระบบ
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                          {qm.subLabel || 'ไม่มีคำอธิบายย่อย'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleQueueMetricActive(qm.id)}
+                        className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-colors border cursor-pointer ${
+                          qm.isActive
+                            ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 border-slate-200'
+                            : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border-emerald-300'
+                        }`}
+                        title={qm.isActive ? 'กดเพื่อซ่อนหัวข้อนี้จากแบบฟอร์ม' : 'กดเพื่อเปิดใช้งานหัวข้อนี้'}
+                      >
+                        {qm.isActive ? 'แสดงอยู่' : 'ซ่อน'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setEditingQueueMetric(qm)}
+                        className="p-1.5 text-teal-700 hover:text-white hover:bg-teal-600 border border-teal-200 hover:border-teal-600 rounded-lg transition-all cursor-pointer shadow-2xs"
+                        title="แก้ไขหัวข้อ"
+                        aria-label="แก้ไขหัวข้อ"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteQueueMetric(qm.id)}
+                        className="p-1.5 text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg transition-all cursor-pointer shadow-2xs"
+                        title="ลบหัวข้อนี้"
+                        aria-label="ลบหัวข้อ"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. SUB-TAB 3: จัดการชื่อศูนย์ & สำนักงาน */}
       {activeSubTab === 'offices' && (
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
@@ -2234,14 +2907,55 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
               </div>
             </div>
 
+            {/* Auto Backup & Emergency Cloud Sync Card */}
+            <div className="bg-sky-50/80 rounded-2xl p-5 border border-sky-300 space-y-3.5 md:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-bold text-sm text-sky-950">
+                  <Database className="w-4.5 h-4.5 text-sky-700" />
+                  <span>ระบบสำรองข้อมูลอัตโนมัติ & กู้คืนรายงาน (Auto Backup & Cloud Sync)</span>
+                </div>
+                <span className="text-[11px] font-bold text-sky-800 bg-sky-100 px-2.5 py-0.5 rounded-full border border-sky-200">
+                  ความปลอดภัยข้อมูลรายงาน
+                </span>
+              </div>
+              <p className="text-xs text-sky-900 leading-relaxed">
+                ระบบได้เปิดใช้ระบบ <b>Rolling Local Backup อัตโนมัติ</b> ในเครื่องทุกครั้งที่มีการบันทึกรายงาน หากข้อมูลรายงานในระบบสูญหายจากข้อผิดพลาดของเครือข่าย หรือต้องการนำข้อมูลจากเครื่องนี้ขึ้นระบบออนไลน์ สามารถกดกู้คืนหรือซิงก์ได้ทันที
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={onRestoreBackupReports}
+                  className="text-xs font-bold px-4 py-2.5 bg-sky-700 hover:bg-sky-800 text-white rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                  title="กู้คืนรายงานผลจากไฟล์สำรองอัตโนมัติในเครื่อง"
+                >
+                  <RotateCcw className="w-4 h-4 text-sky-200" />
+                  <span>📥 กู้คืนรายงานจาก Auto Backup ในเครื่อง</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onSyncAllReportsToOnline}
+                  className="text-xs font-bold px-4 py-2.5 bg-blue-900 hover:bg-blue-800 text-white rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                  title="ส่งรายงานทั้งหมดในเครื่องขึ้นฐานข้อมูล Cloud Firestore"
+                >
+                  <RefreshCw className="w-4 h-4 text-sky-300" />
+                  <span>☁️ ซิงก์รายงานทั้งหมดขึ้น Cloud Firestore</span>
+                </button>
+              </div>
+            </div>
+
             {/* Clear All Reports For Production Card */}
             <div className="bg-amber-50/70 rounded-2xl p-5 border border-amber-300 space-y-3 md:col-span-2">
-              <div className="flex items-center gap-2 font-bold text-sm text-amber-950">
-                <Trash2 className="w-4 h-4 text-amber-700" />
-                <span>ล้างประวัติการรายงานและหมายเหตุทั้งหมดเพื่อเริ่มใช้งานจริง (Clear All Reports for Production)</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-bold text-sm text-amber-950">
+                  <Trash2 className="w-4 h-4 text-amber-700" />
+                  <span>ล้างประวัติการรายงานและหมายเหตุทั้งหมดเพื่อเริ่มใช้งานจริง (Clear All Reports for Production)</span>
+                </div>
+                <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-200/80 text-amber-950">
+                  รายงานในระบบปัจจุบัน: {reports.length} ฉบับ
+                </span>
               </div>
-              <p className="text-xs text-amber-800">
-                ล้างรายงานผลการปฏิบัติงานและบันทึกเพิ่มเติมทั้งหมดออกจากระบบและฐานข้อมูล Cloud Firestore เพื่อให้ระบบพร้อมสำหรับการเริ่มบันทึกข้อมูลจริงของหน่วยงาน (รายชื่อสำนักงาน 87 แห่งและตั้งค่าระบบยังคงอยู่ครบถ้วน)
+              <p className="text-xs text-amber-900 leading-relaxed">
+                <strong>คำเตือนสำคัญ:</strong> ปุ่มนี้ใช้สำหรับ <strong>ล้างข้อมูลทดสอบก่อนเปิดใช้งานจริงเท่านั้น</strong> ห้ามกดปุ่มนี้หลังจากที่เจ้าหน้าที่เริ่มส่งรายงานจริงแล้ว เพราะจะลบรายงานทั้งหมดออกจากหน้าแดชบอร์ดและ Cloud Firestore (หากเผลอกดไปแล้ว สามารถกดปุ่ม <strong>"ดึงข้อมูลรายงานสำรองกลับคืน"</strong> ด้านบนเพื่อกู้คืนได้)
               </p>
               <div>
                 <button
@@ -2249,9 +2963,9 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   onClick={() => {
                     setConfirmModal({
                       isOpen: true,
-                      title: 'ยืนยันล้างประวัติการรายงานทั้งหมดเพื่อเริ่มใช้งานจริง',
+                      title: `ยืนยันล้างรายงานทั้งหมด (${reports.length} ฉบับ)`,
                       message:
-                        'คุณแน่ใจหรือไม่ว่าต้องการล้างประวัติรายงานผลการปฏิบัติงานและหมายเหตุทั้งหมด? ข้อมูลรายงานการปฏิบัติงานเดิมจะถูกลบออกจากฐานข้อมูลอย่างถาวรเพื่อให้พร้อมเริ่มใช้งานจริงในระดับปฏิบัติการ',
+                        `ขณะนี้มีรายงานในระบบจำนวน ${reports.length} ฉบับ คุณแน่ใจหรือไม่ว่าต้องการล้างรายงานผลการปฏิบัติงานและหมายเหตุทั้งหมดออกจากหน้าแดชบอร์ด? (ควรใช้เฉพาะตอนล้างข้อมูลทดสอบก่อนเริ่มใช้งานจริงเท่านั้น)`,
                       confirmText: 'ยืนยันล้างประวัติรายงานทั้งหมด',
                       cancelText: 'ยกเลิก',
                       isDanger: true,

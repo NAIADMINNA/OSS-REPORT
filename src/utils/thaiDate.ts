@@ -127,15 +127,40 @@ export function formatNumber(num: number | undefined | null): string {
 /**
  * Generates an official summary text suitable for LINE groups / executive reporting
  */
-export function generateLineSummaryText(report: DOEReport): string {
+export function generateLineSummaryText(
+  report: DOEReport,
+  queueMetrics?: { id: string; title: string; unit: string }[]
+): string {
   const totalSections =
-    report.section59 +
-    report.section62 +
-    report.section63_1 +
-    report.section63_2 +
-    report.section64 +
-    report.modifyDetails +
-    report.substituteCard;
+    (report.section59 || 0) +
+    (report.section62 || 0) +
+    (report.section63_1 || 0) +
+    (report.section63_2 || 0) +
+    (report.section64 || 0) +
+    (report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0) +
+    (report.modifyDetails || 0) +
+    (report.substituteCard || 0);
+
+  const getMetricLabel = (id: string, defaultTitle: string, defaultUnit: string) => {
+    const found = queueMetrics?.find((m) => m.id === id);
+    if (!found) return { title: defaultTitle, unit: defaultUnit };
+    const title =
+      id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร'
+        ? 'บัตรเสีย'
+        : found.title || defaultTitle;
+    const unit =
+      id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร' && found.unit === 'คน'
+        ? 'ใบ'
+        : found.unit || defaultUnit;
+    return { title, unit };
+  };
+
+  const qApp = getMetricLabel('queueAppointment', 'คิวนัดหมาย', 'คิว');
+  const qIss = getMetricLabel('cardsIssued', 'ออกบัตร', 'ใบ');
+  const qVer = getMetricLabel('identityVerified', 'ยืนยันตัวตน', 'คน');
+  const qNot = getMetricLabel('cardsNotIssued', 'บัตรเสีย', 'ใบ');
+  const qMiss = getMetricLabel('missedAppointment', 'ไม่มาตามนัด', 'คน');
+  const qWrong = getMetricLabel('wrongAppointmentDate', 'ไม่ตรงวันนัด', 'คน');
 
   const dateLabel = report.reportDateThaiStr || formatThaiDateFull(report.reportDate);
   const isCycle =
@@ -167,16 +192,17 @@ export function generateLineSummaryText(report: DOEReport): string {
   3. กลุ่มมาตรา 63/1: ${formatNumber(report.section63_1)} คน
   4. กลุ่มมาตรา 63/2: ${formatNumber(report.section63_2)} คน
   5. กลุ่มมาตรา 64: ${formatNumber(report.section64)} คน
-  6. เปลี่ยนแปลงรายการในใบอนุญาตทำงาน: ${formatNumber(report.modifyDetails)} คน
-  7. ใบแทนใบอนุญาตทำงาน: ${formatNumber(report.substituteCard)} คน
+  6. กลุ่มนำเข้าตาม MOU: ${formatNumber(report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0)} คน
+  7. เปลี่ยนแปลงรายการในใบอนุญาตทำงาน: ${formatNumber(report.modifyDetails)} คน
+  8. ใบแทนใบอนุญาตทำงาน: ${formatNumber(report.substituteCard)} คน
 
 🔹 สถานะการให้บริการประจำวัน:
-  • คิวนัดหมาย: ${formatNumber(report.queueAppointment)} คิว
-  • ออกบัตร: ${formatNumber(report.cardsIssued)} ใบ
-  • ยืนยันตัวตน: ${formatNumber(report.identityVerified)} คน
-  • ไม่ออกบัตร: ${formatNumber(report.cardsNotIssued)} คน
-  • ไม่มาตามนัด: ${formatNumber(report.missedAppointment)} คน
-  • ไม่ตรงวันนัด: ${formatNumber(report.wrongAppointmentDate)} คน
+  • ${qApp.title}: ${formatNumber(report.queueAppointment)} ${qApp.unit}
+  • ${qIss.title}: ${formatNumber(report.cardsIssued)} ${qIss.unit}
+  • ${qVer.title}: ${formatNumber(report.identityVerified)} ${qVer.unit}
+  • ${qNot.title}: ${formatNumber(report.cardsNotIssued)} ${qNot.unit}
+  • ${qMiss.title}: ${formatNumber(report.missedAppointment)} ${qMiss.unit}
+  • ${qWrong.title}: ${formatNumber(report.wrongAppointmentDate)} ${qWrong.unit}
 
 ══════════════════════════
 จึงเรียนมาเพื่อโปรดทราบ

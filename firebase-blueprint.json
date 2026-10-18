@@ -190,6 +190,38 @@
         "adminPin": { "type": "string", "description": "Admin security PIN" }
       },
       "required": ["reportTitle", "departmentNameTh", "adminPin"]
+    },
+    "QueueMetricCategory": {
+      "title": "QueueMetricCategory",
+      "description": "Daily queue and service metric definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Metric ID" },
+        "code": { "type": "string", "description": "Metric short code" },
+        "title": { "type": "string", "description": "Metric title" },
+        "subLabel": { "type": "string", "description": "Metric subtitle or unit label" },
+        "color": { "type": "string", "description": "Color theme key" },
+        "iconName": { "type": "string", "description": "Icon name" },
+        "isActive": { "type": "boolean", "description": "Active status flag" },
+        "isDefault": { "type": "boolean", "description": "Default metric flag" }
+      },
+      "required": ["id", "title"]
+    },
+    "SystemIssueReport": {
+      "title": "SystemIssueReport",
+      "description": "User-reported system issue or trouble ticket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Issue ID" },
+        "issueType": { "type": "string", "description": "Issue category type" },
+        "title": { "type": "string", "description": "Issue summary title" },
+        "description": { "type": "string", "description": "Detailed description" },
+        "officeName": { "type": "string", "description": "Reporting office name" },
+        "reporterContact": { "type": "string", "description": "Reporter contact info" },
+        "status": { "type": "string", "description": "Resolution status" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "issueType", "title"]
     }
   },
   "firestore": {
@@ -204,6 +236,10 @@
     "/categories/{categoryId}": {
       "schema": "ReportCategory",
       "description": "Customizable categories and legal sections for work permit statistics"
+    },
+    "/queue_metrics/{metricId}": {
+      "schema": "QueueMetricCategory",
+      "description": "Customizable daily queue and service metrics"
     },
     "/reporters/{reporterId}": {
       "schema": "ReporterProfile",
@@ -220,6 +256,10 @@
     "/deleted_offices/{officeId}": {
       "schema": "EmploymentOffice",
       "description": "Recycle bin archive for deleted offices with restoration ability"
+    },
+    "/system_issues/{issueId}": {
+      "schema": "SystemIssueReport",
+      "description": "System issues and trouble reports submitted by users"
     }
   }
 }

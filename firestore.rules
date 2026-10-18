@@ -2,9 +2,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
     // Helper functions
     function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128;
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -27,10 +32,7 @@ service cloud.firestore {
       allow list: if true;
       allow create: if isValidId(reportId)
         && incoming().id is string
-        && incoming().reportDate is string
-        && incoming().officeId is string
-        && incoming().officeName is string
-        && incoming().reporterName is string;
+        && incoming().officeId is string;
       allow update: if isValidId(reportId)
         && (!('id' in existing()) || incoming().id == existing().id);
       allow delete: if isValidId(reportId);
@@ -60,6 +62,16 @@ service cloud.firestore {
       allow update: if isValidId(categoryId)
         && (!('id' in existing()) || incoming().id == existing().id);
       allow delete: if isValidId(categoryId);
+    }
+
+    // Queue Metric Categories (สถานะคิวและการให้บริการ)
+    match /queue_metrics/{metricId} {
+      allow get: if isValidId(metricId);
+      allow list: if true;
+      allow create, update: if isValidId(metricId)
+        && incoming().id is string
+        && incoming().title is string;
+      allow delete: if isValidId(metricId);
     }
 
     // Reporters Directory

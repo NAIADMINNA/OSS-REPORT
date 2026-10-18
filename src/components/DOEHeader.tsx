@@ -7,6 +7,7 @@ export type ActiveTab = 'dashboard' | 'form' | 'history' | 'notes' | 'admin';
 interface DOEHeaderProps {
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
+  onLogoClick?: () => void;
   reportCount: number;
   notesCount?: number;
   onPreviewCurrentPoster?: () => void;
@@ -19,6 +20,7 @@ interface DOEHeaderProps {
 export const DOEHeader: React.FC<DOEHeaderProps> = ({
   activeTab,
   onTabChange,
+  onLogoClick,
   reportCount,
   notesCount,
   onPreviewCurrentPoster,
@@ -27,6 +29,14 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
   isOnlineDatabase = true,
   isAdmin = false,
 }) => {
+  const handleBackToDashboard = () => {
+    if (onLogoClick) {
+      onLogoClick();
+    } else {
+      onTabChange('dashboard');
+    }
+  };
+
   return (
     <header className="bg-gradient-to-r from-blue-700 via-indigo-700 to-sky-700 text-white shadow-md sticky top-0 z-30 border-b border-sky-400/30">
       <div className="w-full max-w-[1780px] 2xl:max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 py-2.5">
@@ -34,15 +44,32 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
           {/* Brand & Emblem */}
           <div className="flex items-center gap-3.5">
             <div
-              className="shrink-0 drop-shadow-md cursor-pointer hover:scale-105 transition-transform"
-              onClick={() => onTabChange('dashboard')}
-              title="ไปยังแดชบอร์ดหลัก"
+              role="button"
+              tabIndex={0}
+              className="shrink-0 drop-shadow-md cursor-pointer hover:scale-105 active:scale-95 transition-all rounded-xl ring-2 ring-transparent hover:ring-amber-300/80 focus:outline-none focus:ring-amber-300"
+              onClick={handleBackToDashboard}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleBackToDashboard();
+                }
+              }}
+              title="คลิกเพื่อกลับไปหน้าแดชบอร์ดสรุปผล"
             >
-              <DOELogo size={50} customLogoUrl={customLogoUrl} />
+              <DOELogo
+                size={50}
+                customLogoUrl={customLogoUrl}
+                onClick={handleBackToDashboard}
+                title="คลิกเพื่อกลับไปหน้าแดชบอร์ดสรุปผล"
+              />
             </div>
-            <div>
+            <div
+              onClick={handleBackToDashboard}
+              className="cursor-pointer group"
+              title="คลิกเพื่อกลับไปหน้าแดชบอร์ดสรุปผล"
+            >
               <div className="flex items-center gap-2">
-                <span className="text-xs font-black tracking-wider uppercase bg-amber-400 text-slate-950 px-2.5 py-0.5 rounded-md shadow-xs">
+                <span className="text-xs font-black tracking-wider uppercase bg-amber-400 group-hover:bg-amber-300 text-slate-950 px-2.5 py-0.5 rounded-md shadow-xs transition-colors">
                   DOE Report System
                 </span>
                 <span className="text-sm text-sky-100 font-medium hidden sm:inline">
@@ -55,7 +82,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
                   </span>
                 )}
               </div>
-              <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white leading-tight mt-0.5 font-['Prompt']">
+              <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white group-hover:text-amber-200 leading-tight mt-0.5 font-['Prompt'] transition-colors">
                 {systemTitle || 'ระบบรายงานผลการปฏิบัติงานศูนย์บริการคนต่างด้าว'}
               </h1>
             </div>

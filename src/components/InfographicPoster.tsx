@@ -1,5 +1,5 @@
 import React, { forwardRef, useMemo } from 'react';
-import { DOEReport, ReportCategory, SystemConfig } from '../types/doe';
+import { DOEReport, QueueMetricCategory, ReportCategory, SystemConfig } from '../types/doe';
 import { DOELogo } from './DOELogo';
 import { formatNumber, formatThaiDateFull } from '../utils/thaiDate';
 import {
@@ -21,31 +21,55 @@ import {
   CalendarX,
   XCircle,
   UserX,
+  Globe,
+  Star,
 } from 'lucide-react';
 
 interface InfographicPosterProps {
   report: DOEReport;
   scale?: number;
   categories?: ReportCategory[];
+  queueMetrics?: QueueMetricCategory[];
   systemConfig?: SystemConfig;
   customLogoUrl?: string | null;
 }
 
 export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterProps>(
-  ({ report, scale = 1, categories, systemConfig, customLogoUrl }, ref) => {
+  ({ report, scale = 1, categories, queueMetrics, systemConfig, customLogoUrl }, ref) => {
+    // Helper to look up configured queue metric titles & units
+    const getQueueMetric = (id: string, defaultTitle: string, defaultUnit: string) => {
+      const found = queueMetrics?.find((m) => m.id === id);
+      if (!found) return { title: defaultTitle, unit: defaultUnit };
+      const title =
+        id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร'
+          ? 'บัตรเสีย'
+          : found.title || defaultTitle;
+      const unit =
+        id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร' && found.unit === 'คน'
+          ? 'ใบ'
+          : found.unit || defaultUnit;
+      return { title, unit };
+    };
+
+    const issuedMetricInfo = getQueueMetric('cardsIssued', 'ออกบัตรสำเร็จ', 'ใบ');
+    const missedMetricInfo = getQueueMetric('missedAppointment', 'ไม่มาตามนัด', 'คน');
+    const wrongDateMetricInfo = getQueueMetric('wrongAppointmentDate', 'มาไม่ตรงวันนัด', 'คน');
+    const notIssuedMetricInfo = getQueueMetric('cardsNotIssued', 'บัตรเสีย', 'ใบ');
+
     // Determine active sections list
     const activeCategories = categories ? categories.filter((c) => c.isActive) : null;
 
     const sections = activeCategories
       ? activeCategories.map((c, idx) => {
           let count = 0;
-          if (c.id === 'section59') count = report.section59;
-          else if (c.id === 'section62') count = report.section62;
-          else if (c.id === 'section63_1') count = report.section63_1;
-          else if (c.id === 'section63_2') count = report.section63_2;
-          else if (c.id === 'section64') count = report.section64;
-          else if (c.id === 'modifyDetails') count = report.modifyDetails;
-          else if (c.id === 'substituteCard') count = report.substituteCard;
+          if (c.id === 'section59') count = report.section59 || 0;
+          else if (c.id === 'section62') count = report.section62 || 0;
+          else if (c.id === 'section63_1') count = report.section63_1 || 0;
+          else if (c.id === 'section63_2') count = report.section63_2 || 0;
+          else if (c.id === 'section64') count = report.section64 || 0;
+          else if (c.id === 'mouGroup') count = report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0;
+          else if (c.id === 'modifyDetails') count = report.modifyDetails || 0;
+          else if (c.id === 'substituteCard') count = report.substituteCard || 0;
           else count = report.customCategoryValues?.[c.id] || 0;
 
           let icon = BookOpen;
@@ -53,6 +77,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
           else if (c.id === 'section63_1') icon = Wrench;
           else if (c.id === 'section63_2') icon = Users;
           else if (c.id === 'section64') icon = ShieldCheck;
+          else if (c.id === 'mouGroup') icon = Globe;
           else if (c.id === 'modifyDetails') icon = Edit3;
           else if (c.id === 'substituteCard') icon = CreditCard;
 
@@ -73,7 +98,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             code: 'ม.59',
             title: 'กลุ่มมาตรา 59',
             desc: 'คนต่างด้าวทำงานทั่วไป',
-            count: report.section59,
+            count: report.section59 || 0,
             icon: BookOpen,
             color: 'from-blue-600 to-indigo-600',
             isPrimary: true,
@@ -83,7 +108,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             code: 'ม.62',
             title: 'กลุ่มมาตรา 62',
             desc: 'ผู้เชี่ยวชาญ / ช่างฝีมือ',
-            count: report.section62,
+            count: report.section62 || 0,
             icon: FolderMinus,
             color: 'from-indigo-600 to-purple-600',
             isPrimary: false,
@@ -93,7 +118,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             code: 'ม.63/1',
             title: 'กลุ่มมาตรา 63/1',
             desc: 'ชนกลุ่มน้อย / ผู้มีสถานะตามกฎหมาย',
-            count: report.section63_1,
+            count: report.section63_1 || 0,
             icon: Wrench,
             color: 'from-cyan-600 to-blue-600',
             isPrimary: false,
@@ -103,7 +128,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             code: 'ม.63/2',
             title: 'กลุ่มมาตรา 63/2',
             desc: 'กลุ่มมติ ครม. / แรงงาน 4 สัญชาติ',
-            count: report.section63_2,
+            count: report.section63_2 || 0,
             icon: Users,
             color: 'from-amber-500 to-orange-500',
             isPrimary: false,
@@ -113,9 +138,19 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             code: 'ม.64',
             title: 'กลุ่มมาตรา 64',
             desc: 'แรงงานไป-กลับ หรือตามฤดูกาล',
-            count: report.section64,
+            count: report.section64 || 0,
             icon: ShieldCheck,
             color: 'from-teal-600 to-emerald-600',
+            isPrimary: false,
+          },
+          {
+            id: 'secMOU',
+            code: 'MOU',
+            title: 'กลุ่มนำเข้าตาม MOU',
+            desc: 'แรงงานต่างด้าวนำเข้าตามข้อตกลง MOU',
+            count: report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0,
+            icon: Globe,
+            color: 'from-emerald-600 to-teal-600',
             isPrimary: false,
           },
           {
@@ -123,7 +158,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             code: 'เปลี่ยนแปลง',
             title: 'เปลี่ยนแปลงรายการ',
             desc: 'ย้ายนายจ้าง / แก้ไขข้อมูลใบอนุญาต',
-            count: report.modifyDetails,
+            count: report.modifyDetails || 0,
             icon: Edit3,
             color: 'from-violet-600 to-purple-600',
             isPrimary: false,
@@ -133,7 +168,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             code: 'ใบแทน',
             title: 'ใบแทนใบอนุญาตทำงาน',
             desc: 'กรณีสูญหาย / บัตรชำรุด / ขอใบแทน',
-            count: report.substituteCard,
+            count: report.substituteCard || 0,
             icon: CreditCard,
             color: 'from-rose-500 to-pink-600',
             isPrimary: false,
@@ -141,10 +176,11 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
         ];
 
     const totalIssuedGroups = sections.reduce((acc, s) => acc + s.count, 0);
+    const effectiveCardsIssued = Math.max(report.cardsIssued || 0, totalIssuedGroups);
 
     const completionRate =
       report.queueAppointment > 0
-        ? Math.min(100, Math.round((report.cardsIssued / report.queueAppointment) * 100))
+        ? Math.min(100, Math.round((effectiveCardsIssued / report.queueAppointment) * 100))
         : 0;
 
     const missedRate =
@@ -507,9 +543,9 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                       <span className="font-bold tracking-tight text-blue-950 block leading-tight">
                         {centerNameDisplay.line1}
                       </span>
-                      <span className="font-semibold text-[10px] text-blue-700/90 mt-0.5 flex items-center justify-end gap-1 leading-tight">
+                      <span className="font-bold text-[11px] text-blue-900 mt-1 flex items-center justify-end gap-1 leading-tight bg-blue-100/60 px-1.5 py-0.5 rounded-md border border-blue-200/50">
                         {centerNameDisplay.hasSeparator && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
                         )}
                         <span className="truncate max-w-[310px]">{centerNameDisplay.line2}</span>
                       </span>
@@ -570,21 +606,21 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
           </div>
         </div>
 
-        {/* 2. TOP HERO METRICS: Row 2 - 4 Outcome Cards (ออกบัตรสำเร็จ / ไม่มาตามนัด / มาไม่ตรงวันนัด / ไม่ออกบัตร) */}
+        {/* 2. TOP HERO METRICS: Row 2 - 4 Outcome Cards */}
         <div className="grid grid-cols-4 gap-3 relative z-10 mb-5">
           {/* Card 1: ออกบัตรสำเร็จ */}
           <div className="bg-gradient-to-b from-emerald-50/70 via-white to-white rounded-2xl p-3.5 border border-emerald-300 shadow-xs relative overflow-hidden ring-1 ring-emerald-200/80 flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-emerald-950 tracking-tight">
-                ออกบัตรสำเร็จ
+                {issuedMetricInfo.title === 'ออกบัตร' ? 'ออกบัตรสำเร็จ' : issuedMetricInfo.title}
               </span>
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-xs flex items-center justify-center">
                 <CheckCircle2 className="w-4 h-4" />
               </div>
             </div>
             <div className="text-2xl font-black my-1 text-emerald-700 font-['Prompt'] tracking-tight flex items-baseline">
-              {formatNumber(report.cardsIssued)}
-              <span className="text-xs font-semibold ml-1 text-slate-500">ใบ</span>
+              {formatNumber(effectiveCardsIssued)}
+              <span className="text-xs font-semibold ml-1 text-slate-500">{issuedMetricInfo.unit}</span>
             </div>
             <div>
               <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200/90 shadow-2xs">
@@ -598,7 +634,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
           <div className="bg-gradient-to-b from-rose-50/70 via-white to-white rounded-2xl p-3.5 border border-rose-300 shadow-xs relative overflow-hidden ring-1 ring-rose-200/80 flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-rose-950 tracking-tight">
-                ไม่มาตามนัด
+                {missedMetricInfo.title}
               </span>
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-xs flex items-center justify-center">
                 <UserX className="w-4 h-4" />
@@ -606,7 +642,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             </div>
             <div className="text-2xl font-black my-1 text-rose-700 font-['Prompt'] tracking-tight flex items-baseline">
               {formatNumber(report.missedAppointment)}
-              <span className="text-xs font-semibold ml-1 text-slate-500">คน</span>
+              <span className="text-xs font-semibold ml-1 text-slate-500">{missedMetricInfo.unit}</span>
             </div>
             <div>
               <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200/90 shadow-2xs">
@@ -619,7 +655,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
           <div className="bg-gradient-to-b from-amber-50/70 via-white to-white rounded-2xl p-3.5 border border-amber-300 shadow-xs relative overflow-hidden ring-1 ring-amber-200/80 flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-amber-950 tracking-tight">
-                มาไม่ตรงวันนัด
+                {wrongDateMetricInfo.title === 'ไม่ตรงวันนัด' ? 'มาไม่ตรงวันนัด' : wrongDateMetricInfo.title}
               </span>
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-white shadow-xs flex items-center justify-center">
                 <CalendarX className="w-4 h-4" />
@@ -627,7 +663,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             </div>
             <div className="text-2xl font-black my-1 text-amber-700 font-['Prompt'] tracking-tight flex items-baseline">
               {formatNumber(report.wrongAppointmentDate)}
-              <span className="text-xs font-semibold ml-1 text-slate-500">คน</span>
+              <span className="text-xs font-semibold ml-1 text-slate-500">{wrongDateMetricInfo.unit}</span>
             </div>
             <div>
               <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/90 shadow-2xs">
@@ -636,11 +672,11 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             </div>
           </div>
 
-          {/* Card 4: ไม่ออกบัตร */}
+          {/* Card 4: บัตรเสีย (หรือชื่อที่ตั้งค่าไว้ใน Admin) */}
           <div className="bg-gradient-to-b from-slate-50/80 via-white to-white rounded-2xl p-3.5 border border-slate-300 shadow-xs relative overflow-hidden ring-1 ring-slate-200/80 flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-900 tracking-tight">
-                ไม่ออกบัตร
+                {notIssuedMetricInfo.title}
               </span>
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-slate-600 to-slate-700 text-white shadow-xs flex items-center justify-center">
                 <XCircle className="w-4 h-4" />
@@ -648,11 +684,11 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             </div>
             <div className="text-2xl font-black my-1 text-slate-800 font-['Prompt'] tracking-tight flex items-baseline">
               {formatNumber(report.cardsNotIssued)}
-              <span className="text-xs font-semibold ml-1 text-slate-500">คน</span>
+              <span className="text-xs font-semibold ml-1 text-slate-500">{notIssuedMetricInfo.unit}</span>
             </div>
             <div>
               <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200/90 shadow-2xs">
-                <span>ไม่อนุมัติ {notIssuedRate}%</span>
+                <span>{notIssuedMetricInfo.title} {notIssuedRate}%</span>
               </span>
             </div>
           </div>
@@ -731,8 +767,9 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                                 {idx + 1}. {sec.title}
                               </span>
                               {isItem1 && (
-                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-blue-600 text-white font-['Prompt'] shrink-0 shadow-2xs">
-                                  เด่น
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white font-['Prompt'] shrink-0 shadow-2xs tracking-wider">
+                                  <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                                  <span>HOT</span>
                                 </span>
                               )}
                             </div>
@@ -838,7 +875,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                       {completionRate}%
                     </span>
                     <span className="text-[10px] text-slate-500">
-                      ({formatNumber(report.cardsIssued)} / {formatNumber(report.queueAppointment)} คิว)
+                      ({formatNumber(effectiveCardsIssued)} / {formatNumber(report.queueAppointment)} คิว)
                     </span>
                   </div>
                 </div>

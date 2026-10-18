@@ -14,14 +14,15 @@ export interface DOEReport {
   phoneNumber: string; // เบอร์โทรศัพท์
   lineId: string; // บัญชี LINE
   
-  // 1. การออกบัตรใบอนุญาตทำงาน (จำแนก 7 กลุ่ม)
+  // 1. การออกบัตรใบอนุญาตทำงาน (จำแนกตามกลุ่มเป้าหมาย ปัจจุบันมี 8 กลุ่ม)
   section59: number;       // 1. กลุ่มมาตรา 59 (คน)
   section62: number;       // 2. กลุ่มมาตรา 62 (คน)
   section63_1: number;     // 3. กลุ่มมาตรา 63/1 (คน)
   section63_2: number;     // 4. กลุ่มมาตรา 63/2 (คน)
   section64: number;       // 5. กลุ่มมาตรา 64 (คน)
-  modifyDetails: number;   // 6. เปลี่ยนแปลงรายการในใบอนุญาตทำงาน (คน)
-  substituteCard: number;  // 7. ใบแทนใบอนุญาตทำงาน (คน)
+  mouGroup?: number;       // 6. กลุ่มนำเข้าตาม MOU (คน)
+  modifyDetails: number;   // 7. เปลี่ยนแปลงรายการในใบอนุญาตทำงาน (คน)
+  substituteCard: number;  // 8. ใบแทนใบอนุญาตทำงาน (คน)
 
   // 2. สถานะคิวและการให้บริการประจำวัน
   queueAppointment: number;     // คิวนัดหมาย (คิว)
@@ -35,12 +36,26 @@ export interface DOEReport {
   cumulativeCardsIssued?: number;
   cumulativeSinceDate?: string;
 
-  // 4. ค่าสำหรับหัวข้อที่แอดมินกำหนดเองเพิ่มเติม (Dynamic Categories)
+  // 4. ค่าสำหรับหัวข้อกลุ่มที่แอดมินกำหนดเองเพิ่มเติม (Dynamic Categories)
   customCategoryValues?: Record<string, number>;
+
+  // 5. ค่าสำหรับหัวข้อสถานะคิวและการให้บริการที่แอดมินกำหนดเองเพิ่มเติม (Dynamic Queue Metrics)
+  customQueueValues?: Record<string, number>;
 
   notes?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface QueueMetricCategory {
+  id: string; // e.g. 'queueAppointment', 'cardsIssued', 'identityVerified', 'cardsNotIssued', 'missedAppointment', 'wrongAppointmentDate' or 'custom_...'
+  title: string; // e.g. 'คิวนัดหมาย', 'ออกบัตร', 'ยืนยันตัวตน'
+  unit: string; // e.g. 'คิว', 'ใบ', 'คน'
+  subLabel?: string; // e.g. 'จำนวนคิวที่นัดหมายเข้ารับบริการทั้งหมด'
+  iconName?: string;
+  badgeColor?: string;
+  isActive: boolean;
+  isDefault?: boolean;
 }
 
 export interface EmploymentOffice {

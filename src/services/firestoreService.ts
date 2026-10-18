@@ -11,6 +11,7 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import {
   DOEReport,
   EmploymentOffice,
+  QueueMetricCategory,
   ReportCategory,
   ReporterProfile,
   SystemConfig,
@@ -20,13 +21,16 @@ import { INITIAL_REPORTS } from '../data/seedData';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import {
   DEFAULT_CATEGORIES,
+  DEFAULT_QUEUE_METRICS,
   DEFAULT_REPORTERS,
   DEFAULT_SYSTEM_CONFIG,
 } from '../data/initialAdminData';
+import { sanitizeReport } from '../utils/doeUtils';
 
 const REPORTS_COLLECTION = 'reports';
 const OFFICES_COLLECTION = 'offices';
 const CATEGORIES_COLLECTION = 'categories';
+const QUEUE_METRICS_COLLECTION = 'queue_metrics';
 const REPORTERS_COLLECTION = 'reporters';
 const CONFIG_COLLECTION = 'system_config';
 const CONFIG_DOC_ID = 'main_config';
@@ -45,7 +49,15 @@ export function subscribeReports(
     (snapshot) => {
       const list: DOEReport[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as DOEReport);
+        const raw = docSnap.data();
+        if (docSnap.id === 'report-test-123' || raw?.id === 'report-test-123') {
+          deleteDoc(docSnap.ref).catch(() => {});
+          return;
+        }
+        const clean = sanitizeReport({ ...raw, id: raw?.id || docSnap.id });
+        if (clean) {
+          list.push(clean);
+        }
       });
       // Sort newest first
       list.sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''));
@@ -59,14 +71,16 @@ export function subscribeReports(
 }
 
 export async function saveReportOnline(report: DOEReport): Promise<void> {
-  const docRef = doc(db, REPORTS_COLLECTION, report.id);
+  const sanitized = sanitizeReport(report);
+  if (!sanitized) return;
+  const docRef = doc(db, REPORTS_COLLECTION, sanitized.id);
   try {
     const cleanReport = JSON.parse(
-      JSON.stringify(report, (_, val) => (val === undefined ? null : val))
+      JSON.stringify(sanitized, (_, val) => (val === undefined ? null : val))
     );
     await setDoc(docRef, cleanReport, { merge: true });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `${REPORTS_COLLECTION}/${report.id}`);
+    handleFirestoreError(error, OperationType.WRITE, `${REPORTS_COLLECTION}/${sanitized.id}`);
   }
 }
 
@@ -78,12 +92,15 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
     await deleteDoc(docRef);
 
     // 2. Safely archive to trash collection
-    const cleanReport = JSON.parse(
-      JSON.stringify(report, (_, val) => (val === undefined ? null : val))
-    );
-    await setDoc(trashRef, cleanReport).catch((err) =>
-      console.warn('Could not archive to trash collection:', err)
-    );
+    const sanitized = sanitizeReport(report);
+    if (sanitized) {
+      const cleanReport = JSON.parse(
+        JSON.stringify(sanitized, (_, val) => (val === undefined ? null : val))
+      );
+      await setDoc(trashRef, cleanReport).catch((err) =>
+        console.warn('Could not archive to trash collection:', err)
+      );
+    }
   } catch (error) {
     console.error('Delete report online error, attempting fallback deleteDoc:', error);
     try {
@@ -95,16 +112,18 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
 }
 
 export async function restoreReportOnline(report: DOEReport): Promise<void> {
-  const docRef = doc(db, REPORTS_COLLECTION, report.id);
-  const trashRef = doc(db, DELETED_REPORTS_COLLECTION, report.id);
+  const sanitized = sanitizeReport(report);
+  if (!sanitized) return;
+  const docRef = doc(db, REPORTS_COLLECTION, sanitized.id);
+  const trashRef = doc(db, DELETED_REPORTS_COLLECTION, sanitized.id);
   try {
     const cleanReport = JSON.parse(
-      JSON.stringify(report, (_, val) => (val === undefined ? null : val))
+      JSON.stringify(sanitized, (_, val) => (val === undefined ? null : val))
     );
     await setDoc(docRef, cleanReport);
     await deleteDoc(trashRef).catch(console.warn);
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `${REPORTS_COLLECTION}/${report.id}`);
+    handleFirestoreError(error, OperationType.WRITE, `${REPORTS_COLLECTION}/${sanitized.id}`);
   }
 }
 
@@ -118,7 +137,15 @@ export function subscribeDeletedReports(
     (snapshot) => {
       const list: DOEReport[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as DOEReport);
+        const raw = docSnap.data();
+        if (docSnap.id === 'report-test-123' || raw?.id === 'report-test-123') {
+          deleteDoc(docSnap.ref).catch(() => {});
+          return;
+        }
+        const clean = sanitizeReport({ ...raw, id: raw?.id || docSnap.id });
+        if (clean) {
+          list.push(clean);
+        }
       });
       onData(list);
     },
@@ -247,6 +274,59 @@ export async function saveAllCategoriesOnline(categories: ReportCategory[]): Pro
   }
 }
 
+// 3.1 QUEUE METRICS (สถานะคิวและการให้บริการประจำวัน)
+export function subscribeQueueMetrics(
+  onData: (metrics: QueueMetricCategory[]) => void,
+  onError?: (err: unknown) => void
+) {
+  const colRef = collection(db, QUEUE_METRICS_COLLECTION);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const list: QueueMetricCategory[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as QueueMetricCategory);
+      });
+      onData(list);
+    },
+    (error) => {
+      if (onError) onError(error);
+      handleFirestoreError(error, OperationType.LIST, QUEUE_METRICS_COLLECTION);
+    }
+  );
+}
+
+export async function saveQueueMetricOnline(metric: QueueMetricCategory): Promise<void> {
+  const docRef = doc(db, QUEUE_METRICS_COLLECTION, metric.id);
+  try {
+    await setDoc(docRef, metric, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${QUEUE_METRICS_COLLECTION}/${metric.id}`);
+  }
+}
+
+export async function saveAllQueueMetricsOnline(metrics: QueueMetricCategory[]): Promise<void> {
+  try {
+    const batch = writeBatch(db);
+    for (const m of metrics) {
+      const docRef = doc(db, QUEUE_METRICS_COLLECTION, m.id);
+      batch.set(docRef, m, { merge: true });
+    }
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, QUEUE_METRICS_COLLECTION);
+  }
+}
+
+export async function deleteQueueMetricOnline(metricId: string): Promise<void> {
+  const docRef = doc(db, QUEUE_METRICS_COLLECTION, metricId);
+  try {
+    await deleteDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${QUEUE_METRICS_COLLECTION}/${metricId}`);
+  }
+}
+
 // 4. REPORTERS
 export function subscribeReporters(
   onData: (reporters: ReporterProfile[]) => void,
@@ -324,16 +404,17 @@ export async function saveSystemConfigOnline(config: SystemConfig): Promise<void
 // 6. INITIAL SYNC / SEED
 export async function clearAllReportsOnline(): Promise<void> {
   try {
-    // Delete active reports
+    // Archive active reports to deleted_reports before removing from active reports collection
     const reportSnap = await getDocs(collection(db, REPORTS_COLLECTION));
     for (const docSnap of reportSnap.docs) {
-      await deleteDoc(docSnap.ref).catch((e) => console.warn('Could not delete doc:', docSnap.id, e));
-    }
-
-    // Delete deleted/trash reports
-    const trashSnap = await getDocs(collection(db, DELETED_REPORTS_COLLECTION));
-    for (const docSnap of trashSnap.docs) {
-      await deleteDoc(docSnap.ref).catch((e) => console.warn('Could not delete trash doc:', docSnap.id, e));
+      const data = docSnap.data();
+      const trashRef = doc(db, DELETED_REPORTS_COLLECTION, docSnap.id);
+      await setDoc(trashRef, data, { merge: true }).catch((e) =>
+        console.warn('Could not archive doc before clear:', docSnap.id, e)
+      );
+      await deleteDoc(docSnap.ref).catch((e) =>
+        console.warn('Could not delete doc:', docSnap.id, e)
+      );
     }
   } catch (err) {
     console.warn('Error clearing reports online for production:', err);
@@ -374,6 +455,17 @@ export async function initializeFirestoreIfEmpty(): Promise<{
       for (const cat of DEFAULT_CATEGORIES) {
         const docRef = doc(db, CATEGORIES_COLLECTION, cat.id);
         batch.set(docRef, cat);
+      }
+      await batch.commit();
+    }
+
+    // Check queue metrics (สถานะคิวและการให้บริการประจำวัน)
+    const queueMetricsSnap = await getDocs(collection(db, QUEUE_METRICS_COLLECTION));
+    if (queueMetricsSnap.empty) {
+      const batch = writeBatch(db);
+      for (const qm of DEFAULT_QUEUE_METRICS) {
+        const docRef = doc(db, QUEUE_METRICS_COLLECTION, qm.id);
+        batch.set(docRef, qm);
       }
       await batch.commit();
     }

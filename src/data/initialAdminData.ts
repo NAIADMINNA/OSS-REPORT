@@ -1,4 +1,4 @@
-import { ReportCategory, ReporterProfile, SystemConfig } from '../types/doe';
+import { QueueMetricCategory, ReportCategory, ReporterProfile, SystemConfig } from '../types/doe';
 
 export const DEFAULT_CATEGORIES: ReportCategory[] = [
   {
@@ -48,6 +48,16 @@ export const DEFAULT_CATEGORIES: ReportCategory[] = [
     subLabel: 'แรงงานนำเข้าแบบไป-กลับ หรือตามฤดูกาล',
     color: 'from-teal-600 to-emerald-600',
     iconName: 'ShieldCheck',
+    isActive: true,
+    isDefault: true,
+  },
+  {
+    id: 'mouGroup',
+    code: 'MOU',
+    title: 'กลุ่มนำเข้าตาม MOU',
+    subLabel: 'แรงงานต่างด้าวนำเข้าตามข้อตกลง MOU',
+    color: 'from-emerald-600 to-teal-600',
+    iconName: 'Globe',
     isActive: true,
     isDefault: true,
   },
@@ -116,3 +126,67 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   customLogoUrl: null,
   adminPin: '0841543524',
 };
+
+export const DEFAULT_QUEUE_METRICS: QueueMetricCategory[] = [
+  {
+    id: 'queueAppointment',
+    title: 'คิวนัดหมาย',
+    unit: 'คิว',
+    subLabel: 'จำนวนคิวที่นัดหมายเข้ารับบริการทั้งหมด',
+    iconName: 'Calendar',
+    badgeColor: 'text-teal-700 bg-teal-50 border-teal-200',
+    isActive: true,
+    isDefault: true,
+  },
+  {
+    id: 'cardsIssued',
+    title: 'ออกบัตร',
+    unit: 'ใบ',
+    subLabel: 'จำนวนบัตรที่พิมพ์และออกให้เรียบร้อย (คำนวณจากผลรวมกลุ่ม)',
+    iconName: 'CreditCard',
+    badgeColor: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+    isActive: true,
+    isDefault: true,
+  },
+  {
+    id: 'identityVerified',
+    title: 'ยืนยันตัวตน',
+    unit: 'คน',
+    subLabel: 'ผู้ผ่านการสแกนใบหน้า/ตรวจอัตลักษณ์บุคคล',
+    iconName: 'CheckCircle2',
+    badgeColor: 'text-sky-700 bg-sky-50 border-sky-200',
+    isActive: true,
+    isDefault: true,
+  },
+  {
+    id: 'cardsNotIssued',
+    title: 'บัตรเสีย',
+    unit: 'ใบ',
+    subLabel: 'บัตรชำรุด / พิมพ์เสียระหว่างการออกบัตร',
+    iconName: 'XCircle',
+    badgeColor: 'text-slate-700 bg-slate-50 border-slate-200',
+    isActive: true,
+    isDefault: true,
+  },
+  {
+    id: 'missedAppointment',
+    title: 'ไม่มาตามนัด',
+    unit: 'คน',
+    subLabel: 'ไม่มารายงานตัวตามวันนัดหมายในระบบ',
+    iconName: 'UserX',
+    badgeColor: 'text-rose-700 bg-rose-50 border-rose-200',
+    isActive: true,
+    isDefault: true,
+  },
+  {
+    id: 'wrongAppointmentDate',
+    title: 'ไม่ตรงวันนัด',
+    unit: 'คน',
+    subLabel: 'มารายงานตัวผิดวัน หรือก่อน/หลังวันนัด',
+    iconName: 'CalendarX',
+    badgeColor: 'text-amber-700 bg-amber-50 border-amber-200',
+    isActive: true,
+    isDefault: true,
+  },
+];
+

@@ -4,22 +4,28 @@ interface DOELogoProps {
   className?: string;
   size?: number;
   customLogoUrl?: string | null;
+  onClick?: () => void;
+  title?: string;
 }
 
 export const DOELogo: React.FC<DOELogoProps> = ({
   className = '',
   size = 64,
   customLogoUrl,
+  onClick,
+  title,
 }) => {
   if (customLogoUrl) {
     return (
       <img
         src={customLogoUrl}
-        alt="ตราสัญลักษณ์ประจำศูนย์"
+        alt="ตราสัญลักษณ์ประจำศูนย์ - คลิกเพื่อกลับไปหน้าแดชบอร์ดสรุปผล"
+        title={title}
+        onClick={onClick}
         width={size}
         height={size}
         style={{ width: size, height: size }}
-        className={`inline-block select-none object-contain rounded-xl ${className}`}
+        className={`inline-block select-none object-contain rounded-xl ${onClick ? 'cursor-pointer' : ''} ${className}`}
       />
     );
   }
@@ -31,8 +37,9 @@ export const DOELogo: React.FC<DOELogoProps> = ({
       viewBox="0 0 120 120"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      className={`inline-block select-none ${className}`}
-      aria-label="ตรากรมการจัดหางาน"
+      onClick={onClick}
+      className={`inline-block select-none ${onClick ? 'cursor-pointer' : ''} ${className}`}
+      aria-label="ตรากรมการจัดหางาน - คลิกเพื่อกลับไปหน้าแดชบอร์ดสรุปผล"
     >
       <defs>
         <radialGradient id="doeGoldGrad" cx="50%" cy="40%" r="60%">

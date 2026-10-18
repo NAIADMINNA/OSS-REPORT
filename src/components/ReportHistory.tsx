@@ -3,6 +3,7 @@ import { DOEReport, ReportCategory } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { formatNumber, formatThaiDateShort, formatThaiDateFull } from '../utils/thaiDate';
 import { REGION_ORDER, sortOfficesByRegion } from '../utils/officeUtils';
+import { calculateReportTotalSections as calcTotalFromCategories } from '../utils/doeUtils';
 import {
   Search,
   Eye,
@@ -27,6 +28,11 @@ import {
   Key,
   EyeOff,
   AlertTriangle,
+  Folder,
+  FolderOpen,
+  ChevronDown,
+  ChevronRight,
+  ChevronsUpDown,
 } from 'lucide-react';
 
 interface ReportHistoryProps {
@@ -42,6 +48,16 @@ interface ReportHistoryProps {
   onDuplicateReport: (report: DOEReport) => void;
   onOpenLineModal: (report: DOEReport) => void;
   onNewReport: (preselectedOfficeId?: string) => void;
+}
+
+interface DailyReportFolder {
+  date: string;
+  thaiDateFull: string;
+  thaiDateShort: string;
+  items: DOEReport[];
+  totalQueue: number;
+  totalIssued: number;
+  totalMissed: number;
 }
 
 export const ReportHistory: React.FC<ReportHistoryProps> = ({
@@ -79,38 +95,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
   // Calculate actual total across all categories for any given report
   const calculateReportTotalSections = (r: DOEReport): number => {
-    if (activeCategories && activeCategories.length > 0) {
-      return activeCategories.reduce((sum, cat) => {
-        let val = 0;
-        if (cat.id === 'section59') val = Number(r.section59) || 0;
-        else if (cat.id === 'section62') val = Number(r.section62) || 0;
-        else if (cat.id === 'section63_1') val = Number(r.section63_1) || 0;
-        else if (cat.id === 'section63_2') val = Number(r.section63_2) || 0;
-        else if (cat.id === 'section64') val = Number(r.section64) || 0;
-        else if (cat.id === 'modifyDetails') val = Number(r.modifyDetails) || 0;
-        else if (cat.id === 'substituteCard') val = Number(r.substituteCard) || 0;
-        else {
-          val = Number(r.customCategoryValues?.[cat.id]) || 0;
-        }
-        return sum + val;
-      }, 0);
-    }
-
-    // Comprehensive fallback: sum all known standard properties + all customCategoryValues
-    const customSum = Object.values(r.customCategoryValues || {}).reduce(
-      (sum, val) => sum + (Number(val) || 0),
-      0
-    );
-    return (
-      (Number(r.section59) || 0) +
-      (Number(r.section62) || 0) +
-      (Number(r.section63_1) || 0) +
-      (Number(r.section63_2) || 0) +
-      (Number(r.section64) || 0) +
-      (Number(r.modifyDetails) || 0) +
-      (Number(r.substituteCard) || 0) +
-      customSum
-    );
+    return calcTotalFromCategories(r, activeCategories);
   };
 
   // Admin authentication state
@@ -135,14 +120,47 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRegion, setSelectedRegion] = useState('ทั้งหมด');
+  const [selectedFolderDate, setSelectedFolderDate] = useState('ทั้งหมด');
+  const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({});
+
+  // Summary of all daily folders across all reports (for the top folder shelf)
+  const allFolderStats = useMemo(() => {
+    const map = new Map<
+      string,
+      { count: number; totalQueue: number; totalIssued: number; totalMissed: number }
+    >();
+    reports.forEach((r) => {
+      const d = r.reportDate || 'ไม่ระบุวันที่';
+      const curr = map.get(d) || {
+        count: 0,
+        totalQueue: 0,
+        totalIssued: 0,
+        totalMissed: 0,
+      };
+      curr.count += 1;
+      curr.totalQueue += Number(r.queueAppointment) || 0;
+      curr.totalIssued += Number(r.cardsIssued) || 0;
+      curr.totalMissed += Number(r.missedAppointment) || 0;
+      map.set(d, curr);
+    });
+
+    return Array.from(map.entries())
+      .sort((a, b) => (b[0] || '').localeCompare(a[0] || ''))
+      .map(([date, stat]) => ({
+        date,
+        thaiDateShort: formatThaiDateShort(date),
+        thaiDateFull: formatThaiDateFull(date),
+        count: stat.count,
+        totalQueue: stat.totalQueue,
+        totalIssued: stat.totalIssued,
+        totalMissed: stat.totalMissed,
+      }));
+  }, [reports]);
 
   // Available distinct dates from reports
   const availableDates = useMemo(() => {
-    const dates = Array.from(new Set(reports.map((r) => r.reportDate))).sort(
-      (a, b) => b.localeCompare(a)
-    );
-    return dates;
-  }, [reports]);
+    return allFolderStats.map((f) => f.date);
+  }, [allFolderStats]);
 
   // Selected date for checking pending offices
   const [pendingCheckDate, setPendingCheckDate] = useState<string>(() => {
@@ -153,20 +171,87 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
   // 1. Filtered Reported reports
   const filteredReported = useMemo(() => {
+    const q = (searchTerm || '').toLowerCase().trim();
     return reports.filter((r) => {
       const matchesSearch =
-        r.officeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.reporterName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.reporterPosition.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.centerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.reportDate.includes(searchTerm);
+        !q ||
+        (r.officeName || '').toLowerCase().includes(q) ||
+        (r.reporterName || '').toLowerCase().includes(q) ||
+        (r.reporterPosition || '').toLowerCase().includes(q) ||
+        (r.centerName || '').toLowerCase().includes(q) ||
+        (r.reportDate || '').includes(q);
 
       const matchesRegion =
         selectedRegion === 'ทั้งหมด' || r.region === selectedRegion;
 
-      return matchesSearch && matchesRegion;
+      const matchesDate =
+        selectedFolderDate === 'ทั้งหมด' || r.reportDate === selectedFolderDate;
+
+      return matchesSearch && matchesRegion && matchesDate;
     });
-  }, [reports, searchTerm, selectedRegion]);
+  }, [reports, searchTerm, selectedRegion, selectedFolderDate]);
+
+  // Group filteredReported into Daily Folders (sorted newest date first)
+  const dailyReportFolders = useMemo<DailyReportFolder[]>(() => {
+    const grouped = new Map<string, DOEReport[]>();
+    filteredReported.forEach((r) => {
+      const dateKey = r.reportDate || 'ไม่ระบุวันที่';
+      const list = grouped.get(dateKey) || [];
+      list.push(r);
+      grouped.set(dateKey, list);
+    });
+
+    return Array.from(grouped.entries())
+      .sort((a, b) => (b[0] || '').localeCompare(a[0] || ''))
+      .map(([date, items]) => {
+        const sortedItems = [...items].sort((a, b) => {
+          const regIdxA = REGION_ORDER.indexOf((a.region || '') as any);
+          const regIdxB = REGION_ORDER.indexOf((b.region || '') as any);
+          if (regIdxA !== regIdxB && regIdxA !== -1 && regIdxB !== -1) {
+            return regIdxA - regIdxB;
+          }
+          return (a.officeName || '').localeCompare(b.officeName || '', 'th');
+        });
+
+        let totalQueue = 0;
+        let totalIssued = 0;
+        let totalMissed = 0;
+        sortedItems.forEach((item) => {
+          totalQueue += Number(item.queueAppointment) || 0;
+          totalIssued += Number(item.cardsIssued) || 0;
+          totalMissed += Number(item.missedAppointment) || 0;
+        });
+
+        return {
+          date,
+          thaiDateFull: formatThaiDateFull(date),
+          thaiDateShort: formatThaiDateShort(date),
+          items: sortedItems,
+          totalQueue,
+          totalIssued,
+          totalMissed,
+        };
+      });
+  }, [filteredReported]);
+
+  const toggleFolder = (date: string) => {
+    setCollapsedDates((prev) => ({
+      ...prev,
+      [date]: !prev[date],
+    }));
+  };
+
+  const expandAllFolders = () => {
+    setCollapsedDates({});
+  };
+
+  const collapseAllFolders = () => {
+    const next: Record<string, boolean> = {};
+    dailyReportFolders.forEach((f) => {
+      next[f.date] = true;
+    });
+    setCollapsedDates(next);
+  };
 
   // 2. Compute Pending Offices (ยังไม่รายงาน ตามรอบวันที่ตรวจสอบ)
   const pendingOfficesList = useMemo(() => {
@@ -183,12 +268,12 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
       // Filter by region & search
       const matchesRegion =
         selectedRegion === 'ทั้งหมด' || office.region === selectedRegion;
-      const q = searchTerm.toLowerCase().trim();
+      const q = (searchTerm || '').toLowerCase().trim();
       const matchesSearch =
         !q ||
-        office.name.toLowerCase().includes(q) ||
-        office.centerName.toLowerCase().includes(q) ||
-        office.region.toLowerCase().includes(q);
+        (office.name || '').toLowerCase().includes(q) ||
+        (office.centerName || '').toLowerCase().includes(q) ||
+        (office.region || '').toLowerCase().includes(q);
 
       return matchesRegion && matchesSearch;
     });
@@ -207,9 +292,9 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
     }).length;
   }, [reports, pendingCheckDate]);
 
-  // Export to CSV (Reported reports)
-  const handleExportCSV = () => {
-    if (reports.length === 0) return;
+  // Export to CSV (Reported reports - all or specific folder)
+  const handleExportCSV = (targetList: DOEReport[] = filteredReported, fileSuffix?: string) => {
+    if (targetList.length === 0) return;
 
     const exportCats = (activeCategories && activeCategories.length > 0)
       ? activeCategories
@@ -219,6 +304,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
           { id: 'section63_1', title: 'กลุ่มมาตรา 63/1' },
           { id: 'section63_2', title: 'กลุ่มมาตรา 63/2' },
           { id: 'section64', title: 'กลุ่มมาตรา 64' },
+          { id: 'mouGroup', title: 'กลุ่มนำเข้าตาม MOU' },
           { id: 'modifyDetails', title: 'เปลี่ยนแปลงรายการในใบอนุญาตทำงาน' },
           { id: 'substituteCard', title: 'ใบแทนใบอนุญาตทำงาน' },
         ];
@@ -226,7 +312,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
     const categoryHeaders = exportCats.map((c) => `"${c.title} (คน)"`);
 
     const headers = [
-      'วันที่รายงาน',
+      'โฟลเดอร์วันที่รายงาน',
       'สำนักงานจัดหางาน',
       'ศูนย์บริการ',
       'ภูมิภาค',
@@ -239,19 +325,20 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
       'คิวนัดหมาย (คิว)',
       'ออกบัตร (ใบ)',
       'ยืนยันตัวตน (คน)',
-      'ไม่ออกบัตร (คน)',
+      'บัตรเสีย (ใบ)',
       'ไม่มาตามนัด (คน)',
       'ไม่ตรงวันนัด (คน)',
       'หมายเหตุ',
     ];
 
-    const rows = reports.map((r) => {
+    const rows = targetList.map((r) => {
       const categoryValues = exportCats.map((c) => {
         if (c.id === 'section59') return Number(r.section59) || 0;
         if (c.id === 'section62') return Number(r.section62) || 0;
         if (c.id === 'section63_1') return Number(r.section63_1) || 0;
         if (c.id === 'section63_2') return Number(r.section63_2) || 0;
         if (c.id === 'section64') return Number(r.section64) || 0;
+        if (c.id === 'mouGroup') return Number(r.mouGroup) || Number(r.customCategoryValues?.['mouGroup']) || 0;
         if (c.id === 'modifyDetails') return Number(r.modifyDetails) || 0;
         if (c.id === 'substituteCard') return Number(r.substituteCard) || 0;
         return Number(r.customCategoryValues?.[c.id]) || 0;
@@ -260,22 +347,22 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
       const totalSec = calculateReportTotalSections(r);
 
       return [
-        `"${r.reportDate}"`,
-        `"${r.officeName.replace(/"/g, '""')}"`,
-        `"${r.centerName.replace(/"/g, '""')}"`,
-        `"${r.region}"`,
-        `"${r.reporterName.replace(/"/g, '""')}"`,
-        `"${r.reporterPosition.replace(/"/g, '""')}"`,
+        `"${r.reportDate || ''}"`,
+        `"${(r.officeName || '').replace(/"/g, '""')}"`,
+        `"${(r.centerName || '').replace(/"/g, '""')}"`,
+        `"${r.region || ''}"`,
+        `"${(r.reporterName || '').replace(/"/g, '""')}"`,
+        `"${(r.reporterPosition || '').replace(/"/g, '""')}"`,
         `"${r.phoneNumber || ''}"`,
         `"${r.lineId || ''}"`,
         ...categoryValues,
         totalSec,
-        r.queueAppointment,
-        r.cardsIssued,
-        r.identityVerified,
-        r.cardsNotIssued,
-        r.missedAppointment,
-        r.wrongAppointmentDate,
+        r.queueAppointment || 0,
+        r.cardsIssued || 0,
+        r.identityVerified || 0,
+        r.cardsNotIssued || 0,
+        r.missedAppointment || 0,
+        r.wrongAppointmentDate || 0,
         `"${(r.notes || '').replace(/"/g, '""')}"`,
       ].join(',');
     });
@@ -285,7 +372,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `DOE_Reports_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `DOE_Reports_${fileSuffix || new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -407,7 +494,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
             }`}
           >
             <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-            <span>รายงานผลเรียบร้อยแล้ว ({reports.length})</span>
+            <span>รายงานผลเรียบร้อยแล้ว ({reports.length} ฉบับ • {allFolderStats.length} โฟลเดอร์วัน)</span>
           </button>
 
           <button
@@ -463,6 +550,127 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
         </div>
       </div>
 
+      {/* 1.5 DAILY FOLDERS SHELF (คลังโฟลเดอร์ประวัติการรายงานรายวัน) */}
+      {activeHistoryTab === 'reported' && allFolderStats.length > 0 && (
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <FolderOpen className="w-5 h-5 text-amber-500" />
+              <span className="text-sm font-extrabold text-slate-900 font-['Prompt']">
+                คลังโฟลเดอร์ประวัติการรายงานรายวัน ({allFolderStats.length} โฟลเดอร์)
+              </span>
+              <span className="text-xs text-slate-500">
+                จัดเก็บข้อมูลแยกตามวันที่รายงานอัตโนมัติ คลิกเลือกโฟลเดอร์เพื่อดูเฉพาะวันนั้น
+              </span>
+            </div>
+
+            {selectedFolderDate !== 'ทั้งหมด' && (
+              <button
+                type="button"
+                onClick={() => setSelectedFolderDate('ทั้งหมด')}
+                className="text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg border border-blue-200 transition-colors cursor-pointer"
+              >
+                แสดงครบทุกโฟลเดอร์ ({allFolderStats.length} วัน)
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2.5 overflow-x-auto pb-1.5">
+            {/* All Folders Card */}
+            <button
+              type="button"
+              onClick={() => setSelectedFolderDate('ทั้งหมด')}
+              className={`shrink-0 px-3.5 py-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                selectedFolderDate === 'ทั้งหมด'
+                  ? 'bg-gradient-to-r from-blue-900 to-indigo-900 text-white border-blue-900 shadow-xs'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+              }`}
+            >
+              <div
+                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                  selectedFolderDate === 'ทั้งหมด'
+                    ? 'bg-amber-400 text-slate-950'
+                    : 'bg-amber-100 text-amber-700'
+                }`}
+              >
+                <FolderOpen className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-xs font-extrabold font-['Prompt'] leading-tight">
+                  ทุกโฟลเดอร์รายวัน
+                </div>
+                <div
+                  className={`text-[11px] mt-0.5 ${
+                    selectedFolderDate === 'ทั้งหมด' ? 'text-sky-200' : 'text-slate-500'
+                  }`}
+                >
+                  รวม {reports.length} ฉบับ • {allFolderStats.length} วัน
+                </div>
+              </div>
+            </button>
+
+            {/* Individual Daily Folder Cards */}
+            {allFolderStats.map((folder) => {
+              const isSelected = selectedFolderDate === folder.date;
+              return (
+                <button
+                  key={folder.date}
+                  type="button"
+                  onClick={() => {
+                    setSelectedFolderDate(isSelected ? 'ทั้งหมด' : folder.date);
+                    setCollapsedDates((prev) => ({ ...prev, [folder.date]: false }));
+                  }}
+                  className={`shrink-0 px-3.5 py-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                    isSelected
+                      ? 'bg-gradient-to-r from-sky-700 to-blue-800 text-white border-blue-800 shadow-xs ring-2 ring-sky-300/60'
+                      : 'bg-amber-50/50 hover:bg-amber-50 text-slate-800 border-amber-200/80'
+                  }`}
+                >
+                  <div
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                      isSelected
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'bg-amber-100 text-amber-700 border border-amber-200'
+                    }`}
+                  >
+                    {isSelected ? (
+                      <FolderOpen className="w-5 h-5" />
+                    ) : (
+                      <Folder className="w-5 h-5" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-extrabold font-['Prompt'] leading-tight flex items-center gap-1.5">
+                      <span>{folder.thaiDateShort}</span>
+                      <span
+                        className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                          isSelected
+                            ? 'bg-white/20 text-white'
+                            : 'bg-white text-slate-600 border border-slate-200'
+                        }`}
+                      >
+                        {folder.count} ฉบับ
+                      </span>
+                    </div>
+                    <div
+                      className={`text-[11px] mt-0.5 flex items-center gap-1.5 ${
+                        isSelected ? 'text-amber-200' : 'text-slate-600'
+                      }`}
+                    >
+                      <span>คิว {formatNumber(folder.totalQueue)}</span>
+                      <span>•</span>
+                      <span className={isSelected ? 'text-emerald-200 font-semibold' : 'text-emerald-700 font-semibold'}>
+                        ออกบัตร {formatNumber(folder.totalIssued)} ใบ
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 2. FILTER & SEARCH BAR */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
@@ -500,8 +708,26 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
             <option value="เฉพาะกิจ">🚚 เฉพาะกิจ (Mobile Unit)</option>
           </select>
 
-          {/* Date Selector for Pending tab */}
-          {activeHistoryTab === 'pending' && (
+          {/* Date Selector for Reported tab (Daily Folder Filter) */}
+          {activeHistoryTab === 'reported' ? (
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-sm">
+              <Folder className="w-4 h-4 text-amber-600" />
+              <span className="text-slate-600 font-semibold text-xs">โฟลเดอร์วันที่:</span>
+              <select
+                value={selectedFolderDate}
+                onChange={(e) => setSelectedFolderDate(e.target.value)}
+                className="bg-transparent font-bold text-slate-800 focus:outline-hidden cursor-pointer text-sm"
+              >
+                <option value="ทั้งหมด">ทุกโฟลเดอร์รายวัน ({availableDates.length} วัน)</option>
+                {availableDates.map((d) => (
+                  <option key={d} value={d}>
+                    📁 {formatThaiDateShort(d)} ({d})
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            /* Date Selector for Pending tab */
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-sm">
               <Calendar className="w-4 h-4 text-slate-500" />
               <span className="text-slate-600 font-semibold text-xs">รอบวันที่:</span>
@@ -523,6 +749,28 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
         {/* Action Button on Top-Right */}
         <div className="flex flex-wrap items-center gap-2">
+          {activeHistoryTab === 'reported' && dailyReportFolders.length > 1 && (
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={expandAllFolders}
+                className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-white text-slate-700 transition-colors cursor-pointer flex items-center gap-1"
+                title="กางออกดูรายงานในทุกโฟลเดอร์รายวัน"
+              >
+                <ChevronsUpDown className="w-3.5 h-3.5 text-blue-600" />
+                <span>กางออกทั้งหมด</span>
+              </button>
+              <button
+                type="button"
+                onClick={collapseAllFolders}
+                className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-white text-slate-700 transition-colors cursor-pointer"
+                title="พับเก็บเหลือเฉพาะหัวโฟลเดอร์รายวัน"
+              >
+                พับเก็บทั้งหมด
+              </button>
+            </div>
+          )}
+
           {deletedReports.length > 0 && (
             <button
               type="button"
@@ -538,9 +786,9 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
           {activeHistoryTab === 'reported' ? (
             <button
-              onClick={handleExportCSV}
+              onClick={() => handleExportCSV(filteredReported)}
               className="text-sm font-bold px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition-colors flex items-center gap-2 cursor-pointer shadow-2xs"
-              title="ส่งออกรายงานผลทั้งหมดเป็นไฟล์ CSV / Excel"
+              title="ส่งออกรายงานผลเป็นไฟล์ CSV / Excel"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
               <span>ส่งออก CSV (Excel)</span>
@@ -569,170 +817,271 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
       {/* 3. CONTENT AREA BASED ON ACTIVE SUB-TAB */}
       {activeHistoryTab === 'reported' ? (
-        /* TAB 1: รายงานผลเรียบร้อยแล้ว */
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-4">
-          {filteredReported.length === 0 ? (
-            <div className="col-span-full bg-white p-12 text-center rounded-xl border border-dashed border-slate-300 text-slate-500">
-              <p className="font-semibold text-slate-700">ไม่พบประวัติรายงานตามเงื่อนไข</p>
-              <p className="text-xs mt-1">ลองเปลี่ยนคำค้นหา หรือกดปุ่ม "เพิ่มรายงานใหม่"</p>
-            </div>
-          ) : (
-            filteredReported.map((r) => {
-              const totalSec = calculateReportTotalSections(r);
+        /* TAB 1: รายงานผลเรียบร้อยแล้ว (จัดเก็บเป็นโฟลเดอร์รายวัน) */
+        dailyReportFolders.length === 0 ? (
+          <div className="bg-white p-12 text-center rounded-2xl border border-dashed border-slate-300 text-slate-500">
+            <p className="font-semibold text-slate-700">ไม่พบโฟลเดอร์ประวัติการรายงานตามเงื่อนไข</p>
+            <p className="text-xs mt-1">ลองเปลี่ยนคำค้นหา เลือกทุกโฟลเดอร์รายวัน หรือกดปุ่ม "เพิ่มรายงานใหม่"</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {dailyReportFolders.map((folder) => {
+              const isCollapsed = Boolean(collapsedDates[folder.date]);
 
               return (
                 <div
-                  key={r.id}
-                  className="bg-white rounded-xl border border-slate-200 hover:border-sky-300 hover:shadow-md transition-all p-4.5 flex flex-col justify-between space-y-3"
+                  key={folder.date}
+                  className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden transition-all"
                 >
-                  <div>
-                    {/* Card Header */}
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="text-xs sm:text-sm font-bold px-2.5 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200">
-                        {r.region}
-                      </span>
-                      <span className="text-xs sm:text-sm font-semibold text-slate-500">
-                        {formatThaiDateShort(r.reportDate)}
-                      </span>
-                    </div>
-
-                    {/* Office & Center */}
-                    <div className="mt-2.5">
-                      <h4 className="font-extrabold text-slate-900 text-base leading-snug line-clamp-1 font-['Prompt']">
-                        {r.officeName}
-                      </h4>
-                      <p className="text-xs sm:text-sm text-slate-500 mt-0.5 line-clamp-1">
-                        {r.centerName}
-                      </p>
-                    </div>
-
-                    {/* Reporter info */}
-                    <div className="mt-2.5 text-sm bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                      <div className="font-bold text-slate-800 truncate">
-                        👤 {r.reporterName}
-                      </div>
-                      <div className="text-xs sm:text-sm text-slate-500 truncate mt-0.5">
-                        💼 {r.reporterPosition}
-                      </div>
-                    </div>
-
-                    {/* Metrics snapshot */}
-                    <div className="grid grid-cols-3 gap-2 mt-3 text-center">
-                      <div className="bg-teal-50 border border-teal-100 p-2 rounded-xl">
-                        <div className="text-xs text-teal-700 font-semibold">คิวนัดหมาย</div>
-                        <div className="font-black text-teal-950 mt-0.5 text-base font-['Prompt']">
-                          {formatNumber(r.queueAppointment)}
-                        </div>
-                      </div>
-                      <div className="bg-emerald-50 border border-emerald-100 p-2 rounded-xl">
-                        <div className="text-xs text-emerald-700 font-semibold">ออกบัตร</div>
-                        <div className="font-black text-emerald-950 mt-0.5 text-base font-['Prompt']">
-                          {formatNumber(r.cardsIssued)}
-                        </div>
-                      </div>
-                      <div className="bg-rose-50 border border-rose-100 p-2 rounded-xl">
-                        <div className="text-xs text-rose-700 font-semibold">ไม่มาตามนัด</div>
-                        <div className="font-black text-rose-950 mt-0.5 text-base font-['Prompt']">
-                          {formatNumber(r.missedAppointment)}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Groups highlights */}
-                    <div className="mt-3 flex items-center justify-between text-xs sm:text-sm text-slate-600 px-1">
-                      <span
-                        className="cursor-help hover:text-blue-900 transition-colors"
-                        title={`ยอดรวมผู้รับบริการทั้ง ${activeGroupsCount} กลุ่มมาตรา ของรายงานฉบับนี้`}
-                      >
-                        รวม {activeGroupsCount} กลุ่ม: <b className="text-slate-900 font-bold">{formatNumber(totalSec)}</b> คน
-                      </span>
-                      <span
-                        className="cursor-help hover:text-emerald-900 transition-colors"
-                        title="อัตราความสำเร็จ: คำนวณจาก (จำนวนออกบัตรสำเร็จ ÷ จำนวนคิวนัดหมาย) × 100"
-                      >
-                        สำเร็จ: <b className="text-emerald-700 font-bold">{r.queueAppointment > 0 ? Math.round((r.cardsIssued / r.queueAppointment) * 100) : 0}%</b>
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Card Action Buttons */}
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1">
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => onOpenLineModal(r)}
-                        className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
-                        title="คัดลอกข้อความสรุปส่ง LINE"
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleProtectedDuplicate(r)}
-                        className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                          isAdmin
-                            ? 'text-slate-600 hover:bg-slate-100'
-                            : 'text-slate-500 hover:text-amber-700 hover:bg-amber-50'
-                        }`}
-                        title={isAdmin ? 'คัดลอกสร้างรายงานใหม่ (สิทธิ์ Admin)' : 'คัดลอกสร้างรายงานใหม่ (เฉพาะ Admin)'}
-                      >
-                        <div className="relative">
-                          <Copy className="w-4 h-4" />
-                          {!isAdmin && (
-                            <Lock className="w-2.5 h-2.5 text-amber-600 absolute -bottom-1 -right-1" />
-                          )}
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleProtectedEdit(r)}
-                        className={`p-1.5 rounded-lg transition-all cursor-pointer shadow-2xs border ${
-                          isAdmin
-                            ? 'text-blue-700 hover:text-white hover:bg-blue-600 border-blue-200 hover:border-blue-600'
-                            : 'text-slate-500 hover:text-blue-700 hover:bg-blue-50 border-slate-200'
-                        }`}
-                        title={isAdmin ? 'แก้ไขข้อมูลรายงาน (สิทธิ์ Admin)' : 'แก้ไขข้อมูลรายงาน (เฉพาะ Admin)'}
-                        aria-label="แก้ไขข้อมูลรายงาน"
-                      >
-                        <div className="relative">
-                          <Edit2 className="w-4 h-4" />
-                          {!isAdmin && (
-                            <Lock className="w-2.5 h-2.5 text-amber-600 absolute -bottom-1 -right-1" />
-                          )}
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleProtectedDelete(r.id)}
-                        className={`p-1.5 rounded-lg transition-all cursor-pointer shadow-2xs border ${
-                          isAdmin
-                            ? 'text-rose-600 hover:text-white hover:bg-rose-600 border-rose-200 hover:border-rose-600'
-                            : 'text-slate-500 hover:text-rose-600 hover:bg-rose-50 border-slate-200'
-                        }`}
-                        title={isAdmin ? 'ลบรายงานนี้ (สิทธิ์ Admin)' : 'ลบรายงานนี้ (เฉพาะ Admin)'}
-                        aria-label="ลบรายงานนี้"
-                      >
-                        <div className="relative">
-                          <Trash2 className="w-4 h-4" />
-                          {!isAdmin && (
-                            <Lock className="w-2.5 h-2.5 text-amber-600 absolute -bottom-1 -right-1" />
-                          )}
-                        </div>
-                      </button>
-                    </div>
-
+                  {/* Daily Folder Header Bar */}
+                  <div className="p-4 bg-gradient-to-r from-amber-50/90 via-slate-50 to-sky-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
                     <button
-                      onClick={() => onViewPoster(r)}
-                      className="text-xs font-bold px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                      type="button"
+                      onClick={() => toggleFolder(folder.date)}
+                      className="flex items-center gap-3 text-left cursor-pointer group flex-1 min-w-[240px]"
                     >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>ดูโปสเตอร์</span>
+                      <div className="w-11 h-11 rounded-xl bg-amber-400/90 group-hover:bg-amber-400 text-slate-950 flex items-center justify-center shadow-2xs shrink-0 transition-colors">
+                        {isCollapsed ? (
+                          <Folder className="w-5 h-5" />
+                        ) : (
+                          <FolderOpen className="w-5 h-5" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-md bg-blue-900 text-white font-mono">
+                            โฟลเดอร์รายงานประจำวัน
+                          </span>
+                          <h3 className="font-black text-slate-900 text-sm sm:text-base font-['Prompt'] group-hover:text-blue-800 transition-colors">
+                            {folder.thaiDateFull}
+                          </h3>
+                          <span className="text-xs font-mono text-slate-500">
+                            ({folder.date})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2.5 mt-1 text-xs text-slate-600 flex-wrap">
+                          <span className="font-bold text-blue-900 bg-blue-100/80 px-2 py-0.5 rounded-md border border-blue-200">
+                            รายงานในโฟลเดอร์นี้: {folder.items.length} แห่ง
+                          </span>
+                          <span className="font-semibold text-teal-800">
+                            คิวนัดหมายรวม: <b>{formatNumber(folder.totalQueue)}</b> คิว
+                          </span>
+                          <span>•</span>
+                          <span className="font-semibold text-emerald-800">
+                            ออกบัตรสำเร็จรวม: <b>{formatNumber(folder.totalIssued)}</b> ใบ
+                          </span>
+                          <span>•</span>
+                          <span className="font-semibold text-rose-700">
+                            ไม่มาตามนัด: <b>{formatNumber(folder.totalMissed)}</b> คน
+                          </span>
+                        </div>
+                      </div>
                     </button>
+
+                    {/* Per-Folder Actions */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => handleExportCSV(folder.items, folder.date)}
+                        className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title={`ส่งออกไฟล์ CSV เฉพาะโฟลเดอร์วันที่ ${folder.thaiDateShort}`}
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>CSV วันนี้ ({folder.items.length})</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => toggleFolder(folder.date)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        {isCollapsed ? (
+                          <>
+                            <span>เปิดโฟลเดอร์</span>
+                            <ChevronRight className="w-4 h-4" />
+                          </>
+                        ) : (
+                          <>
+                            <span>พับเก็บ</span>
+                            <ChevronDown className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Folder Contents: Report Cards Grid */}
+                  {!isCollapsed && (
+                    <div className="p-4 bg-slate-50/40 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-4">
+                      {folder.items.map((r) => {
+                        const totalSec = calculateReportTotalSections(r);
+
+                        return (
+                          <div
+                            key={r.id}
+                            className="bg-white rounded-xl border border-slate-200 hover:border-sky-300 hover:shadow-md transition-all p-4.5 flex flex-col justify-between space-y-3"
+                          >
+                            <div>
+                              {/* Card Header */}
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="text-xs sm:text-sm font-bold px-2.5 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200">
+                                  {r.region}
+                                </span>
+                                <span className="text-xs sm:text-sm font-semibold text-slate-500">
+                                  {formatThaiDateShort(r.reportDate)}
+                                </span>
+                              </div>
+
+                              {/* Office & Center */}
+                              <div className="mt-2.5">
+                                <h4 className="font-extrabold text-slate-900 text-base leading-snug line-clamp-1 font-['Prompt']">
+                                  {r.officeName}
+                                </h4>
+                                <p className="text-xs sm:text-sm text-slate-500 mt-0.5 line-clamp-1">
+                                  {r.centerName}
+                                </p>
+                              </div>
+
+                              {/* Reporter info */}
+                              <div className="mt-2.5 text-sm bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                <div className="font-bold text-slate-800 truncate">
+                                  👤 {r.reporterName}
+                                </div>
+                                <div className="text-xs sm:text-sm text-slate-500 truncate mt-0.5">
+                                  💼 {r.reporterPosition}
+                                </div>
+                              </div>
+
+                              {/* Metrics snapshot */}
+                              <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+                                <div className="bg-teal-50 border border-teal-100 p-2 rounded-xl">
+                                  <div className="text-xs text-teal-700 font-semibold">คิวนัดหมาย</div>
+                                  <div className="font-black text-teal-950 mt-0.5 text-base font-['Prompt']">
+                                    {formatNumber(r.queueAppointment)}
+                                  </div>
+                                </div>
+                                <div className="bg-emerald-50 border border-emerald-100 p-2 rounded-xl">
+                                  <div className="text-xs text-emerald-700 font-semibold">ออกบัตร</div>
+                                  <div className="font-black text-emerald-950 mt-0.5 text-base font-['Prompt']">
+                                    {formatNumber(r.cardsIssued)}
+                                  </div>
+                                </div>
+                                <div className="bg-rose-50 border border-rose-100 p-2 rounded-xl">
+                                  <div className="text-xs text-rose-700 font-semibold">ไม่มาตามนัด</div>
+                                  <div className="font-black text-rose-950 mt-0.5 text-base font-['Prompt']">
+                                    {formatNumber(r.missedAppointment)}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Groups highlights */}
+                              <div className="mt-3 flex items-center justify-between text-xs sm:text-sm text-slate-600 px-1">
+                                <span
+                                  className="cursor-help hover:text-blue-900 transition-colors"
+                                  title={`ยอดรวมจากตัวเลขตามจริงทั้ง ${activeGroupsCount} กลุ่ม:
+• ม.59: ${formatNumber(r.section59 || 0)} คน
+• ม.62: ${formatNumber(r.section62 || 0)} คน
+• ม.63/1: ${formatNumber(r.section63_1 || 0)} คน
+• ม.63/2: ${formatNumber(r.section63_2 || 0)} คน
+• ม.64: ${formatNumber(r.section64 || 0)} คน
+• นำเข้าตาม MOU: ${formatNumber(r.mouGroup || r.customCategoryValues?.['mouGroup'] || 0)} คน
+• เปลี่ยนแปลงรายการ: ${formatNumber(r.modifyDetails || 0)} คน
+• ใบแทน: ${formatNumber(r.substituteCard || 0)} คน`}
+                                >
+                                  รวม {activeGroupsCount} กลุ่ม: <b className="text-slate-900 font-bold">{formatNumber(totalSec)}</b> คน
+                                </span>
+                                <span
+                                  className="cursor-help hover:text-emerald-900 transition-colors"
+                                  title="อัตราความสำเร็จ: คำนวณจาก (จำนวนออกบัตรสำเร็จ ÷ จำนวนคิวนัดหมาย) × 100"
+                                >
+                                  สำเร็จ: <b className="text-emerald-700 font-bold">{r.queueAppointment > 0 ? Math.round((r.cardsIssued / r.queueAppointment) * 100) : 0}%</b>
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Card Action Buttons */}
+                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1">
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => onOpenLineModal(r)}
+                                  className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                  title="คัดลอกข้อความสรุปส่ง LINE"
+                                >
+                                  <MessageCircle className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleProtectedDuplicate(r)}
+                                  className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                    isAdmin
+                                      ? 'text-slate-600 hover:bg-slate-100'
+                                      : 'text-slate-500 hover:text-amber-700 hover:bg-amber-50'
+                                  }`}
+                                  title={isAdmin ? 'คัดลอกสร้างรายงานใหม่ (สิทธิ์ Admin)' : 'คัดลอกสร้างรายงานใหม่ (เฉพาะ Admin)'}
+                                >
+                                  <div className="relative">
+                                    <Copy className="w-4 h-4" />
+                                    {!isAdmin && (
+                                      <Lock className="w-2.5 h-2.5 text-amber-600 absolute -bottom-1 -right-1" />
+                                    )}
+                                  </div>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleProtectedEdit(r)}
+                                  className={`p-1.5 rounded-lg transition-all cursor-pointer shadow-2xs border ${
+                                    isAdmin
+                                      ? 'text-blue-700 hover:text-white hover:bg-blue-600 border-blue-200 hover:border-blue-600'
+                                      : 'text-slate-500 hover:text-blue-700 hover:bg-blue-50 border-slate-200'
+                                  }`}
+                                  title={isAdmin ? 'แก้ไขข้อมูลรายงาน (สิทธิ์ Admin)' : 'แก้ไขข้อมูลรายงาน (เฉพาะ Admin)'}
+                                  aria-label="แก้ไขข้อมูลรายงาน"
+                                >
+                                  <div className="relative">
+                                    <Edit2 className="w-4 h-4" />
+                                    {!isAdmin && (
+                                      <Lock className="w-2.5 h-2.5 text-amber-600 absolute -bottom-1 -right-1" />
+                                    )}
+                                  </div>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleProtectedDelete(r.id)}
+                                  className={`p-1.5 rounded-lg transition-all cursor-pointer shadow-2xs border ${
+                                    isAdmin
+                                      ? 'text-rose-600 hover:text-white hover:bg-rose-600 border-rose-200 hover:border-rose-600'
+                                      : 'text-slate-500 hover:text-rose-600 hover:bg-rose-50 border-slate-200'
+                                  }`}
+                                  title={isAdmin ? 'ลบรายงานนี้ (สิทธิ์ Admin)' : 'ลบรายงานนี้ (เฉพาะ Admin)'}
+                                  aria-label="ลบรายงานนี้"
+                                >
+                                  <div className="relative">
+                                    <Trash2 className="w-4 h-4" />
+                                    {!isAdmin && (
+                                      <Lock className="w-2.5 h-2.5 text-amber-600 absolute -bottom-1 -right-1" />
+                                    )}
+                                  </div>
+                                </button>
+                              </div>
+
+                              <button
+                                onClick={() => onViewPoster(r)}
+                                className="text-xs font-bold px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>ดูโปสเตอร์</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )
       ) : (
         /* TAB 2: สำนักงานจัดหางานที่ยังไม่รายงาน (ตามคำสั่งผู้ใช้) */
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">

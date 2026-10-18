@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import {
   DOEReport,
   EmploymentOffice,
+  QueueMetricCategory,
   ReportCategory,
   ReporterProfile,
   SystemConfig,
@@ -15,6 +16,7 @@ import { INITIAL_REPORTS } from './data/seedData';
 import { EMPLOYMENT_OFFICES } from './data/offices';
 import {
   DEFAULT_CATEGORIES,
+  DEFAULT_QUEUE_METRICS,
   DEFAULT_REPORTERS,
   DEFAULT_SYSTEM_CONFIG,
 } from './data/initialAdminData';
@@ -26,10 +28,11 @@ import { DailyNotesTable } from './components/DailyNotesTable';
 import { InfographicPoster } from './components/InfographicPoster';
 import { PosterPreviewModal } from './components/PosterPreviewModal';
 import { ExportLineModal } from './components/ExportLineModal';
-import { AdminConsole } from './components/AdminConsole';
+import { AdminConsole, AdminSubTab } from './components/AdminConsole';
 import { ConfirmDialogModal } from './components/ConfirmDialogModal';
 import { DOEAssistantMascot } from './components/DOEAssistantMascot';
 import { formatThaiDateFull, getTodayIsoDate } from './utils/thaiDate';
+import { sanitizeReportList } from './utils/doeUtils';
 import {
   Eye,
   CheckCircle,
@@ -54,6 +57,8 @@ import {
   subscribeDeletedOffices,
   subscribeCategories,
   saveAllCategoriesOnline,
+  subscribeQueueMetrics,
+  saveAllQueueMetricsOnline,
   subscribeReporters,
   saveAllReportersOnline,
   subscribeSystemConfig,
@@ -63,8 +68,10 @@ import {
 } from './services/firestoreService';
 
 const STORAGE_KEY_REPORTS = 'doe_work_permit_reports_v1';
+const STORAGE_KEY_REPORTS_BACKUP = 'doe_work_permit_reports_backup_v1';
 const STORAGE_KEY_OFFICES = 'doe_work_permit_offices_v1';
 const STORAGE_KEY_CATEGORIES = 'doe_work_permit_categories_v1';
+const STORAGE_KEY_QUEUE_METRICS = 'doe_work_permit_queue_metrics_v1';
 const STORAGE_KEY_REPORTERS = 'doe_work_permit_reporters_v1';
 const STORAGE_KEY_CONFIG = 'doe_work_permit_config_v1';
 const STORAGE_KEY_DELETED_OFFICES = 'doe_work_permit_deleted_offices_v1';
@@ -112,22 +119,21 @@ export default function App() {
   const [isFirestoreOnline, setIsFirestoreOnline] = useState<boolean>(true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // 1. Reports Database (เริ่มต้นเป็นว่างเปล่าเพื่อนำระบบขึ้นใช้งานจริง)
+  // 1. Reports Database (with automatic fallback to rolling backup if primary key was cleared)
   const [reports, setReports] = useState<DOEReport[]>(() => {
     try {
-      // Check if client storage has been wiped for production release
-      const isCleaned = localStorage.getItem('doe_production_cleaned_v3');
-      if (!isCleaned) {
-        localStorage.removeItem(STORAGE_KEY_REPORTS);
-        localStorage.removeItem(STORAGE_KEY_DELETED_REPORTS);
-        localStorage.setItem('doe_production_cleaned_v3', 'true');
-        return [];
-      }
       const saved = localStorage.getItem(STORAGE_KEY_REPORTS);
       if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
+        const parsed = sanitizeReportList(JSON.parse(saved));
+        if (parsed.length > 0) {
           return parsed;
+        }
+      }
+      const backup = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
+      if (backup) {
+        const parsedBackup = sanitizeReportList(JSON.parse(backup));
+        if (parsedBackup.length > 0) {
+          return parsedBackup;
         }
       }
     } catch (e) {
@@ -163,7 +169,7 @@ export default function App() {
     return EMPLOYMENT_OFFICES;
   });
 
-  // 3. Categories / Sections Database
+  // 3. Categories / Sections Database (กลุ่มมาตรา)
   const [categories, setCategories] = useState<ReportCategory[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_CATEGORIES);
@@ -177,6 +183,39 @@ export default function App() {
       console.error('Failed to load categories from storage', e);
     }
     return DEFAULT_CATEGORIES;
+  });
+
+  const normalizeQueueMetricsList = (list: QueueMetricCategory[]): QueueMetricCategory[] => {
+    return list.map((m) => {
+      if (m.id === 'cardsNotIssued' && m.title === 'ไม่ออกบัตร') {
+        return {
+          ...m,
+          title: 'บัตรเสีย',
+          unit: m.unit === 'คน' ? 'ใบ' : m.unit || 'ใบ',
+          subLabel:
+            m.subLabel === 'ไม่อนุมัติ / คุณสมบัติหรือเอกสารไม่ครบถ้วน'
+              ? 'บัตรชำรุด / พิมพ์เสียระหว่างการออกบัตร'
+              : m.subLabel,
+        };
+      }
+      return m;
+    });
+  };
+
+  // 3.1 Queue Metrics Database (สถานะคิวและการให้บริการประจำวัน)
+  const [queueMetrics, setQueueMetrics] = useState<QueueMetricCategory[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_QUEUE_METRICS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return normalizeQueueMetricsList(parsed);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load queue metrics from storage', e);
+    }
+    return DEFAULT_QUEUE_METRICS;
   });
 
   // 4. Reporters Database
@@ -216,6 +255,7 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [adminInitialSubTab, setAdminInitialSubTab] = useState<AdminSubTab | undefined>(undefined);
   const [isEditingExistingReport, setIsEditingExistingReport] = useState<boolean>(false);
 
   // Admin authentication state across tabs
@@ -274,8 +314,8 @@ export default function App() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_DELETED_REPORTS);
       if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        const parsed = sanitizeReportList(JSON.parse(saved));
+        return parsed;
       }
     } catch (e) {
       console.error('Failed to load deleted reports from storage', e);
@@ -296,18 +336,31 @@ export default function App() {
         // Ensure online Firestore has initial data if newly provisioned
         await initializeFirestoreIfEmpty();
 
-        // Production Cleanup: ล้างข้อมูลรายงานทดสอบ/ตัวอย่างเดิมทั้งหมดออกจาก Cloud Firestore
-        const isCleanedOnline = localStorage.getItem('doe_firestore_cleaned_prod_v3');
-        if (!isCleanedOnline) {
-          await clearAllReportsOnline();
-          localStorage.setItem('doe_firestore_cleaned_prod_v3', 'true');
-        }
-
         // 1. Subscribe to online reports (Realtime push via onSnapshot)
+        // Safeguard: Never allow an empty online array to wipe out existing local reports!
         const unsubReports = subscribeReports((onlineReports) => {
-          if (Array.isArray(onlineReports)) {
-            setReports(onlineReports);
-          }
+          if (!Array.isArray(onlineReports)) return;
+          const cleanOnline = sanitizeReportList(onlineReports);
+          setReports((prevLocal) => {
+            const cleanPrev = sanitizeReportList(prevLocal);
+            if (cleanOnline.length === 0) {
+              // If Firestore is empty, preserve local reports and push them online
+              if (cleanPrev.length > 0) {
+                cleanPrev.forEach((r) => saveReportOnline(r).catch(console.warn));
+                return cleanPrev;
+              }
+              return cleanPrev;
+            }
+            // Merge online reports with any local reports not yet on server
+            const onlineIds = new Set(cleanOnline.map((r) => r.id));
+            const unsyncedLocal = cleanPrev.filter((r) => !onlineIds.has(r.id));
+            if (unsyncedLocal.length > 0) {
+              unsyncedLocal.forEach((r) => saveReportOnline(r).catch(console.warn));
+            }
+            const merged = [...cleanOnline, ...unsyncedLocal];
+            merged.sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''));
+            return merged;
+          });
         });
         unsubs.push(unsubReports);
 
@@ -327,6 +380,18 @@ export default function App() {
         });
         unsubs.push(unsubCats);
 
+        // 3.1 Subscribe to queue metrics
+        const unsubQueueMetrics = subscribeQueueMetrics((onlineMetrics) => {
+          if (onlineMetrics && onlineMetrics.length > 0) {
+            const normalized = normalizeQueueMetricsList(onlineMetrics);
+            setQueueMetrics(normalized);
+            if (onlineMetrics.some((m) => m.id === 'cardsNotIssued' && m.title === 'ไม่ออกบัตร')) {
+              saveAllQueueMetricsOnline(normalized).catch(console.warn);
+            }
+          }
+        });
+        unsubs.push(unsubQueueMetrics);
+
         // 4. Subscribe to reporters
         const unsubReps = subscribeReporters((onlineReps) => {
           if (onlineReps && onlineReps.length > 0) {
@@ -345,13 +410,17 @@ export default function App() {
 
         // 6. Subscribe to deleted reports (trash)
         const unsubDelReports = subscribeDeletedReports((onlineDel) => {
-          setDeletedReports(onlineDel);
+          if (onlineDel && onlineDel.length > 0) {
+            setDeletedReports(onlineDel);
+          }
         });
         unsubs.push(unsubDelReports);
 
         // 7. Subscribe to deleted offices (trash)
         const unsubDelOffices = subscribeDeletedOffices((onlineDelOffices) => {
-          setDeletedOffices(onlineDelOffices);
+          if (onlineDelOffices && onlineDelOffices.length > 0) {
+            setDeletedOffices(onlineDelOffices);
+          }
         });
         unsubs.push(unsubDelOffices);
       } catch (err) {
@@ -368,10 +437,25 @@ export default function App() {
     };
   }, []);
 
-  // Persist Databases to localStorage
+  // Persist Databases to localStorage (with Rolling Non-Destructive Backup for Reports)
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(reports));
+      if (reports.length > 0) {
+        const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
+        let backupList: DOEReport[] = [];
+        if (existingBackupRaw) {
+          const parsed = JSON.parse(existingBackupRaw);
+          if (Array.isArray(parsed)) backupList = parsed;
+        }
+        const map = new Map<string, DOEReport>();
+        backupList.forEach((r) => map.set(r.id, r));
+        reports.forEach((r) => map.set(r.id, r));
+        const mergedBackup = Array.from(map.values()).sort((a, b) =>
+          (b.reportDate || '').localeCompare(a.reportDate || '')
+        );
+        localStorage.setItem(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify(mergedBackup));
+      }
     } catch (e) {
       console.error('Failed to persist reports', e);
     }
@@ -502,6 +586,14 @@ export default function App() {
     saveAllCategoriesOnline(updatedCategories).catch(console.warn);
   };
 
+  const handleUpdateQueueMetrics = (updatedMetrics: QueueMetricCategory[]) => {
+    setQueueMetrics(updatedMetrics);
+    try {
+      localStorage.setItem(STORAGE_KEY_QUEUE_METRICS, JSON.stringify(updatedMetrics));
+    } catch {}
+    saveAllQueueMetricsOnline(updatedMetrics).catch(console.warn);
+  };
+
   const handleUpdateReporters = (updatedReporters: ReporterProfile[]) => {
     setReporters(updatedReporters);
     saveAllReportersOnline(updatedReporters).catch(console.warn);
@@ -576,47 +668,181 @@ export default function App() {
   // ล้างประวัติการรายงานและหมายเหตุทั้งหมดเพื่อนำระบบขึ้นใช้งานจริง (Production Clear All)
   const handleClearAllReportsForProduction = async () => {
     try {
+      const previousReports = [...reports];
+      if (previousReports.length > 0) {
+        // เก็บสำรองไว้ใน Backup และถังขยะเผื่อกรณีผู้ดูแลระบบกดผิดพลาด
+        try {
+          const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
+          const existingBackup: DOEReport[] = existingBackupRaw ? JSON.parse(existingBackupRaw) : [];
+          const backupMap = new Map<string, DOEReport>();
+          existingBackup.forEach((r) => {
+            if (r && r.id) backupMap.set(r.id, r);
+          });
+          previousReports.forEach((r) => {
+            if (r && r.id) backupMap.set(r.id, r);
+          });
+          localStorage.setItem(
+            STORAGE_KEY_REPORTS_BACKUP,
+            JSON.stringify(Array.from(backupMap.values()))
+          );
+        } catch (e) {
+          console.warn('Could not save backup before clear:', e);
+        }
+        setDeletedReports((prev) => {
+          const map = new Map<string, DOEReport>();
+          prev.forEach((r) => map.set(r.id, r));
+          previousReports.forEach((r) => map.set(r.id, r));
+          return Array.from(map.values());
+        });
+      }
+
       setReports([]);
-      setDeletedReports([]);
       localStorage.removeItem(STORAGE_KEY_REPORTS);
-      localStorage.removeItem(STORAGE_KEY_DELETED_REPORTS);
       await clearAllReportsOnline();
 
       const emptyReport = createEmptyReportTemplate(EMPLOYMENT_OFFICES[0]);
       setCurrentReport(emptyReport);
       setLivePreviewReport(emptyReport);
 
-      showToast('ล้างประวัติการรายงานและหมายเหตุ/บันทึกเพิ่มเติมทั้งหมดเรียบร้อยแล้ว (ระบบพร้อมใช้งานจริง)');
+      showToast(
+        'ล้างประวัติการรายงานทั้งหมดเรียบร้อยแล้ว (สำรองข้อมูลไว้ในระบบกู้คืนเผื่อกดผิด)',
+        previousReports.length > 0 ? '↩️ กู้คืนกลับทันที (Undo)' : undefined,
+        previousReports.length > 0 ? () => handleRestoreBackupReports() : undefined
+      );
     } catch (err) {
       console.error('Failed to clear reports for production:', err);
     }
   };
 
+  // กู้คืนรายงานจาก Rolling Local Backup หรือถังขยะ
+  const handleRestoreBackupReports = () => {
+    try {
+      const backupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
+      const deletedRaw = localStorage.getItem(STORAGE_KEY_DELETED_REPORTS);
+      let recovered: DOEReport[] = [];
+
+      if (backupRaw) {
+        const parsed = JSON.parse(backupRaw);
+        if (Array.isArray(parsed)) recovered = [...recovered, ...parsed];
+      }
+      if (deletedRaw) {
+        const parsedDel = JSON.parse(deletedRaw);
+        if (Array.isArray(parsedDel)) recovered = [...recovered, ...parsedDel];
+      }
+      if (deletedReports.length > 0) {
+        recovered = [...recovered, ...deletedReports];
+      }
+
+      const map = new Map<string, DOEReport>();
+      reports.forEach((r) => map.set(r.id, r));
+      recovered.forEach((r) => map.set(r.id, r));
+      const finalRecovered = Array.from(map.values()).sort((a, b) =>
+        (b.reportDate || '').localeCompare(a.reportDate || '')
+      );
+
+      if (finalRecovered.length === 0) {
+        showToast('ไม่พบข้อมูลรายงานสำรองในเบราว์เซอร์เครื่องนี้ (หากบันทึกจากเครื่องอื่น กรุณากดซิงก์จากเครื่องที่บันทึก)');
+        return;
+      }
+
+      setReports(finalRecovered);
+      finalRecovered.forEach((r) => saveReportOnline(r).catch(console.warn));
+      showToast(`กู้คืนและซิงก์รายงานสำเร็จทั้งหมด ${finalRecovered.length} ฉบับ!`);
+    } catch (e) {
+      console.error('Failed to restore backup reports:', e);
+      showToast('เกิดข้อผิดพลาดในการกู้คืนรายงานสำรอง');
+    }
+  };
+
+  // ซิงก์รายงานทั้งหมดในเครื่องขึ้น Cloud Firestore
+  const handleSyncAllReportsToOnline = () => {
+    if (reports.length === 0) {
+      showToast('ไม่มีรายการรายงานในเครื่องที่จะซิงก์ขึ้น Cloud Firestore');
+      return;
+    }
+    reports.forEach((r) => saveReportOnline(r).catch(console.warn));
+    showToast(`ซิงก์รายงานทั้งหมด (${reports.length} ฉบับ) ขึ้นฐานข้อมูลออนไลน์เรียบร้อยแล้ว`);
+  };
+
   // Save or update report
-  const handleSaveReport = (savedReport: DOEReport) => {
-    const existingIndex = reports.findIndex((r) => r.id === savedReport.id);
+  const handleSaveReport = async (savedReport: DOEReport) => {
+    let finalReport = { ...savedReport };
+    const existingByIdIndex = reports.findIndex((r) => r.id === finalReport.id);
+
+    // If not in edit mode and the user switched to a different office or date after a previous save,
+    // generate a fresh ID so it never overwrites the previous office's report
+    if (
+      !isEditingExistingReport &&
+      existingByIdIndex >= 0 &&
+      (reports[existingByIdIndex].officeId !== finalReport.officeId ||
+        reports[existingByIdIndex].reportDate !== finalReport.reportDate)
+    ) {
+      finalReport = {
+        ...finalReport,
+        id: `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    const targetIndex = reports.findIndex((r) => r.id === finalReport.id);
     let updatedList: DOEReport[];
 
-    if (existingIndex >= 0) {
+    if (targetIndex >= 0) {
       updatedList = [...reports];
-      updatedList[existingIndex] = savedReport;
-      showToast(`บันทึกการแก้ไขรายงาน "${savedReport.officeName}" สำเร็จ! (ซิงก์ออนไลน์แล้ว)`);
+      updatedList[targetIndex] = finalReport;
     } else {
-      updatedList = [savedReport, ...reports];
-      showToast(`บันทึกรายงานใหม่ของ "${savedReport.officeName}" สำเร็จ! (ซิงก์ออนไลน์แล้ว)`);
+      updatedList = [finalReport, ...reports];
+    }
+
+    // 1. Immediately persist to localStorage & rolling backup before async network call
+    try {
+      localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(updatedList));
+      const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
+      const existingBackup: DOEReport[] = existingBackupRaw ? JSON.parse(existingBackupRaw) : [];
+      const backupMap = new Map<string, DOEReport>();
+      existingBackup.forEach((r) => {
+        if (r && r.id) backupMap.set(r.id, r);
+      });
+      updatedList.forEach((r) => {
+        if (r && r.id) backupMap.set(r.id, r);
+      });
+      localStorage.setItem(
+        STORAGE_KEY_REPORTS_BACKUP,
+        JSON.stringify(Array.from(backupMap.values()))
+      );
+    } catch (e) {
+      console.warn('Immediate localStorage save warning:', e);
     }
 
     setReports(updatedList);
-    setCurrentReport(savedReport);
-    setLivePreviewReport(savedReport);
-    setModalTargetReport(savedReport);
-
-    // Save to Firestore online database
-    saveReportOnline(savedReport).catch(console.warn);
+    setCurrentReport(finalReport);
+    setLivePreviewReport(finalReport);
+    setModalTargetReport(finalReport);
     setIsEditingExistingReport(false);
 
     // Open preview poster modal to verify
     setIsPosterModalOpen(true);
+
+    // 2. Save directly to Cloud Firestore online database and verify completion
+    try {
+      await saveReportOnline(finalReport);
+      setIsFirestoreOnline(true);
+      showToast(
+        targetIndex >= 0
+          ? `บันทึกการแก้ไขรายงาน "${finalReport.officeName}" ลงฐานข้อมูล Cloud Firestore สำเร็จ!`
+          : `บันทึกรายงานใหม่ของ "${finalReport.officeName}" ลงฐานข้อมูล Cloud Firestore สำเร็จ!`
+      );
+    } catch (err) {
+      console.error('Failed to save report online to Firestore:', err);
+      showToast(
+        `บันทึกรายงาน "${finalReport.officeName}" ลงเครื่องสำรองแล้ว (กำลังรอเชื่อมต่อฐานข้อมูลออนไลน์)`,
+        '🔄 ลองซิงก์ใหม่',
+        () => {
+          saveReportOnline(finalReport).catch(console.warn);
+        }
+      );
+    }
   };
 
   // Delete report
@@ -715,6 +941,8 @@ export default function App() {
     showToast('ล้างข้อมูลในแบบฟอร์มเรียบร้อยแล้ว');
   };
 
+  const [dashboardResetSignal, setDashboardResetSignal] = useState(0);
+
   // Switch tabs safely, ensuring form opens as a clean blank template if not editing
   const handleTabChange = (tab: ActiveTab) => {
     if (tab === 'form' && activeTab !== 'form') {
@@ -729,12 +957,24 @@ export default function App() {
     setActiveTab(tab);
   };
 
+  // Click logo to return immediately to the main summary dashboard
+  const handleLogoBackToDashboard = () => {
+    setIsPosterModalOpen(false);
+    setIsLineModalOpen(false);
+    setDashboardResetSignal((prev) => prev + 1);
+    setActiveTab('dashboard');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-50 to-slate-100 flex flex-col font-sans text-slate-800">
       {/* Top System Header */}
       <DOEHeader
         activeTab={activeTab}
         onTabChange={handleTabChange}
+        onLogoClick={handleLogoBackToDashboard}
         reportCount={reports.length}
         notesCount={reports.filter((r) => Boolean(r.notes && r.notes.trim().length > 0)).length}
         onPreviewCurrentPoster={() => handleOpenPosterModal(livePreviewReport)}
@@ -771,6 +1011,7 @@ export default function App() {
           <DashboardView
             reports={reports}
             categories={categories}
+            queueMetrics={queueMetrics}
             currentReport={currentReport}
             onSelectReport={handleOpenPosterModal}
             onNewReport={handleNewReport}
@@ -778,6 +1019,7 @@ export default function App() {
             onEditReport={handleEditReport}
             onViewPendingInHistory={() => setActiveTab('history')}
             offices={offices}
+            resetSignal={dashboardResetSignal}
           />
         )}
 
@@ -840,10 +1082,15 @@ export default function App() {
                   onClearForm={handleClearCurrentReport}
                   offices={offices}
                   categories={categories}
+                  queueMetrics={queueMetrics}
                   reporters={reporters}
                   isAdmin={isAdmin}
                   adminPin={systemConfig.adminPin || '0841543524'}
                   onAdminAuthenticated={handleAdminAuthenticated}
+                  onNavigateAdmin={(subTab) => {
+                    if (subTab) setAdminInitialSubTab(subTab as AdminSubTab);
+                    setActiveTab('admin');
+                  }}
                 />
               </div>
 
@@ -876,6 +1123,7 @@ export default function App() {
                       <InfographicPoster
                         report={livePreviewReport}
                         categories={categories}
+                        queueMetrics={queueMetrics}
                         systemConfig={systemConfig}
                         customLogoUrl={systemConfig.customLogoUrl}
                       />
@@ -920,13 +1168,16 @@ export default function App() {
           <AdminConsole
             offices={offices}
             categories={categories}
+            queueMetrics={queueMetrics}
             reporters={reporters}
             systemConfig={systemConfig}
             reports={reports}
             deletedOffices={deletedOffices}
             deletedReports={deletedReports}
+            initialSubTab={adminInitialSubTab}
             onUpdateOffices={handleUpdateOffices}
             onUpdateCategories={handleUpdateCategories}
+            onUpdateQueueMetrics={handleUpdateQueueMetrics}
             onUpdateReporters={handleUpdateReporters}
             onUpdateSystemConfig={handleUpdateSystemConfig}
             onRestoreFullDatabase={handleRestoreFullDatabase}
@@ -936,6 +1187,8 @@ export default function App() {
             onRestoreDeletedReport={handleRestoreDeletedReport}
             onRestoreAllDeletedReports={handleRestoreAllDeletedReports}
             onClearAllReportsForProduction={handleClearAllReportsForProduction}
+            onRestoreBackupReports={handleRestoreBackupReports}
+            onSyncAllReportsToOnline={handleSyncAllReportsToOnline}
             onNotify={showToast}
             onAdminAuthenticated={handleAdminAuthenticated}
             onAdminLoggedOut={() => setIsAdmin(false)}
@@ -970,6 +1223,7 @@ export default function App() {
           onEdit={handleEditReport}
           onOpenLine={handleOpenLineModal}
           categories={categories}
+          queueMetrics={queueMetrics}
           systemConfig={systemConfig}
           customLogoUrl={systemConfig.customLogoUrl}
         />
@@ -979,6 +1233,7 @@ export default function App() {
       {isLineModalOpen && (
         <ExportLineModal
           report={modalTargetReport}
+          queueMetrics={queueMetrics}
           onClose={() => setIsLineModalOpen(false)}
         />
       )}

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useMemo } from 'react';
-import { DOEReport, ReportCategory, SystemConfig } from '../types/doe';
+import { DOEReport, QueueMetricCategory, ReportCategory, SystemConfig } from '../types/doe';
 import { formatThaiDateFull } from '../utils/thaiDate';
 import { InfographicPoster } from './InfographicPoster';
 import { toPng } from 'html-to-image';
@@ -25,6 +25,7 @@ interface PosterPreviewModalProps {
   onEdit: (report: DOEReport) => void;
   onOpenLine: (report: DOEReport) => void;
   categories?: ReportCategory[];
+  queueMetrics?: QueueMetricCategory[];
   systemConfig?: SystemConfig;
   customLogoUrl?: string | null;
 }
@@ -35,6 +36,7 @@ export const PosterPreviewModal: React.FC<PosterPreviewModalProps> = ({
   onEdit,
   onOpenLine,
   categories,
+  queueMetrics,
   systemConfig,
   customLogoUrl,
 }) => {
@@ -309,6 +311,7 @@ export const PosterPreviewModal: React.FC<PosterPreviewModalProps> = ({
               ref={posterRef}
               report={displayReport}
               categories={categories}
+              queueMetrics={queueMetrics}
               systemConfig={systemConfig}
               customLogoUrl={customLogoUrl}
             />

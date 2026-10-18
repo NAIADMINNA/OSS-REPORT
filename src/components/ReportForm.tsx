@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useId, useMemo, useRef } from 'react';
-import { DOEReport, EmploymentOffice, ReportCategory, ReporterProfile } from '../types/doe';
+import {
+  DOEReport,
+  EmploymentOffice,
+  QueueMetricCategory,
+  ReportCategory,
+  ReporterProfile,
+} from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
+import { DEFAULT_QUEUE_METRICS } from '../data/initialAdminData';
 import { formatThaiDateFull, formatNumber, getTodayIsoDate } from '../utils/thaiDate';
 import { groupAndSortOfficesByRegion } from '../utils/officeUtils';
 import { AdminPinModal } from './AdminPinModal';
@@ -24,7 +31,10 @@ import {
   X,
   MapPin,
   Check,
+  Settings,
+  Star,
 } from 'lucide-react';
+import { calculateReportTotalSections } from '../utils/doeUtils';
 
 export const MOBILE_UNIT_CENTER_NAME =
   'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit)';
@@ -36,10 +46,12 @@ interface ReportFormProps {
   onClearForm?: () => void;
   offices?: EmploymentOffice[];
   categories?: ReportCategory[];
+  queueMetrics?: QueueMetricCategory[];
   reporters?: ReporterProfile[];
   isAdmin?: boolean;
   adminPin?: string;
   onAdminAuthenticated?: () => void;
+  onNavigateAdmin?: (subTab?: string) => void;
 }
 
 export const ReportForm: React.FC<ReportFormProps> = ({
@@ -49,10 +61,12 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   onClearForm,
   offices,
   categories,
+  queueMetrics,
   reporters,
   isAdmin = false,
   adminPin = '0841543524',
   onAdminAuthenticated,
+  onNavigateAdmin,
 }) => {
   const searchInputId = useId();
   const [officeSearch, setOfficeSearch] = useState('');
@@ -89,13 +103,25 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       { id: 'section63_1', code: 'ม.63/1', title: 'กลุ่มมาตรา 63/1', subLabel: 'ชนกลุ่มน้อย / ผู้มีสถานะตามกฎหมาย', isActive: true },
       { id: 'section63_2', code: 'ม.63/2', title: 'กลุ่มมาตรา 63/2', subLabel: 'กลุ่มมติ ครม. / แรงงาน 4 สัญชาติ', isActive: true },
       { id: 'section64', code: 'ม.64', title: 'กลุ่มมาตรา 64', subLabel: 'แรงงานนำเข้าแบบไป-กลับ หรือตามฤดูกาล', isActive: true },
+      { id: 'mouGroup', code: 'MOU', title: 'กลุ่มนำเข้าตาม MOU', subLabel: 'แรงงานต่างด้าวนำเข้าตามข้อตกลง MOU', isActive: true },
       { id: 'modifyDetails', code: 'เปลี่ยนแปลง', title: 'เปลี่ยนแปลงรายการในใบอนุญาตทำงาน', subLabel: 'ย้ายนายจ้าง / เปลี่ยนแปลงสถานที่ทำงาน', isActive: true },
       { id: 'substituteCard', code: 'ใบแทน', title: 'ใบแทนใบอนุญาตทำงาน', subLabel: 'กรณีบัตรชำรุด สูญหาย หรือขอใบแทน', isActive: true },
     ];
   }, [categories]);
 
+  const activeQueueMetrics = useMemo(() => {
+    if (queueMetrics && queueMetrics.length > 0) {
+      return queueMetrics.filter((m) => m.isActive);
+    }
+    return DEFAULT_QUEUE_METRICS;
+  }, [queueMetrics]);
+
   const todayIso = getTodayIsoDate();
   const initialDefaultOffice = EMPLOYMENT_OFFICES[0];
+
+  const initialCalculatedTotal = useMemo(() => {
+    return calculateReportTotalSections(initialReport || {}, activeCategories);
+  }, [initialReport, activeCategories]);
 
   const [formData, setFormData] = useState<Omit<DOEReport, 'id' | 'createdAt' | 'updatedAt'>>({
     reportDate: initialReport?.reportDate || todayIso,
@@ -116,10 +142,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     section63_1: initialReport?.section63_1 ?? 0,
     section63_2: initialReport?.section63_2 ?? 0,
     section64: initialReport?.section64 ?? 0,
+    mouGroup: initialReport?.mouGroup ?? 0,
     modifyDetails: initialReport?.modifyDetails ?? 0,
     substituteCard: initialReport?.substituteCard ?? 0,
     queueAppointment: initialReport?.queueAppointment ?? 0,
-    cardsIssued: initialReport?.cardsIssued ?? 0,
+    cardsIssued: Math.max(initialReport?.cardsIssued ?? 0, initialCalculatedTotal),
     identityVerified: initialReport?.identityVerified ?? 0,
     cardsNotIssued: initialReport?.cardsNotIssued ?? 0,
     missedAppointment: initialReport?.missedAppointment ?? 0,
@@ -127,6 +154,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     cumulativeCardsIssued: initialReport?.cumulativeCardsIssued ?? 0,
     cumulativeSinceDate: initialReport?.cumulativeSinceDate || '13 ตุลาคม 2568',
     customCategoryValues: initialReport?.customCategoryValues || {},
+    customQueueValues: initialReport?.customQueueValues || {},
     notes: initialReport?.notes || '',
   });
 
@@ -136,6 +164,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     if (initialReport && initialReport.id !== lastReportIdRef.current) {
       lastReportIdRef.current = initialReport.id;
       setSelectedOfficeId(initialReport.officeId || initialDefaultOffice.id);
+      const computedTotal = calculateReportTotalSections(initialReport, activeCategories);
       setFormData({
         reportDate: initialReport.reportDate || todayIso,
         reportDateThaiStr:
@@ -158,10 +187,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         section63_1: initialReport.section63_1 ?? 0,
         section63_2: initialReport.section63_2 ?? 0,
         section64: initialReport.section64 ?? 0,
+        mouGroup: initialReport.mouGroup ?? 0,
         modifyDetails: initialReport.modifyDetails ?? 0,
         substituteCard: initialReport.substituteCard ?? 0,
         queueAppointment: initialReport.queueAppointment ?? 0,
-        cardsIssued: initialReport.cardsIssued ?? 0,
+        cardsIssued: Math.max(initialReport.cardsIssued ?? 0, computedTotal),
         identityVerified: initialReport.identityVerified ?? 0,
         cardsNotIssued: initialReport.cardsNotIssued ?? 0,
         missedAppointment: initialReport.missedAppointment ?? 0,
@@ -169,10 +199,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         cumulativeCardsIssued: initialReport.cumulativeCardsIssued ?? 0,
         cumulativeSinceDate: initialReport.cumulativeSinceDate || '13 ตุลาคม 2568',
         customCategoryValues: initialReport.customCategoryValues || {},
+        customQueueValues: initialReport.customQueueValues || {},
         notes: initialReport.notes || '',
       });
     }
-  }, [initialReport?.id, todayIso, initialDefaultOffice]);
+  }, [initialReport?.id, todayIso, initialDefaultOffice, activeCategories]);
 
   // Determine if active center is Mobile Unit or Office Standard
   const isMobileCenter = useMemo(() => {
@@ -184,24 +215,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
   // Calculate live sums across all active categories (both default and custom)
   const totalSections = useMemo(() => {
-    let sum = 0;
-    activeCategories.forEach((cat) => {
-      if (cat.id === 'section59') sum += formData.section59;
-      else if (cat.id === 'section62') sum += formData.section62;
-      else if (cat.id === 'section63_1') sum += formData.section63_1;
-      else if (cat.id === 'section63_2') sum += formData.section63_2;
-      else if (cat.id === 'section64') sum += formData.section64;
-      else if (cat.id === 'modifyDetails') sum += formData.modifyDetails;
-      else if (cat.id === 'substituteCard') sum += formData.substituteCard;
-      else {
-        sum += (formData.customCategoryValues && formData.customCategoryValues[cat.id]) || 0;
-      }
-    });
-    return sum;
+    return calculateReportTotalSections(formData, activeCategories);
   }, [activeCategories, formData]);
 
   // Handle Office Selection
-  const handleOfficeChange = (officeId: string) => {
+  const handleOfficeChange = (officeId: string, clearSearch = false) => {
     if (!officeId) return;
     setSelectedOfficeId(officeId);
     const office = officeList.find((o) => o.id === officeId);
@@ -224,10 +242,39 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       };
       setFormData(updated);
       triggerPreview(updated);
+      if (clearSearch) {
+        setOfficeSearch('');
+      }
     }
   };
 
-  // Handle Custom Category Value Change
+  // Helper to compute total sum of all categories for given formData
+  const computeTotalFromData = (data: typeof formData) => {
+    return calculateReportTotalSections(data, activeCategories);
+  };
+
+  // Handle Standard Category Change with auto-sum sync for cardsIssued
+  const handleCategoryNumberChange = (
+    field: 'section59' | 'section62' | 'section63_1' | 'section63_2' | 'section64' | 'mouGroup' | 'modifyDetails' | 'substituteCard',
+    val: number
+  ) => {
+    const safeVal = Math.max(0, isNaN(val) ? 0 : val);
+    const updated = { ...formData, [field]: safeVal };
+    const newTotal = computeTotalFromData(updated);
+    updated.cardsIssued = newTotal;
+    setFormData(updated);
+    triggerPreview(updated);
+  };
+
+  const stepCategoryNumber = (
+    field: 'section59' | 'section62' | 'section63_1' | 'section63_2' | 'section64' | 'mouGroup' | 'modifyDetails' | 'substituteCard',
+    delta: number
+  ) => {
+    const current = Number(formData[field]) || 0;
+    handleCategoryNumberChange(field, Math.max(0, current + delta));
+  };
+
+  // Handle Custom Category Value Change with auto-sum sync for cardsIssued
   const handleCustomCategoryChange = (catId: string, val: number) => {
     const safeVal = Math.max(0, isNaN(val) ? 0 : val);
     const updated = {
@@ -237,8 +284,29 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         [catId]: safeVal,
       },
     };
+    const newTotal = computeTotalFromData(updated);
+    updated.cardsIssued = newTotal;
     setFormData(updated);
     triggerPreview(updated);
+  };
+
+  // Handle Custom Queue Metric Value Change
+  const handleCustomQueueChange = (metricId: string, val: number) => {
+    const safeVal = Math.max(0, isNaN(val) ? 0 : val);
+    const updated = {
+      ...formData,
+      customQueueValues: {
+        ...(formData.customQueueValues || {}),
+        [metricId]: safeVal,
+      },
+    };
+    setFormData(updated);
+    triggerPreview(updated);
+  };
+
+  const stepCustomQueue = (metricId: string, delta: number) => {
+    const current = (formData.customQueueValues && formData.customQueueValues[metricId]) || 0;
+    handleCustomQueueChange(metricId, Math.max(0, current + delta));
   };
 
   // Handle Date Change
@@ -253,7 +321,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     triggerPreview(updated);
   };
 
-  // Handle Number Field Change
+  // Handle General Number Field Change
   const handleNumberChange = (
     field: keyof Omit<DOEReport, 'id' | 'createdAt' | 'updatedAt'>,
     val: number
@@ -282,15 +350,32 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     });
   };
 
+  const [justSaved, setJustSaved] = useState(false);
+  const [lastSavedMeta, setLastSavedMeta] = useState<{
+    officeName: string;
+    timeStr: string;
+    totalCards: number;
+  } | null>(null);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const now = new Date();
     const finalReport: DOEReport = {
       ...formData,
       id: initialReport?.id || `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-      createdAt: initialReport?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: initialReport?.createdAt || now.toISOString(),
+      updatedAt: now.toISOString(),
     };
     onSave(finalReport);
+    setJustSaved(true);
+    setLastSavedMeta({
+      officeName: finalReport.officeName,
+      timeStr: now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      totalCards: finalReport.cardsIssued,
+    });
+    setTimeout(() => {
+      setJustSaved(false);
+    }, 4000);
   };
 
   const handleClearForm = () => {
@@ -355,16 +440,6 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   const isSelectedInFiltered = useMemo(() => {
     return filteredOffices.some((o) => o.id === selectedOfficeId);
   }, [filteredOffices, selectedOfficeId]);
-
-  // Auto-select when search query results in a single office match
-  useEffect(() => {
-    if (officeSearch.trim().length >= 2 && filteredOffices.length === 1) {
-      const singleMatch = filteredOffices[0];
-      if (singleMatch && singleMatch.id !== selectedOfficeId) {
-        handleOfficeChange(singleMatch.id);
-      }
-    }
-  }, [officeSearch, filteredOffices, selectedOfficeId]);
 
   // Group and sort filtered offices by standard region
   const groupedFilteredOffices = useMemo(() => {
@@ -562,117 +637,51 @@ export const ReportForm: React.FC<ReportFormProps> = ({
             </div>
           </div>
 
-          {/* ชื่อศูนย์บริการ */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <label className="block text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                <span>ชื่อศูนย์บริการ (ระบุในหัวเรื่องโปสเตอร์)</span>
-              </label>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {isMobileCenter ? (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    <Truck className="w-3 h-3" />
-                    หน่วยบริการเคลื่อนที่
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-sky-100 text-sky-800 border border-sky-200">
-                    <Building2 className="w-3 h-3" />
-                    ชื่อศูนย์ตามสำนักงาน
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Selector: ชื่อศูนย์ตามสำนักงาน vs หน่วยบริการเคลื่อนที่ (Mobile Unit) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                onClick={() => {
-                  const currentOffice = officeList.find((o) => o.id === selectedOfficeId);
-                  const targetName =
-                    currentOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
-                  const updated = { ...formData, centerName: targetName };
-                  setFormData(updated);
-                  triggerPreview(updated);
-                }}
-                className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                  !isMobileCenter
-                    ? 'bg-sky-50/90 border-sky-500 ring-2 ring-sky-500/20 shadow-xs'
-                    : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 text-slate-600'
-                }`}
-              >
-                <div
-                  className={`p-2 rounded-lg shrink-0 ${
-                    !isMobileCenter
-                      ? 'bg-sky-600 text-white'
-                      : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  <Building2 className="w-4 h-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900">
-                      ชื่อศูนย์ตามสำนักงาน
-                    </span>
-                    {!isMobileCenter && <span className="w-2 h-2 rounded-full bg-sky-600" />}
+          {/* ชื่อศูนย์บริการประจำสำนักงาน (เป็นค่าทางการของสำนักงานที่เลือก) */}
+          <div className="space-y-1.5 md:col-span-2">
+            <label className="block text-sm font-bold text-slate-800 flex items-center justify-between flex-wrap gap-2">
+              <span className="flex items-center gap-1.5">
+                <Building2 className="w-4 h-4 text-sky-700" />
+                <span>สำนักงานและชื่อศูนย์บริการทางการที่แสดงในรายงาน</span>
+              </span>
+              <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                <Check className="w-3 h-3 text-emerald-600" />
+                เชื่อมโยงตรงตามสำนักงานที่เลือกอัตโนมัติ
+              </span>
+            </label>
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+                    <Building2 className="w-4 h-4" />
                   </div>
-                  <p className="text-[11px] text-slate-600 truncate mt-0.5" title={officeList.find((o) => o.id === selectedOfficeId)?.centerName}>
-                    {officeList.find((o) => o.id === selectedOfficeId)?.centerName ||
-                      'ตามที่ระบุประจำสำนักงาน'}
-                  </p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const updated = { ...formData, centerName: MOBILE_UNIT_CENTER_NAME };
-                  setFormData(updated);
-                  triggerPreview(updated);
-                }}
-                className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                  isMobileCenter
-                    ? 'bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
-                    : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 text-slate-600'
-                }`}
-              >
-                <div
-                  className={`p-2 rounded-lg shrink-0 ${
-                    isMobileCenter
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  <Truck className="w-4 h-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900">
-                      หน่วยบริการเคลื่อนที่
+                  <div className="min-w-0">
+                    <span className="text-[10.5px] text-slate-500 font-semibold block">
+                      สำนักงานจัดหางาน:
                     </span>
-                    {isMobileCenter && (
-                      <span className="w-2 h-2 rounded-full bg-emerald-600" />
-                    )}
+                    <span className="font-extrabold text-slate-900 text-xs sm:text-sm truncate block" title={formData.officeName}>
+                      {formData.officeName || 'สำนักงานจัดหางาน'}
+                    </span>
                   </div>
-                  <p className="text-[11px] text-slate-600 truncate mt-0.5">
-                    หน่วยบริการเคลื่อนที่ (Mobile Unit)
-                  </p>
                 </div>
-              </button>
-            </div>
-
-            {/* กล่องแสดงชื่อศูนย์บริการที่จะแสดงบนโปสเตอร์ */}
-            <div className="px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-slate-500 shrink-0 font-medium">ชื่อศูนย์ในรายงาน:</span>
-                <span className="font-bold text-slate-800 truncate" title={formData.centerName}>
-                  {formData.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'}
+                <span className="text-[11px] text-slate-700 bg-white border border-slate-200 px-2.5 py-1 rounded-md font-semibold shrink-0">
+                  {formData.region}
                 </span>
               </div>
-              <span className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md font-medium shrink-0">
-                {!isMobileCenter ? 'ประจำสำนักงาน' : 'หน่วยเคลื่อนที่'}
-              </span>
+
+              <div className="pt-2 border-t border-slate-200/80 flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                  <MapPin className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10.5px] text-slate-500 font-semibold block">
+                    ชื่อศูนย์บริการที่แสดงในหัวเรื่องรายงานและโปสเตอร์:
+                  </span>
+                  <span className="font-extrabold text-blue-900 text-xs sm:text-sm truncate block font-['Prompt']" title={formData.centerName}>
+                    {formData.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -757,48 +766,42 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
           {activeCategories.map((cat, idx) => {
-            const isStandard = [
-              'section59',
-              'section62',
-              'section63_1',
-              'section63_2',
-              'section64',
-              'modifyDetails',
-              'substituteCard',
-            ].includes(cat.id);
-
             let val = 0;
             let onValChange = (v: number) => {};
             let onStepChange = (d: number) => {};
 
             if (cat.id === 'section59') {
               val = formData.section59;
-              onValChange = (v) => handleNumberChange('section59', v);
-              onStepChange = (d) => stepNumber('section59', d);
+              onValChange = (v) => handleCategoryNumberChange('section59', v);
+              onStepChange = (d) => stepCategoryNumber('section59', d);
             } else if (cat.id === 'section62') {
               val = formData.section62;
-              onValChange = (v) => handleNumberChange('section62', v);
-              onStepChange = (d) => stepNumber('section62', d);
+              onValChange = (v) => handleCategoryNumberChange('section62', v);
+              onStepChange = (d) => stepCategoryNumber('section62', d);
             } else if (cat.id === 'section63_1') {
               val = formData.section63_1;
-              onValChange = (v) => handleNumberChange('section63_1', v);
-              onStepChange = (d) => stepNumber('section63_1', d);
+              onValChange = (v) => handleCategoryNumberChange('section63_1', v);
+              onStepChange = (d) => stepCategoryNumber('section63_1', d);
             } else if (cat.id === 'section63_2') {
               val = formData.section63_2;
-              onValChange = (v) => handleNumberChange('section63_2', v);
-              onStepChange = (d) => stepNumber('section63_2', d);
+              onValChange = (v) => handleCategoryNumberChange('section63_2', v);
+              onStepChange = (d) => stepCategoryNumber('section63_2', d);
             } else if (cat.id === 'section64') {
               val = formData.section64;
-              onValChange = (v) => handleNumberChange('section64', v);
-              onStepChange = (d) => stepNumber('section64', d);
+              onValChange = (v) => handleCategoryNumberChange('section64', v);
+              onStepChange = (d) => stepCategoryNumber('section64', d);
+            } else if (cat.id === 'mouGroup') {
+              val = formData.mouGroup || 0;
+              onValChange = (v) => handleCategoryNumberChange('mouGroup', v);
+              onStepChange = (d) => stepCategoryNumber('mouGroup', d);
             } else if (cat.id === 'modifyDetails') {
               val = formData.modifyDetails;
-              onValChange = (v) => handleNumberChange('modifyDetails', v);
-              onStepChange = (d) => stepNumber('modifyDetails', d);
+              onValChange = (v) => handleCategoryNumberChange('modifyDetails', v);
+              onStepChange = (d) => stepCategoryNumber('modifyDetails', d);
             } else if (cat.id === 'substituteCard') {
               val = formData.substituteCard;
-              onValChange = (v) => handleNumberChange('substituteCard', v);
-              onStepChange = (d) => stepNumber('substituteCard', d);
+              onValChange = (v) => handleCategoryNumberChange('substituteCard', v);
+              onStepChange = (d) => stepCategoryNumber('substituteCard', d);
             } else {
               // Custom category
               val = (formData.customCategoryValues && formData.customCategoryValues[cat.id]) || 0;
@@ -815,7 +818,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 onChange={onValChange}
                 onStep={onStepChange}
                 highlight={val > 0}
-                primary={cat.id === 'section63_2'}
+                primary={cat.id === 'section63_2' || cat.id === 'mouGroup'}
+                isHot={idx === 0}
               />
             );
           })}
@@ -827,83 +831,76 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2 text-teal-900 font-bold text-base">
             <span className="w-2.5 h-2.5 rounded-full bg-teal-500" />
-            <span>3. สถานะคิวและการให้บริการประจำวัน</span>
+            <span>3. สถานะคิวและการให้บริการประจำวัน ({activeQueueMetrics.length} หัวข้อ)</span>
           </div>
-          {formData.cardsIssued === totalSections ? (
-            <div className="flex items-center gap-1.5 text-xs text-emerald-700 font-medium bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 text-xs text-emerald-800 font-bold bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>ยอดออกบัตร ({formData.cardsIssued}) ตรงกับยอด 7 กลุ่ม</span>
+              <span>ยอดออกบัตร ({formatNumber(formData.cardsIssued)} ใบ) คำนวณจากตัวเลขตามจริง {activeCategories.length} กลุ่ม</span>
             </div>
-          ) : (
-            <div className="flex items-center gap-1.5 text-xs text-amber-700 font-medium bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200">
-              <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-              <span>ยอดออกบัตร ({formData.cardsIssued}) ไม่เท่ากับผลรวมกลุ่ม ({totalSections})</span>
-            </div>
-          )}
+            {onNavigateAdmin && (
+              <button
+                type="button"
+                onClick={() => onNavigateAdmin('queue_metrics')}
+                className="text-xs bg-teal-700 hover:bg-teal-800 text-white font-bold px-2.5 py-1 rounded-md shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+                title="จัดการ เพิ่ม ลบ หรือแก้ไขหัวข้อคิวและบริการในหน้า Admin"
+              >
+                <Settings className="w-3 h-3" />
+                <span>จัดการหัวข้อ (Admin)</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-          {/* คิวนัดหมาย */}
-          <NumberInputField
-            label="คิวนัดหมาย (คิว)"
-            subLabel="จำนวนคิวที่นัดหมายเข้ารับบริการทั้งหมด"
-            value={formData.queueAppointment}
-            onChange={(v) => handleNumberChange('queueAppointment', v)}
-            onStep={(d) => stepNumber('queueAppointment', d)}
-            badgeColor="text-teal-700 bg-teal-50 border-teal-200"
-            primary
-          />
+          {activeQueueMetrics.map((metric) => {
+            let val = 0;
+            let onValChange = (v: number) => {};
+            let onStepChange = (d: number) => {};
 
-          {/* ออกบัตร */}
-          <NumberInputField
-            label="ออกบัตร (ใบ)"
-            subLabel="จำนวนบัตรที่พิมพ์และออกให้เรียบร้อย"
-            value={formData.cardsIssued}
-            onChange={(v) => handleNumberChange('cardsIssued', v)}
-            onStep={(d) => stepNumber('cardsIssued', d)}
-            badgeColor="text-emerald-700 bg-emerald-50 border-emerald-200"
-            primary
-          />
+            if (metric.id === 'queueAppointment') {
+              val = formData.queueAppointment;
+              onValChange = (v) => handleNumberChange('queueAppointment', v);
+              onStepChange = (d) => stepNumber('queueAppointment', d);
+            } else if (metric.id === 'cardsIssued') {
+              val = formData.cardsIssued;
+              onValChange = (v) => handleNumberChange('cardsIssued', v);
+              onStepChange = (d) => stepNumber('cardsIssued', d);
+            } else if (metric.id === 'identityVerified') {
+              val = formData.identityVerified;
+              onValChange = (v) => handleNumberChange('identityVerified', v);
+              onStepChange = (d) => stepNumber('identityVerified', d);
+            } else if (metric.id === 'cardsNotIssued') {
+              val = formData.cardsNotIssued;
+              onValChange = (v) => handleNumberChange('cardsNotIssued', v);
+              onStepChange = (d) => stepNumber('cardsNotIssued', d);
+            } else if (metric.id === 'missedAppointment') {
+              val = formData.missedAppointment;
+              onValChange = (v) => handleNumberChange('missedAppointment', v);
+              onStepChange = (d) => stepNumber('missedAppointment', d);
+            } else if (metric.id === 'wrongAppointmentDate') {
+              val = formData.wrongAppointmentDate;
+              onValChange = (v) => handleNumberChange('wrongAppointmentDate', v);
+              onStepChange = (d) => stepNumber('wrongAppointmentDate', d);
+            } else {
+              val = (formData.customQueueValues && formData.customQueueValues[metric.id]) || 0;
+              onValChange = (v) => handleCustomQueueChange(metric.id, v);
+              onStepChange = (d) => stepCustomQueue(metric.id, d);
+            }
 
-          {/* ยืนยันตัวตน */}
-          <NumberInputField
-            label="ยืนยันตัวตน (คน)"
-            subLabel="ตรวจอัตลักษณ์/ยืนยันตัวตนในระบบ"
-            value={formData.identityVerified}
-            onChange={(v) => handleNumberChange('identityVerified', v)}
-            onStep={(d) => stepNumber('identityVerified', d)}
-            badgeColor="text-emerald-700 bg-emerald-50 border-emerald-200"
-          />
-
-          {/* ไม่ออกบัตร */}
-          <NumberInputField
-            label="ไม่ออกบัตร (คน)"
-            subLabel="เอกสารไม่ครบ หรือขาดคุณสมบัติ"
-            value={formData.cardsNotIssued}
-            onChange={(v) => handleNumberChange('cardsNotIssued', v)}
-            onStep={(d) => stepNumber('cardsNotIssued', d)}
-            badgeColor="text-rose-700 bg-rose-50 border-rose-200"
-          />
-
-          {/* ไม่มาตามนัด */}
-          <NumberInputField
-            label="ไม่มาตามนัด (คน)"
-            subLabel="ขาดนัดในวันเวลาที่กำหนด"
-            value={formData.missedAppointment}
-            onChange={(v) => handleNumberChange('missedAppointment', v)}
-            onStep={(d) => stepNumber('missedAppointment', d)}
-            badgeColor="text-rose-700 bg-rose-50 border-rose-200"
-          />
-
-          {/* ไม่ตรงวันนัด */}
-          <NumberInputField
-            label="ไม่ตรงวันนัด (คน)"
-            subLabel="มาติดต่อก่อนหรือหลังวันนัดหมาย"
-            value={formData.wrongAppointmentDate}
-            onChange={(v) => handleNumberChange('wrongAppointmentDate', v)}
-            onStep={(d) => stepNumber('wrongAppointmentDate', d)}
-            badgeColor="text-orange-700 bg-orange-50 border-orange-200"
-          />
+            return (
+              <NumberInputField
+                key={metric.id}
+                label={`${metric.title} (${metric.unit})`}
+                subLabel={metric.subLabel || ''}
+                value={val}
+                onChange={onValChange}
+                onStep={onStepChange}
+                badgeColor={metric.badgeColor || 'text-teal-700 bg-teal-50 border-teal-200'}
+                primary={metric.id === 'queueAppointment' || metric.id === 'cardsIssued'}
+              />
+            );
+          })}
         </div>
       </div>
 
@@ -938,24 +935,55 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       </div>
 
       {/* Submit / Action Buttons */}
-      <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={handleClearForm}
-          className="px-5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-sm shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:border-slate-400 active:scale-98"
-          title="ล้างข้อมูลตัวเลขและหมายเหตุทั้งหมดเป็น 0"
-        >
-          <RotateCcw className="w-4 h-4 text-slate-500" />
-          <span>ล้างข้อมูล</span>
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+        <div className="flex items-center gap-2">
+          {lastSavedMeta ? (
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl shadow-2xs">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                บันทึกล่าสุด: <strong>{lastSavedMeta.officeName}</strong> ({formatNumber(lastSavedMeta.totalCards)} ใบ) • เวลา {lastSavedMeta.timeStr} น.
+              </span>
+            </span>
+          ) : (
+            <span className="text-xs text-slate-500 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
+              <span>บันทึกพร้อมซิงก์ฐานข้อมูลออนไลน์ Cloud Firestore และสำรองในเครื่องอัตโนมัติ</span>
+            </span>
+          )}
+        </div>
 
-        <button
-          type="submit"
-          className="px-6 py-2.5 rounded-xl bg-blue-900 hover:bg-blue-800 text-white font-bold text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer active:scale-98"
-        >
-          <Save className="w-4 h-4" />
-          <span>บันทึกรายงานผลการปฏิบัติงาน</span>
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-3 ml-auto">
+          <button
+            type="button"
+            onClick={handleClearForm}
+            className="px-5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-sm shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:border-slate-400 active:scale-98"
+            title="ล้างข้อมูลตัวเลขและหมายเหตุทั้งหมดเป็น 0"
+          >
+            <RotateCcw className="w-4 h-4 text-slate-500" />
+            <span>ล้างข้อมูล</span>
+          </button>
+
+          <button
+            type="submit"
+            className={`px-6 py-2.5 rounded-xl text-white font-bold text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer active:scale-98 ${
+              justSaved
+                ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-300'
+                : 'bg-blue-900 hover:bg-blue-800'
+            }`}
+          >
+            {justSaved ? (
+              <>
+                <CheckCircle2 className="w-4 h-4" />
+                <span>บันทึกรายงานสำเร็จแล้ว!</span>
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                <span>บันทึกรายงานผลการปฏิบัติงาน</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Admin Authentication Modal */}
@@ -990,6 +1018,7 @@ interface NumberInputFieldProps {
   highlight?: boolean;
   primary?: boolean;
   badgeColor?: string;
+  isHot?: boolean;
 }
 
 const NumberInputField: React.FC<NumberInputFieldProps> = ({
@@ -1001,11 +1030,14 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
   highlight,
   primary,
   badgeColor,
+  isHot,
 }) => {
   return (
     <div
       className={`p-3.5 rounded-xl border transition-all min-w-0 overflow-hidden ${
-        primary
+        isHot
+          ? 'bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-sky-50/80 border-blue-400 ring-2 ring-blue-400/30 shadow-xs'
+          : primary
           ? 'bg-blue-50/50 border-blue-200'
           : highlight
           ? 'bg-sky-50/30 border-sky-200'
@@ -1014,9 +1046,27 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
     >
       <div className="flex items-start justify-between gap-1.5 mb-2 min-w-0">
         <div className="min-w-0 flex-1">
-          <div className="text-sm sm:text-base font-extrabold text-slate-900 leading-tight truncate">{label}</div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div
+              className={`text-sm sm:text-base font-extrabold leading-tight truncate ${
+                isHot ? 'text-blue-950' : 'text-slate-900'
+              }`}
+            >
+              {label}
+            </div>
+            {isHot && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white font-['Prompt'] shrink-0 shadow-2xs tracking-wider">
+                <Star className="w-3 h-3 fill-amber-200 text-amber-100" />
+                <span>HOT</span>
+              </span>
+            )}
+          </div>
           {subLabel && (
-            <div className="text-xs sm:text-sm text-slate-500 leading-tight mt-0.5 truncate">
+            <div
+              className={`text-xs sm:text-sm leading-tight mt-0.5 truncate ${
+                isHot ? 'text-blue-800 font-medium' : 'text-slate-500'
+              }`}
+            >
               {subLabel}
             </div>
           )}
