@@ -375,17 +375,94 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   };
 
   const [justSaved, setJustSaved] = useState(false);
+  const [reporterNameError, setReporterNameError] = useState(false);
+  const [reporterPositionError, setReporterPositionError] = useState(false);
+  const [phoneNumberError, setPhoneNumberError] = useState(false);
+  const [queueAppointmentError, setQueueAppointmentError] = useState(false);
+  const reporterNameInputRef = useRef<HTMLInputElement | null>(null);
+  const reporterPositionInputRef = useRef<HTMLInputElement | null>(null);
+  const phoneNumberInputRef = useRef<HTMLInputElement | null>(null);
+  const queueInputRef = useRef<HTMLInputElement | null>(null);
   const [lastSavedMeta, setLastSavedMeta] = useState<{
     officeName: string;
     timeStr: string;
     totalCards: number;
   } | null>(null);
 
+  useEffect(() => {
+    if (formData.reporterName && formData.reporterName.trim().length > 0) {
+      setReporterNameError(false);
+      if (reporterNameInputRef.current) {
+        reporterNameInputRef.current.setCustomValidity('');
+      }
+    }
+  }, [formData.reporterName]);
+
+  useEffect(() => {
+    if (formData.reporterPosition && formData.reporterPosition.trim().length > 0) {
+      setReporterPositionError(false);
+      if (reporterPositionInputRef.current) {
+        reporterPositionInputRef.current.setCustomValidity('');
+      }
+    }
+  }, [formData.reporterPosition]);
+
+  useEffect(() => {
+    if (formData.phoneNumber && formData.phoneNumber.trim().length > 0) {
+      setPhoneNumberError(false);
+      if (phoneNumberInputRef.current) {
+        phoneNumberInputRef.current.setCustomValidity('');
+      }
+    }
+  }, [formData.phoneNumber]);
+
+  useEffect(() => {
+    if (formData.queueAppointment > 0) {
+      setQueueAppointmentError(false);
+      if (queueInputRef.current) {
+        queueInputRef.current.setCustomValidity('');
+      }
+    }
+  }, [formData.queueAppointment]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const isNameMissing = !formData.reporterName || !formData.reporterName.trim();
+    const isPositionMissing = !formData.reporterPosition || !formData.reporterPosition.trim();
+    const isPhoneMissing = !formData.phoneNumber || !formData.phoneNumber.trim();
+    const isQueueMissing = !formData.queueAppointment || formData.queueAppointment <= 0;
+
+    if (isNameMissing || isPositionMissing || isPhoneMissing || isQueueMissing) {
+      if (isNameMissing) setReporterNameError(true);
+      if (isPositionMissing) setReporterPositionError(true);
+      if (isPhoneMissing) setPhoneNumberError(true);
+      if (isQueueMissing) setQueueAppointmentError(true);
+
+      const firstInvalidRef = isNameMissing
+        ? reporterNameInputRef.current
+        : isPositionMissing
+        ? reporterPositionInputRef.current
+        : isPhoneMissing
+        ? phoneNumberInputRef.current
+        : queueInputRef.current;
+
+      if (firstInvalidRef) {
+        firstInvalidRef.focus();
+        firstInvalidRef.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
+
+    setReporterNameError(false);
+    setReporterPositionError(false);
+    setPhoneNumberError(false);
+    setQueueAppointmentError(false);
     const now = new Date();
     const finalReport: DOEReport = {
       ...formData,
+      reporterName: formData.reporterName.trim(),
+      reporterPosition: formData.reporterPosition.trim(),
+      phoneNumber: formData.phoneNumber.trim(),
       id: initialReport?.id || `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       createdAt: initialReport?.createdAt || now.toISOString(),
       updatedAt: now.toISOString(),
@@ -403,6 +480,16 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   };
 
   const handleClearForm = () => {
+    setReporterNameError(false);
+    setReporterPositionError(false);
+    setPhoneNumberError(false);
+    setQueueAppointmentError(false);
+    if (reporterNameInputRef.current) reporterNameInputRef.current.setCustomValidity('');
+    if (reporterPositionInputRef.current) reporterPositionInputRef.current.setCustomValidity('');
+    if (phoneNumberInputRef.current) phoneNumberInputRef.current.setCustomValidity('');
+    if (queueInputRef.current) {
+      queueInputRef.current.setCustomValidity('');
+    }
     const targetOffice =
       officeList.find((o) => o.id === selectedOfficeId) || officeList[0];
     const resetData: Omit<DOEReport, 'id' | 'createdAt' | 'updatedAt'> = {
@@ -835,67 +922,221 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
           {/* ชื่อผู้รายงาน */}
           <div>
-            <label className="block text-sm font-bold text-slate-800 mb-1">
-              ชื่อผู้รายงาน <span className="text-rose-500">*</span>
+            <label className="block text-sm font-bold text-slate-800 mb-1 flex items-center justify-between gap-2">
+              <span>
+                ชื่อผู้รายงาน <span className="text-rose-600 font-black">*</span>
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-md font-['Prompt'] shrink-0 ${
+                  formData.reporterName && formData.reporterName.trim().length > 0
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-rose-600 text-white'
+                }`}
+              >
+                {formData.reporterName && formData.reporterName.trim().length > 0 ? (
+                  <>
+                    <CheckCircle2 className="w-3 h-3 text-emerald-100" />
+                    <span>กรอกแล้ว</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-3 h-3 text-rose-100" />
+                    <span>ต้องกรอก *</span>
+                  </>
+                )}
+              </span>
             </label>
             <div className="relative">
               <input
+                ref={reporterNameInputRef}
                 type="text"
                 value={formData.reporterName}
+                onInvalid={(e) => {
+                  setReporterNameError(true);
+                  (e.target as HTMLInputElement).setCustomValidity(
+                    'กรุณากรอกชื่อผู้รายงานก่อนบันทึกรายงาน (ห้ามเว้นว่าง)'
+                  );
+                }}
+                onInput={(e) => {
+                  (e.target as HTMLInputElement).setCustomValidity('');
+                }}
                 onChange={(e) => {
                   const updated = { ...formData, reporterName: e.target.value };
                   setFormData(updated);
                   triggerPreview(updated);
                 }}
-                className="w-full min-w-0 text-sm px-3.5 py-2 pl-9 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
-                placeholder="เช่น นางสาวสิริพร สุขเกษม"
+                className={`w-full min-w-0 text-sm px-3.5 py-2 pl-9 bg-white rounded-lg focus:outline-hidden focus:ring-2 font-medium transition-all ${
+                  reporterNameError
+                    ? 'border-2 border-rose-500 ring-2 ring-rose-500/20 focus:ring-rose-500 bg-rose-50/40'
+                    : !formData.reporterName || !formData.reporterName.trim()
+                    ? 'border-2 border-amber-400 focus:ring-amber-500 bg-amber-50/20'
+                    : 'border-2 border-teal-500 focus:ring-teal-500'
+                }`}
+                placeholder="ระบุชื่อ-นามสกุลผู้รายงาน (จำเป็นต้องกรอก) *"
                 required
               />
-              <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <User
+                className={`w-4 h-4 absolute left-3 top-2.5 ${
+                  reporterNameError
+                    ? 'text-rose-500'
+                    : formData.reporterName && formData.reporterName.trim().length > 0
+                    ? 'text-teal-600'
+                    : 'text-amber-600'
+                }`}
+              />
             </div>
+            {reporterNameError && (
+              <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-rose-600">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>กรุณากรอกชื่อผู้รายงานก่อนบันทึกรายงาน (ห้ามเว้นว่าง)</span>
+              </p>
+            )}
           </div>
 
           {/* ตำแหน่ง */}
           <div>
-            <label className="block text-sm font-bold text-slate-800 mb-1">
-              ตำแหน่งผู้รายงาน <span className="text-rose-500">*</span>
+            <label className="block text-sm font-bold text-slate-800 mb-1 flex items-center justify-between gap-2">
+              <span>
+                ตำแหน่งผู้รายงาน <span className="text-rose-600 font-black">*</span>
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-md font-['Prompt'] shrink-0 ${
+                  formData.reporterPosition && formData.reporterPosition.trim().length > 0
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-rose-600 text-white'
+                }`}
+              >
+                {formData.reporterPosition && formData.reporterPosition.trim().length > 0 ? (
+                  <>
+                    <CheckCircle2 className="w-3 h-3 text-emerald-100" />
+                    <span>กรอกแล้ว</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-3 h-3 text-rose-100" />
+                    <span>ต้องกรอก *</span>
+                  </>
+                )}
+              </span>
             </label>
             <div className="relative">
               <input
+                ref={reporterPositionInputRef}
                 type="text"
                 value={formData.reporterPosition}
+                onInvalid={(e) => {
+                  setReporterPositionError(true);
+                  (e.target as HTMLInputElement).setCustomValidity(
+                    'กรุณากรอกตำแหน่งผู้รายงานก่อนบันทึกรายงาน (ห้ามเว้นว่าง)'
+                  );
+                }}
+                onInput={(e) => {
+                  (e.target as HTMLInputElement).setCustomValidity('');
+                }}
                 onChange={(e) => {
                   const updated = { ...formData, reporterPosition: e.target.value };
                   setFormData(updated);
                   triggerPreview(updated);
                 }}
-                className="w-full min-w-0 text-sm px-3.5 py-2 pl-9 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
-                placeholder="เช่น นักวิชาการแรงงานชำนาญการ"
+                className={`w-full min-w-0 text-sm px-3.5 py-2 pl-9 bg-white rounded-lg focus:outline-hidden focus:ring-2 font-medium transition-all ${
+                  reporterPositionError
+                    ? 'border-2 border-rose-500 ring-2 ring-rose-500/20 focus:ring-rose-500 bg-rose-50/40'
+                    : !formData.reporterPosition || !formData.reporterPosition.trim()
+                    ? 'border-2 border-amber-400 focus:ring-amber-500 bg-amber-50/20'
+                    : 'border-2 border-teal-500 focus:ring-teal-500'
+                }`}
+                placeholder="ระบุตำแหน่งผู้รายงาน เช่น นักวิชาการแรงงานชำนาญการ *"
                 required
               />
-              <Briefcase className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <Briefcase
+                className={`w-4 h-4 absolute left-3 top-2.5 ${
+                  reporterPositionError
+                    ? 'text-rose-500'
+                    : formData.reporterPosition && formData.reporterPosition.trim().length > 0
+                    ? 'text-teal-600'
+                    : 'text-amber-600'
+                }`}
+              />
             </div>
+            {reporterPositionError && (
+              <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-rose-600">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>กรุณากรอกตำแหน่งผู้รายงานก่อนบันทึกรายงาน (ห้ามเว้นว่าง)</span>
+              </p>
+            )}
           </div>
 
           {/* เบอร์โทรศัพท์ */}
           <div className="md:col-span-2">
-            <label className="block text-sm font-bold text-slate-800 mb-1">
-              เบอร์โทรศัพท์
+            <label className="block text-sm font-bold text-slate-800 mb-1 flex items-center justify-between gap-2">
+              <span>
+                เบอร์โทรศัพท์ <span className="text-rose-600 font-black">*</span>
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-md font-['Prompt'] shrink-0 ${
+                  formData.phoneNumber && formData.phoneNumber.trim().length > 0
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-rose-600 text-white'
+                }`}
+              >
+                {formData.phoneNumber && formData.phoneNumber.trim().length > 0 ? (
+                  <>
+                    <CheckCircle2 className="w-3 h-3 text-emerald-100" />
+                    <span>กรอกแล้ว</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-3 h-3 text-rose-100" />
+                    <span>ต้องกรอก *</span>
+                  </>
+                )}
+              </span>
             </label>
             <div className="relative">
               <input
+                ref={phoneNumberInputRef}
                 type="text"
                 value={formData.phoneNumber}
+                onInvalid={(e) => {
+                  setPhoneNumberError(true);
+                  (e.target as HTMLInputElement).setCustomValidity(
+                    'กรุณากรอกเบอร์โทรศัพท์ก่อนบันทึกรายงาน (ห้ามเว้นว่าง)'
+                  );
+                }}
+                onInput={(e) => {
+                  (e.target as HTMLInputElement).setCustomValidity('');
+                }}
                 onChange={(e) => {
                   const updated = { ...formData, phoneNumber: e.target.value };
                   setFormData(updated);
                   triggerPreview(updated);
                 }}
-                className="w-full min-w-0 text-sm px-3.5 py-2 pl-9 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
-                placeholder="053-152054, 098-7466630"
+                className={`w-full min-w-0 text-sm px-3.5 py-2 pl-9 bg-white rounded-lg focus:outline-hidden focus:ring-2 font-medium transition-all ${
+                  phoneNumberError
+                    ? 'border-2 border-rose-500 ring-2 ring-rose-500/20 focus:ring-rose-500 bg-rose-50/40'
+                    : !formData.phoneNumber || !formData.phoneNumber.trim()
+                    ? 'border-2 border-amber-400 focus:ring-amber-500 bg-amber-50/20'
+                    : 'border-2 border-teal-500 focus:ring-teal-500'
+                }`}
+                placeholder="ระบุเบอร์โทรศัพท์ติดต่อ เช่น 053-152054, 098-7466630 *"
+                required
               />
-              <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <Phone
+                className={`w-4 h-4 absolute left-3 top-2.5 ${
+                  phoneNumberError
+                    ? 'text-rose-500'
+                    : formData.phoneNumber && formData.phoneNumber.trim().length > 0
+                    ? 'text-teal-600'
+                    : 'text-amber-600'
+                }`}
+              />
             </div>
+            {phoneNumberError && (
+              <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-rose-600">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>กรุณากรอกเบอร์โทรศัพท์ก่อนบันทึกรายงาน (ห้ามเว้นว่าง)</span>
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -1046,6 +1287,14 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 onStep={onStepChange}
                 badgeColor={metric.badgeColor || 'text-teal-700 bg-teal-50 border-teal-200'}
                 primary={metric.id === 'queueAppointment' || metric.id === 'cardsIssued'}
+                isRequired={metric.id === 'queueAppointment'}
+                hasError={metric.id === 'queueAppointment' && queueAppointmentError}
+                inputRef={metric.id === 'queueAppointment' ? queueInputRef : undefined}
+                onInvalidRequired={
+                  metric.id === 'queueAppointment'
+                    ? () => setQueueAppointmentError(true)
+                    : undefined
+                }
               />
             );
           })}
@@ -1167,6 +1416,10 @@ interface NumberInputFieldProps {
   primary?: boolean;
   badgeColor?: string;
   isHot?: boolean;
+  isRequired?: boolean;
+  hasError?: boolean;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
+  onInvalidRequired?: () => void;
 }
 
 const NumberInputField: React.FC<NumberInputFieldProps> = ({
@@ -1179,11 +1432,21 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
   primary,
   badgeColor,
   isHot,
+  isRequired,
+  hasError,
+  inputRef,
+  onInvalidRequired,
 }) => {
   return (
     <div
       className={`p-3.5 rounded-xl border transition-all min-w-0 overflow-hidden ${
-        isHot
+        hasError
+          ? 'bg-rose-50/90 border-2 border-rose-500 ring-4 ring-rose-500/20 shadow-sm'
+          : isRequired
+          ? value > 0
+            ? 'bg-gradient-to-r from-teal-50/90 via-emerald-50/70 to-sky-50/80 border-2 border-teal-500 ring-2 ring-teal-400/25 shadow-xs'
+            : 'bg-gradient-to-r from-amber-50/90 via-orange-50/70 to-rose-50/80 border-2 border-amber-500 ring-2 ring-amber-400/30 shadow-xs'
+          : isHot
           ? 'bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-sky-50/80 border-blue-400 ring-2 ring-blue-400/30 shadow-xs'
           : primary
           ? 'bg-blue-50/50 border-blue-200'
@@ -1194,14 +1457,42 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
     >
       <div className="flex items-start justify-between gap-1.5 mb-2 min-w-0">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
             <div
               className={`text-sm sm:text-base font-extrabold leading-tight truncate ${
-                isHot ? 'text-blue-950' : 'text-slate-900'
+                hasError
+                  ? 'text-rose-950'
+                  : isRequired
+                  ? 'text-teal-950'
+                  : isHot
+                  ? 'text-blue-950'
+                  : 'text-slate-900'
               }`}
             >
               {label}
+              {isRequired && <span className="text-rose-600 font-black ml-1">*</span>}
             </div>
+            {isRequired && (
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-md font-['Prompt'] shrink-0 shadow-2xs ${
+                  value > 0
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-rose-600 text-white'
+                }`}
+              >
+                {value > 0 ? (
+                  <>
+                    <CheckCircle2 className="w-3 h-3 text-emerald-100" />
+                    <span>กรอกแล้ว</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-3 h-3 text-rose-100" />
+                    <span>ต้องกรอก *</span>
+                  </>
+                )}
+              </span>
+            )}
             {isHot && (
               <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white font-['Prompt'] shrink-0 shadow-2xs tracking-wider">
                 <Star className="w-3 h-3 fill-amber-200 text-amber-100" />
@@ -1212,7 +1503,13 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
           {subLabel && (
             <div
               className={`text-xs sm:text-sm leading-tight mt-0.5 truncate ${
-                isHot ? 'text-blue-800 font-medium' : 'text-slate-500'
+                hasError
+                  ? 'text-rose-800 font-semibold'
+                  : isRequired
+                  ? 'text-teal-900 font-medium'
+                  : isHot
+                  ? 'text-blue-800 font-medium'
+                  : 'text-slate-500'
               }`}
             >
               {subLabel}
@@ -1242,15 +1539,36 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
         </button>
 
         <input
+          ref={inputRef}
           type="number"
-          min="0"
+          min={isRequired ? '1' : '0'}
+          required={isRequired}
           value={value === 0 ? '' : value}
+          onInvalid={(e) => {
+            if (isRequired) {
+              (e.target as HTMLInputElement).setCustomValidity(
+                'กรุณากรอกจำนวนคิวนัดหมายก่อนบันทึกรายงาน'
+              );
+              onInvalidRequired?.();
+            }
+          }}
+          onInput={(e) => {
+            if (isRequired) {
+              (e.target as HTMLInputElement).setCustomValidity('');
+            }
+          }}
           onChange={(e) => {
             const v = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
             onChange(isNaN(v) ? 0 : v);
           }}
-          placeholder="0"
-          className="min-w-0 flex-1 w-full text-center font-black text-slate-900 bg-white border border-slate-300 rounded-lg py-1.5 px-1 text-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 shadow-2xs font-['Prompt']"
+          placeholder={isRequired ? 'ระบุคิว *' : '0'}
+          className={`min-w-0 flex-1 w-full text-center font-black text-slate-900 bg-white rounded-lg py-1.5 px-1 text-lg focus:outline-hidden focus:ring-2 shadow-2xs font-['Prompt'] ${
+            hasError
+              ? 'border-2 border-rose-500 focus:ring-rose-500 placeholder:text-rose-500 placeholder:text-sm placeholder:font-bold'
+              : isRequired && value <= 0
+              ? 'border-2 border-amber-400 focus:ring-amber-500 placeholder:text-rose-500 placeholder:text-sm placeholder:font-bold'
+              : 'border border-slate-300 focus:ring-sky-500'
+          }`}
         />
 
         <button
@@ -1272,6 +1590,27 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
           +10
         </button>
       </div>
+
+      {isRequired && value <= 0 && (
+        <div
+          className={`mt-2 flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-lg border ${
+            hasError
+              ? 'bg-rose-100 text-rose-800 border-rose-300'
+              : 'bg-amber-100/80 text-amber-900 border-amber-300'
+          }`}
+        >
+          <AlertCircle
+            className={`w-3.5 h-3.5 shrink-0 ${
+              hasError ? 'text-rose-600' : 'text-amber-700'
+            }`}
+          />
+          <span>
+            {hasError
+              ? 'กรุณากรอกจำนวนคิวนัดหมายก่อนบันทึกรายงาน (ห้ามเว้นว่าง)'
+              : 'จำเป็นต้องกรอกจำนวนคิวนัดหมายประจำวันก่อนบันทึก'}
+          </span>
+        </div>
+      )}
     </div>
   );
 };
