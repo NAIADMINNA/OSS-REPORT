@@ -75,6 +75,7 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
   const sanitized = sanitizeReport(report);
   if (!sanitized) return;
   const docRef = doc(db, REPORTS_COLLECTION, sanitized.id);
+  const trashRef = doc(db, DELETED_REPORTS_COLLECTION, sanitized.id);
   const cleanReport = JSON.parse(
     JSON.stringify(sanitized, (_, val) => (val === undefined ? null : val))
   );
@@ -83,6 +84,7 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       await setDoc(docRef, cleanReport, { merge: true });
+      await deleteDoc(trashRef).catch(() => {});
       return;
     } catch (error) {
       lastError = error;
@@ -94,14 +96,20 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
   handleFirestoreError(lastError, OperationType.WRITE, `${REPORTS_COLLECTION}/${sanitized.id}`);
 }
 
+export async function purgeGhostReportOnline(reportId: string): Promise<void> {
+  if (!reportId) return;
+  try {
+    await deleteDoc(doc(db, REPORTS_COLLECTION, reportId));
+  } catch (err) {
+    console.warn('Could not purge ghost report:', reportId, err);
+  }
+}
+
 export async function deleteReportOnline(report: DOEReport): Promise<void> {
   const docRef = doc(db, REPORTS_COLLECTION, report.id);
   const trashRef = doc(db, DELETED_REPORTS_COLLECTION, report.id);
   try {
-    // 1. Delete from active reports immediately so it disappears from UI and Firestore
-    await deleteDoc(docRef);
-
-    // 2. Safely archive to trash collection
+    // 1. Safely archive to trash collection first so all listeners know this ID is deleted
     const sanitized = sanitizeReport(report);
     if (sanitized) {
       const cleanReport = JSON.parse(
@@ -110,6 +118,22 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
       await setDoc(trashRef, cleanReport).catch((err) =>
         console.warn('Could not archive to trash collection:', err)
       );
+    }
+
+    // 2. Delete from active reports immediately so it disappears from UI and Firestore
+    await deleteDoc(docRef);
+
+    // 3. Also ensure any document with matching internal id is removed from active reports
+    const snap = await getDocs(collection(db, REPORTS_COLLECTION));
+    const extraDeletes: Promise<void>[] = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      if (d.id === report.id || data?.id === report.id) {
+        extraDeletes.push(deleteDoc(d.ref));
+      }
+    });
+    if (extraDeletes.length > 0) {
+      await Promise.all(extraDeletes);
     }
   } catch (error) {
     console.error('Delete report online error, attempting fallback deleteDoc:', error);
@@ -130,8 +154,8 @@ export async function restoreReportOnline(report: DOEReport): Promise<void> {
     const cleanReport = JSON.parse(
       JSON.stringify(sanitized, (_, val) => (val === undefined ? null : val))
     );
-    await setDoc(docRef, cleanReport);
     await deleteDoc(trashRef).catch(console.warn);
+    await setDoc(docRef, cleanReport);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${REPORTS_COLLECTION}/${sanitized.id}`);
   }

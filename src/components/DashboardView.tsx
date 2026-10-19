@@ -133,6 +133,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   }, [resetSignal]);
 
+  // Automatically clear selectedReportId if the report was deleted by Admin
+  useEffect(() => {
+    if (selectedReportId && !reports.some((r) => r.id === selectedReportId)) {
+      setSelectedReportId(null);
+    }
+  }, [reports, selectedReportId]);
+
+  // Automatically reset single-date filter to today if all reports for another selected date were deleted
+  useEffect(() => {
+    if (selectedCycleKey.startsWith('single:')) {
+      const targetDate = selectedCycleKey.replace('single:', '');
+      if (targetDate !== todayStr && !availableDates.includes(targetDate)) {
+        setSelectedCycleKey(`single:${todayStr}`);
+      }
+    }
+  }, [availableDates, selectedCycleKey, todayStr]);
+
   // Computed Date Range / Period Bounds
   const { filterStartDate, filterEndDate, isCycleMode, activePeriodLabel } = useMemo(() => {
     if (selectedCycleKey === 'all') {
