@@ -273,34 +273,46 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
       cleanDateText = `วันที่ ${cleanDateText}`;
     }
 
-    // Dynamic font size calculation for officeName to prevent awkward text wrapping when text is long
+    // Dynamic font size calculation for officeName to fit cleanly alongside the Date Chip without overflowing
     const officeNameFontSize = useMemo(() => {
       const text = report.officeName || '';
       const len = text.trim().length;
-      if (len <= 24) return 22;
-      if (len <= 28) return 20;
-      if (len <= 32) return 18;
-      if (len <= 38) return 16;
-      if (len <= 44) return 14.5;
-      if (len <= 52) return 13.5;
-      if (len <= 62) return 12.5;
-      return 11.5;
+      if (len <= 18) return 19.5;
+      if (len <= 24) return 18;
+      if (len <= 30) return 16;
+      if (len <= 36) return 14.5;
+      if (len <= 42) return 13.5;
+      if (len <= 50) return 12.5;
+      if (len <= 60) return 11.5;
+      return 11;
     }, [report.officeName]);
 
     const officeNameEnFontSize = useMemo(() => {
       const text = report.officeNameEn || '';
       const len = text.trim().length;
-      if (len <= 35) return 12;
-      if (len <= 45) return 11;
-      if (len <= 55) return 10;
-      return 9.5;
+      if (len <= 30) return 11.5;
+      if (len <= 40) return 10.5;
+      if (len <= 50) return 9.5;
+      return 9;
     }, [report.officeNameEn]);
 
-    // Center name display logic for beautiful multiline rendering when text is long or wraps
+    const reportTitleText =
+      systemConfig?.reportTitle ||
+      'รายงานผลการปฏิบัติงานศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+
+    const reportTitleFontSize = useMemo(() => {
+      const len = reportTitleText.trim().length;
+      if (len <= 42) return 16.5;
+      if (len <= 58) return 15;
+      if (len <= 70) return 13.5;
+      return 12.5;
+    }, [reportTitleText]);
+
+    // Center name display logic for clean multiline rendering without negative margins or vertical offsets
     const centerNameDisplay = useMemo(() => {
       const name = report.centerName || '';
       if (!name) {
-        return { isMultiline: false, line1: '', line2: '', hasSeparator: false, fontSize: '12px', marginTop: '23px' };
+        return { isMultiline: false, line1: '', line2: '', hasSeparator: false, fontSize: '11.5px' };
       }
 
       // Check for Mobile Unit (หน่วยบริการเคลื่อนที่)
@@ -325,8 +337,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
           line1,
           line2,
           hasSeparator: true,
-          fontSize: line2.length > 35 ? '10px' : '11px',
-          marginTop: '4px',
+          fontSize: line2.length > 35 ? '10px' : '10.5px',
         };
       }
 
@@ -339,13 +350,12 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
           line1: p1.trim(),
           line2: line2Text,
           hasSeparator: true,
-          fontSize: line2Text.length > 40 ? '10px' : '11px',
-          marginTop: '4px',
+          fontSize: line2Text.length > 38 ? '10px' : '10.5px',
         };
       }
 
       // Check for " จังหวัด" separation if name is long
-      if (name.includes(' จังหวัด') && name.length > 32) {
+      if (name.includes(' จังหวัด') && name.length > 28) {
         const [p1, p2] = name.split(' จังหวัด');
         return {
           isMultiline: true,
@@ -353,19 +363,17 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
           line2: `จังหวัด${p2}`.trim(),
           hasSeparator: false,
           fontSize: '11px',
-          marginTop: '6px',
         };
       }
 
-      // If text is long enough to wrap (> 34 characters)
-      if (name.length > 34) {
+      // If text is long enough to wrap (> 30 characters)
+      if (name.length > 30) {
         return {
           isMultiline: true,
           line1: name,
           line2: '',
           hasSeparator: false,
-          fontSize: name.length > 50 ? '10px' : '11px',
-          marginTop: '8px',
+          fontSize: name.length > 48 ? '10px' : '11px',
         };
       }
 
@@ -375,8 +383,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
         line1: name,
         line2: '',
         hasSeparator: false,
-        fontSize: '12px',
-        marginTop: '23px',
+        fontSize: '11.5px',
       };
     }, [report.centerName]);
 
@@ -384,8 +391,12 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
       <div
         ref={ref}
         id="doe-poster-capture"
-        style={{ transform: `scale(${scale})`, transformOrigin: 'top center' }}
-        className="w-[780px] min-h-[1100px] p-8 rounded-3xl relative overflow-hidden font-sans select-none flex flex-col justify-between bg-gradient-to-br from-white via-[#f8fafc] to-[#f1f5f9] text-slate-900 border-2 border-slate-200/90 shadow-2xl"
+        style={{
+          transform: scale !== 1 ? `scale(${scale})` : undefined,
+          transformOrigin: 'top center',
+          letterSpacing: '0px',
+        }}
+        className="w-[780px] min-w-[780px] max-w-[780px] min-h-[1100px] shrink-0 p-8 rounded-3xl relative overflow-hidden font-sans select-none flex flex-col justify-between bg-gradient-to-br from-white via-[#f8fafc] to-[#f1f5f9] text-slate-900 border-2 border-slate-200/90 shadow-2xl"
       >
         {/* Subtle Ambient Mesh Glow */}
         <div className="absolute top-0 right-0 w-[420px] h-[420px] bg-sky-200/40 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
@@ -395,29 +406,29 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
         {/* 1. TOP HEADER: Clean Light Style */}
         <div className="relative z-10">
           <div className="flex items-center justify-between pb-5 border-b border-slate-200 mb-5 gap-3">
-            <div className="flex items-center gap-4 min-w-0 flex-1">
+            <div className="flex items-center gap-3.5 min-w-0 flex-1 overflow-hidden pr-2">
               <div className="shrink-0 p-1 rounded-2xl bg-gradient-to-tr from-amber-400/20 via-sky-400/20 to-transparent border border-slate-200 shadow-xs">
                 <DOELogo size={68} customLogoUrl={effectiveLogoUrl} />
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 overflow-hidden">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-900 text-white font-mono shadow-2xs shrink-0">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-900 text-white font-mono shadow-2xs shrink-0">
                     {systemConfig?.departmentNameEn || 'DEPARTMENT OF EMPLOYMENT'}
                   </span>
-                  <span className="text-[11px] font-bold tracking-wide text-sky-800 truncate">
+                  <span className="text-[11px] font-bold tracking-normal text-sky-800 truncate">
                     {systemConfig?.departmentNameTh || 'กรมการจัดหางาน กระทรวงแรงงาน'}
                   </span>
                 </div>
                 <h1
-                  style={{ fontSize: `${officeNameFontSize}px`, lineHeight: 1.25 }}
-                  className="font-black tracking-tight mt-1 text-[#1e3a8a] font-['Prompt'] whitespace-nowrap transition-all"
+                  style={{ fontSize: `${officeNameFontSize}px`, lineHeight: 1.3 }}
+                  className="font-black tracking-normal mt-1 text-[#1e3a8a] font-['Prompt'] break-words"
                   title={report.officeName}
                 >
                   {report.officeName}
                 </h1>
                 <p
-                  style={{ fontSize: `${officeNameEnFontSize}px` }}
-                  className="font-medium tracking-wide text-slate-500 whitespace-nowrap transition-all"
+                  style={{ fontSize: `${officeNameEnFontSize}px`, lineHeight: 1.3 }}
+                  className="font-medium tracking-normal text-slate-500 truncate mt-0.5"
                   title={report.officeNameEn}
                 >
                   {report.officeNameEn}
@@ -426,9 +437,9 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             </div>
 
             {/* Date Chip */}
-            <div className="text-right">
+            <div className="text-right shrink-0">
               <div
-                className={`inline-flex items-center gap-3 px-4 py-2.5 rounded-2xl border shadow-xs transition-all ${
+                className={`inline-flex items-center gap-2.5 px-3.5 py-2.5 rounded-2xl border shadow-xs ${
                   isCycle
                     ? 'border-sky-300/90 bg-gradient-to-r from-sky-50 via-white to-blue-50/80 ring-1 ring-sky-200/50 shadow-sky-100/60'
                     : 'border-blue-200 bg-blue-50/80'
@@ -451,7 +462,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                 <div className="flex flex-col text-right">
                   <div className="flex items-center justify-end gap-1.5 mb-0.5">
                     <span
-                      className={`text-[10.5px] font-extrabold tracking-wide px-2.5 py-0.5 rounded-full font-['Prompt'] ${
+                      className={`text-[10.5px] font-extrabold tracking-normal px-2.5 py-0.5 rounded-full font-['Prompt'] whitespace-nowrap ${
                         isCycle
                           ? 'bg-blue-900 text-white shadow-2xs'
                           : 'bg-blue-100/70 text-slate-600'
@@ -460,13 +471,12 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                       {cycleBadge}
                     </span>
                     {isCycle && (
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative flex h-2 w-2 shrink-0">
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                       </span>
                     )}
                   </div>
-                  <span className="text-[14.5px] font-black text-[#0f2856] font-['Prompt'] leading-snug tracking-tight whitespace-nowrap">
+                  <span className="text-[14px] font-black text-[#0f2856] font-['Prompt'] leading-snug tracking-normal whitespace-nowrap">
                     {cleanDateText}
                   </span>
                 </div>
@@ -474,7 +484,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
               <div className="text-[10px] font-semibold mt-1 text-slate-500 flex items-center justify-end gap-1.5">
                 {isCycle ? (
                   <>
-                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
                     <span>{cycleSubText}</span>
                   </>
                 ) : (
@@ -486,26 +496,23 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
 
           {/* Banner Title Box */}
           <div className="relative rounded-2xl p-[1px] bg-gradient-to-r from-blue-600 via-indigo-600 to-teal-500 shadow-xs mb-5">
-            <div className="rounded-[15px] px-5 py-3 flex items-center justify-between bg-white">
-              <div className="min-w-0 pr-3">
+            <div className="rounded-[15px] px-5 py-3 flex items-center justify-between gap-3 bg-white">
+              <div className="min-w-0 flex-1 pr-2 overflow-hidden">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span
-                    className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-sky-50 via-indigo-50/70 to-blue-50/80 border border-sky-200/90 text-sky-950 shadow-xs ring-1 ring-sky-100/70 font-['Prompt'] transition-all"
-                  >
+                  <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gradient-to-r from-sky-50 via-indigo-50/70 to-blue-50/80 border border-sky-200/90 text-sky-950 shadow-xs ring-1 ring-sky-100/70 font-['Prompt']">
                     <span className="relative flex h-2 w-2 shrink-0">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-60" />
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-600" />
                     </span>
                     <span
                       style={{
                         fontSize:
                           (systemConfig?.reportSubtitle?.length || 0) > 45
-                            ? '10px'
+                            ? '9.5px'
                             : (systemConfig?.reportSubtitle?.length || 0) > 30
-                            ? '10.5px'
-                            : '11.5px',
+                            ? '10px'
+                            : '10.5px',
                       }}
-                      className="font-extrabold tracking-wide text-[#0f2856] whitespace-nowrap leading-normal"
+                      className="font-extrabold tracking-normal text-[#0f2856] leading-normal"
                     >
                       {systemConfig?.reportSubtitle ||
                         (isCycle
@@ -514,49 +521,51 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                     </span>
                   </span>
                   {isCycle && (
-                    <span className="text-[11px] font-black text-blue-900 bg-blue-100/90 px-2.5 py-0.5 rounded-md border border-blue-300 shadow-2xs font-['Prompt'] inline-flex items-center justify-center text-center">
+                    <span className="text-[10.5px] font-black text-blue-900 bg-blue-100/90 px-2.5 py-0.5 rounded-md border border-blue-300 shadow-2xs font-['Prompt'] inline-flex items-center justify-center text-center whitespace-nowrap shrink-0">
                       {cycleBadge}
                     </span>
                   )}
                 </div>
-                <h2 className="text-[17.5px] font-black mt-1.5 tracking-tight text-[#0f2856] font-['Prompt'] leading-snug">
-                  {systemConfig?.reportTitle ||
-                    'รายงานผลการปฏิบัติงานศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'}
+                <h2
+                  style={{ fontSize: `${reportTitleFontSize}px`, lineHeight: 1.35 }}
+                  className="font-black mt-1.5 tracking-normal text-[#0f2856] font-['Prompt'] break-words"
+                >
+                  {reportTitleText}
                 </h2>
               </div>
-              <div className="text-right shrink-0 flex flex-col items-end justify-center max-w-[340px]">
+
+              <div className="text-right shrink-0 flex flex-col items-end justify-center max-w-[265px]">
                 <span
                   style={{
                     fontSize: centerNameDisplay.fontSize,
-                    marginTop: centerNameDisplay.marginTop,
-                    lineHeight: centerNameDisplay.isMultiline ? '1.3' : '1.25',
+                    lineHeight: '1.35',
                   }}
-                  className={`font-bold pl-[12px] pr-[13px] -ml-[12px] mr-[1px] rounded-lg border bg-gradient-to-b from-blue-50/95 to-blue-100/60 border-blue-200/90 text-blue-900 shadow-2xs max-w-full text-right transition-all ${
+                  className={`font-bold px-3 py-1.5 rounded-lg border bg-gradient-to-b from-blue-50/95 to-blue-100/60 border-blue-200/90 text-blue-900 shadow-2xs max-w-full text-right ${
                     centerNameDisplay.isMultiline
-                      ? 'py-[5px] inline-flex flex-col items-end'
-                      : 'py-[6px] inline-block'
+                      ? 'inline-flex flex-col items-end'
+                      : 'inline-block'
                   }`}
                   title={report.centerName}
                 >
                   {centerNameDisplay.isMultiline && centerNameDisplay.line2 ? (
                     <>
-                      <span className="font-bold tracking-tight text-blue-950 block leading-tight">
+                      <span className="font-bold tracking-normal text-blue-950 block leading-snug break-words">
                         {centerNameDisplay.line1}
                       </span>
-                      <span className="font-bold text-[11px] text-blue-900 mt-1 flex items-center justify-end gap-1 leading-tight bg-blue-100/60 px-1.5 py-0.5 rounded-md border border-blue-200/50">
+                      <span className="font-bold text-[10.5px] text-blue-900 mt-1 flex items-center justify-end gap-1 leading-snug bg-blue-100/60 px-1.5 py-0.5 rounded-md border border-blue-200/50 max-w-full">
                         {centerNameDisplay.hasSeparator && (
                           <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
                         )}
-                        <span className="truncate max-w-[310px]">{centerNameDisplay.line2}</span>
+                        <span className="truncate max-w-[235px]">{centerNameDisplay.line2}</span>
                       </span>
                     </>
                   ) : (
-                    <span>{report.centerName}</span>
+                    <span className="break-words leading-snug block">{report.centerName}</span>
                   )}
                 </span>
                 {isCycle && (
                   <span className="text-[10px] font-semibold text-slate-500 mt-1 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                     <span>สถิติประมวลผลประจำรอบ</span>
                   </span>
                 )}
@@ -565,23 +574,20 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
           </div>
         </div>
 
-        {/* 2. TOP HERO METRICS: Row 1 - คิวนัดหมายทั้งหมด (บรรทัดเดิม) */}
+        {/* 2. TOP HERO METRICS: Row 1 - คิวนัดหมายทั้งหมด */}
         <div className="relative z-10 mb-3.5">
-          <div className="bg-gradient-to-r from-teal-50/80 via-white to-teal-50/40 rounded-2xl p-4 border border-teal-200/90 shadow-sm relative overflow-hidden flex items-center justify-between">
+          <div className="bg-gradient-to-r from-teal-50/80 via-white to-teal-50/40 rounded-2xl p-4 border border-teal-200/90 shadow-sm relative overflow-hidden flex items-center justify-between gap-3">
             <div className="absolute right-0 top-0 bottom-0 w-44 bg-gradient-to-l from-teal-100/30 to-transparent pointer-events-none" />
-            <div className="flex items-center gap-3.5 relative z-10">
+            <div className="flex items-center gap-3.5 relative z-10 min-w-0 flex-1">
               <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-teal-600 to-teal-700 text-white flex items-center justify-center shrink-0 shadow-sm ring-4 ring-teal-100/70">
                 <Calendar className="w-5 h-5" />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-base font-bold text-slate-800 tracking-tight">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-base font-bold text-slate-800 tracking-normal">
                     {isCycle ? 'ยอดคิวนัดหมายประจำรอบ' : 'คิวนัดหมายทั้งหมด'}
                   </span>
-                  <span
-                    style={{ width: '115.979px' }}
-                    className="text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-teal-100 text-teal-800 border border-teal-300/80 shadow-2xs font-['Prompt'] inline-flex items-center justify-center text-center"
-                  >
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-teal-100 text-teal-800 border border-teal-300/80 shadow-2xs font-['Prompt'] inline-flex items-center justify-center text-center whitespace-nowrap shrink-0">
                     {isCycle ? 'ยอดรวมประจำรอบ' : 'เป้าหมายประจำวัน'}
                   </span>
                 </div>
@@ -592,14 +598,14 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                 </div>
               </div>
             </div>
-            <div className="text-right relative z-10">
+            <div className="text-right relative z-10 shrink-0">
               <div className="flex items-baseline justify-end gap-1.5">
-                <span className="text-3xl font-black font-['Prompt'] text-teal-950 tracking-tight leading-none drop-shadow-2xs">
+                <span className="text-3xl font-black font-['Prompt'] text-teal-950 tracking-normal leading-none drop-shadow-2xs">
                   {formatNumber(report.queueAppointment)}
                 </span>
                 <span className="text-sm font-bold text-teal-700">คิว</span>
               </div>
-              <div className="text-[11px] text-slate-400 font-medium mt-1">
+              <div className="text-[11px] text-slate-400 font-medium mt-1 whitespace-nowrap">
                 {isCycle ? 'สถิติสะสมตามรอบการให้บริการ' : 'เป้าหมายให้บริการ 100%'}
               </div>
             </div>
@@ -610,21 +616,21 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
         <div className="grid grid-cols-4 gap-3 relative z-10 mb-5">
           {/* Card 1: ออกบัตรสำเร็จ */}
           <div className="bg-gradient-to-b from-emerald-50/70 via-white to-white rounded-2xl p-3.5 border border-emerald-300 shadow-xs relative overflow-hidden ring-1 ring-emerald-200/80 flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-emerald-950 tracking-tight">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-xs font-bold text-emerald-950 tracking-normal truncate">
                 {issuedMetricInfo.title === 'ออกบัตร' ? 'ออกบัตรสำเร็จ' : issuedMetricInfo.title}
               </span>
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-xs flex items-center justify-center">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-xs flex items-center justify-center shrink-0">
                 <CheckCircle2 className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl font-black my-1 text-emerald-700 font-['Prompt'] tracking-tight flex items-baseline">
-              {formatNumber(effectiveCardsIssued)}
-              <span className="text-xs font-semibold ml-1 text-slate-500">{issuedMetricInfo.unit}</span>
+            <div className="text-2xl font-black my-1 text-emerald-700 font-['Prompt'] tracking-normal flex items-baseline">
+              <span>{formatNumber(effectiveCardsIssued)}</span>
+              <span className="text-xs font-semibold ml-1 text-slate-500 shrink-0">{issuedMetricInfo.unit}</span>
             </div>
             <div>
-              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200/90 shadow-2xs">
-                <TrendingUp className="w-3 h-3 text-emerald-600" />
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200/90 shadow-2xs whitespace-nowrap">
+                <TrendingUp className="w-3 h-3 text-emerald-600 shrink-0" />
                 <span>สำเร็จ {completionRate}%</span>
               </span>
             </div>
@@ -632,20 +638,20 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
 
           {/* Card 2: ไม่มาตามนัด */}
           <div className="bg-gradient-to-b from-rose-50/70 via-white to-white rounded-2xl p-3.5 border border-rose-300 shadow-xs relative overflow-hidden ring-1 ring-rose-200/80 flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-rose-950 tracking-tight">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-xs font-bold text-rose-950 tracking-normal truncate">
                 {missedMetricInfo.title}
               </span>
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-xs flex items-center justify-center">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-xs flex items-center justify-center shrink-0">
                 <UserX className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl font-black my-1 text-rose-700 font-['Prompt'] tracking-tight flex items-baseline">
-              {formatNumber(report.missedAppointment)}
-              <span className="text-xs font-semibold ml-1 text-slate-500">{missedMetricInfo.unit}</span>
+            <div className="text-2xl font-black my-1 text-rose-700 font-['Prompt'] tracking-normal flex items-baseline">
+              <span>{formatNumber(report.missedAppointment)}</span>
+              <span className="text-xs font-semibold ml-1 text-slate-500 shrink-0">{missedMetricInfo.unit}</span>
             </div>
             <div>
-              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200/90 shadow-2xs">
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200/90 shadow-2xs whitespace-nowrap">
                 <span>ขาดนัด {missedRate}%</span>
               </span>
             </div>
@@ -653,20 +659,20 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
 
           {/* Card 3: มาไม่ตรงวันนัด */}
           <div className="bg-gradient-to-b from-amber-50/70 via-white to-white rounded-2xl p-3.5 border border-amber-300 shadow-xs relative overflow-hidden ring-1 ring-amber-200/80 flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-amber-950 tracking-tight">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-xs font-bold text-amber-950 tracking-normal truncate">
                 {wrongDateMetricInfo.title === 'ไม่ตรงวันนัด' ? 'มาไม่ตรงวันนัด' : wrongDateMetricInfo.title}
               </span>
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-white shadow-xs flex items-center justify-center">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-white shadow-xs flex items-center justify-center shrink-0">
                 <CalendarX className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl font-black my-1 text-amber-700 font-['Prompt'] tracking-tight flex items-baseline">
-              {formatNumber(report.wrongAppointmentDate)}
-              <span className="text-xs font-semibold ml-1 text-slate-500">{wrongDateMetricInfo.unit}</span>
+            <div className="text-2xl font-black my-1 text-amber-700 font-['Prompt'] tracking-normal flex items-baseline">
+              <span>{formatNumber(report.wrongAppointmentDate)}</span>
+              <span className="text-xs font-semibold ml-1 text-slate-500 shrink-0">{wrongDateMetricInfo.unit}</span>
             </div>
             <div>
-              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/90 shadow-2xs">
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/90 shadow-2xs whitespace-nowrap">
                 <span>ผิดวันนัด {wrongDayRate}%</span>
               </span>
             </div>
@@ -674,20 +680,20 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
 
           {/* Card 4: บัตรเสีย (หรือชื่อที่ตั้งค่าไว้ใน Admin) */}
           <div className="bg-gradient-to-b from-slate-50/80 via-white to-white rounded-2xl p-3.5 border border-slate-300 shadow-xs relative overflow-hidden ring-1 ring-slate-200/80 flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-900 tracking-tight">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-xs font-bold text-slate-900 tracking-normal truncate">
                 {notIssuedMetricInfo.title}
               </span>
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-slate-600 to-slate-700 text-white shadow-xs flex items-center justify-center">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-slate-600 to-slate-700 text-white shadow-xs flex items-center justify-center shrink-0">
                 <XCircle className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl font-black my-1 text-slate-800 font-['Prompt'] tracking-tight flex items-baseline">
-              {formatNumber(report.cardsNotIssued)}
-              <span className="text-xs font-semibold ml-1 text-slate-500">{notIssuedMetricInfo.unit}</span>
+            <div className="text-2xl font-black my-1 text-slate-800 font-['Prompt'] tracking-normal flex items-baseline">
+              <span>{formatNumber(report.cardsNotIssued)}</span>
+              <span className="text-xs font-semibold ml-1 text-slate-500 shrink-0">{notIssuedMetricInfo.unit}</span>
             </div>
             <div>
-              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200/90 shadow-2xs">
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200/90 shadow-2xs whitespace-nowrap">
                 <span>{notIssuedMetricInfo.title} {notIssuedRate}%</span>
               </span>
             </div>
@@ -703,34 +709,31 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
               paddingLeft: '18px',
               paddingRight: '18px',
               paddingBottom: '16px',
-              height: '477.5px',
-              marginLeft: '0px',
-              marginTop: '0px',
             }}
-            className="col-span-12 bg-white rounded-3xl p-4.5 border border-slate-200/90 shadow-sm flex flex-col justify-between relative overflow-hidden"
+            className="col-span-12 bg-white rounded-3xl border border-slate-200/90 shadow-sm flex flex-col justify-between gap-3 min-h-[465px] relative overflow-hidden"
           >
             <div>
               {/* Card Header */}
               <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 mb-2.5">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-700 via-indigo-600 to-sky-600 text-white flex items-center justify-center shadow-xs">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-700 via-indigo-600 to-sky-600 text-white flex items-center justify-center shadow-xs shrink-0">
                     <Layers className="w-4 h-4 text-white" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-sm leading-none text-slate-900 font-['Prompt']">การออกบัตรใบอนุญาตทำงาน</h3>
+                    <h3 className="font-bold text-sm leading-snug text-slate-900 font-['Prompt']">การออกบัตรใบอนุญาตทำงาน</h3>
                     <p className="text-[11px] mt-0.5 text-slate-500">
                       จำแนกตาม {sections.length} กลุ่มเป้าหมายและมาตรา
                     </p>
                   </div>
                 </div>
-                <div className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50/80 text-blue-900 border border-blue-200 shadow-2xs font-['Prompt']">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                <div className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50/80 text-blue-900 border border-blue-200 shadow-2xs font-['Prompt'] whitespace-nowrap shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
                   <span>รวม {formatNumber(totalIssuedGroups)} คน</span>
                 </div>
               </div>
 
-              {/* รายการกลุ่มเป้าหมายทั้งหมด เรียงตามลำดับเดิม โดยเน้นสีพื้นหลังข้อ 1 */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* รายการกลุ่มเป้าหมายทั้งหมด (ใช้ grid-cols-2 คงที่เสมอเพื่อไม่ให้ยุบเป็น 1 คอลัมน์แล้วซ้อนกันบนมือถือหรือตอนพิมพ์) */}
+              <div className="grid grid-cols-2 gap-2">
                 {sections.map((sec, idx) => {
                   const IconComponent = sec.icon;
                   const pct = totalIssuedGroups > 0 ? Math.round((sec.count / totalIssuedGroups) * 100) : 0;
@@ -740,14 +743,14 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                   return (
                     <div
                       key={sec.id}
-                      className={`p-2.5 rounded-xl transition-all border flex flex-col justify-between shadow-2xs ${
+                      className={`p-2.5 rounded-xl border flex flex-col justify-between shadow-2xs ${
                         isItem1
                           ? 'bg-gradient-to-r from-blue-100/90 via-indigo-50/90 to-sky-100/80 border-blue-400 ring-2 ring-blue-400/40 shadow-xs'
-                          : 'bg-slate-50/80 hover:bg-white border-slate-200/90'
+                          : 'bg-slate-50/80 border-slate-200/90'
                       }`}
                     >
-                      <div className="flex items-center justify-between text-xs mb-1.5">
-                        <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center justify-between text-xs mb-1.5 gap-1">
+                        <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden pr-1">
                           <div
                             className={`w-7 h-7 rounded-lg text-white flex items-center justify-center shrink-0 shadow-2xs ${
                               isItem1
@@ -757,10 +760,10 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                           >
                             <IconComponent className="w-4 h-4 text-white" />
                           </div>
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1 overflow-hidden">
                             <div className="flex items-center gap-1.5">
                               <span
-                                className={`font-bold block truncate text-[12px] leading-tight ${
+                                className={`font-bold block truncate text-[12px] leading-snug ${
                                   isItem1 ? 'text-blue-950 font-black' : 'text-slate-800'
                                 }`}
                               >
@@ -774,7 +777,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                               )}
                             </div>
                             <span
-                              className={`text-[9.5px] block truncate leading-tight ${
+                              className={`text-[9.5px] block truncate leading-snug ${
                                 isItem1 ? 'text-blue-800 font-medium' : 'text-slate-500'
                               }`}
                             >
@@ -785,21 +788,21 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
 
                         <div className="flex items-center gap-1.5 shrink-0 pl-1">
                           <span
-                            className={`font-black text-[14px] font-['Prompt'] ${
+                            className={`font-black text-[14px] font-['Prompt'] whitespace-nowrap ${
                               isItem1 ? 'text-blue-950' : 'text-slate-900'
                             }`}
                           >
                             {formatNumber(sec.count)}
                           </span>
                           <span
-                            className={`text-[10px] font-medium ${
+                            className={`text-[10px] font-medium shrink-0 ${
                               isItem1 ? 'text-blue-800 font-bold' : 'text-slate-500'
                             }`}
                           >
                             คน
                           </span>
                           <span
-                            className={`text-[9.5px] font-bold font-mono px-1.5 py-0.5 rounded-md min-w-[32px] text-center shadow-2xs ${
+                            className={`text-[9.5px] font-bold font-mono px-1.5 py-0.5 rounded-md min-w-[32px] text-center shadow-2xs shrink-0 ${
                               isItem1
                                 ? 'bg-blue-600 text-white border border-blue-700'
                                 : 'bg-white text-slate-700 border border-slate-200'
@@ -817,7 +820,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                         }`}
                       >
                         <div
-                          className={`h-full rounded-full transition-all duration-300 ${
+                          className={`h-full rounded-full ${
                             isItem1
                               ? 'bg-gradient-to-r from-blue-700 via-indigo-600 to-sky-500'
                               : `bg-gradient-to-r ${sec.color}`
@@ -832,27 +835,27 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
             </div>
 
             {/* Combined Summary Bar: รวมผู้รับบริการที่ออกบัตร + อัตราความสำเร็จ */}
-            <div className="mt-2.5 p-3 rounded-2xl border bg-gradient-to-r from-blue-50/90 via-slate-50 to-emerald-50/90 border-slate-200/90 shadow-2xs grid grid-cols-2 gap-4 items-center">
+            <div className="p-3 rounded-2xl border bg-gradient-to-r from-blue-50/90 via-slate-50 to-emerald-50/90 border-slate-200/90 shadow-2xs grid grid-cols-2 gap-4 items-center">
               {/* ฝั่งซ้าย: รวมผู้รับบริการที่ออกบัตรทั้งหมด */}
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-700 via-indigo-600 to-sky-600 text-white flex items-center justify-center shrink-0 shadow-xs">
                   <Sparkles className="w-4.5 h-4.5 text-amber-300" />
                 </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-bold text-slate-700 block leading-tight">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] font-bold text-slate-700 leading-snug">
                       รวมผู้รับบริการที่ออกบัตรทั้งหมด
                     </span>
-                    <span className="text-[9.5px] px-1.5 py-0.2 rounded-md font-bold bg-blue-100 text-blue-800">
+                    <span className="text-[9.5px] px-1.5 py-0.5 rounded-md font-bold bg-blue-100 text-blue-800 whitespace-nowrap shrink-0">
                       {sections.length} กลุ่มเป้าหมาย
                     </span>
                   </div>
-                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                  <div className="flex items-baseline gap-1.5 mt-0.5 flex-wrap">
                     <span className="font-black text-xl text-blue-950 font-['Prompt'] leading-tight">
                       {formatNumber(totalIssuedGroups)}
                     </span>
                     <span className="text-xs font-semibold text-slate-500">คน</span>
-                    <span className="text-[10px] text-slate-400 ml-1">
+                    <span className="text-[10px] text-slate-400">
                       (ออกใบอนุญาตสำเร็จ)
                     </span>
                   </div>
@@ -860,21 +863,21 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
               </div>
 
               {/* ฝั่งขวา: อัตราความสำเร็จ */}
-              <div className="flex items-center justify-between pl-4 border-l border-slate-200/80">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-bold text-emerald-900 block leading-tight">
+              <div className="flex items-center justify-between pl-4 border-l border-slate-200/80 gap-2 min-w-0">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] font-bold text-emerald-900 leading-snug">
                       อัตราความสำเร็จการให้บริการ
                     </span>
-                    <span className="text-[9.5px] px-1.5 py-0.2 rounded-md font-bold bg-emerald-100 text-emerald-800">
+                    <span className="text-[9.5px] px-1.5 py-0.5 rounded-md font-bold bg-emerald-100 text-emerald-800 whitespace-nowrap shrink-0">
                       เป้าหมายคิวนัดหมาย
                     </span>
                   </div>
-                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                  <div className="flex items-baseline gap-1.5 mt-0.5 flex-wrap">
                     <span className="font-black text-xl text-emerald-700 font-['Prompt'] leading-tight">
                       {completionRate}%
                     </span>
-                    <span className="text-[10px] text-slate-500">
+                    <span className="text-[10px] text-slate-500 whitespace-nowrap">
                       ({formatNumber(effectiveCardsIssued)} / {formatNumber(report.queueAppointment)} คิว)
                     </span>
                   </div>
@@ -889,34 +892,34 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
         </div>
 
         {/* 4. EXECUTIVE FOOTER & CONTACTS */}
-        <div className="relative z-10 pt-4 border-t border-slate-200 flex items-center justify-between text-xs bg-white rounded-2xl px-5 py-3 border border-slate-200 shadow-2xs">
+        <div className="relative z-10 pt-4 border-t border-slate-200 flex items-center justify-between gap-3 text-xs bg-white rounded-2xl px-5 py-3 border border-slate-200 shadow-2xs">
           {/* Officer & Position */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-900 flex items-center justify-center font-bold">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-900 flex items-center justify-center font-bold shrink-0">
               DOE
             </div>
-            <div>
-              <div className="font-bold flex items-center gap-1.5 text-slate-900">
-                <span>
+            <div className="min-w-0 flex-1">
+              <div className="font-bold flex items-center gap-1.5 text-slate-900 flex-wrap">
+                <span className="truncate">
                   ผู้รายงาน: {isCycle ? 'สำนักบริหารแรงงานต่างด้าว' : (report.reporterName || '-')}
                 </span>
                 {!isCycle && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300 whitespace-nowrap shrink-0">
                     ตรวจสอบแล้ว
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-slate-500">
+              <div className="text-[11px] text-slate-500 truncate">
                 ตำแหน่ง: {isCycle ? 'กรมการจัดหางาน กระทรวงแรงงาน' : (report.reporterPosition || '-')}
               </div>
             </div>
           </div>
 
           {/* Contact Badges */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             {(isCycle || report.phoneNumber || report.reporterName === 'สำนักบริหารแรงงานต่างด้าว') && (
-              <div className="flex items-center gap-1.5 font-semibold text-rose-800 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200">
-                <Phone className="w-3.5 h-3.5 text-rose-700" />
+              <div className="flex items-center gap-1.5 font-semibold text-rose-800 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200 whitespace-nowrap">
+                <Phone className="w-3.5 h-3.5 text-rose-700 shrink-0" />
                 <span className="text-xs">
                   {isCycle || report.reporterName === 'สำนักบริหารแรงงานต่างด้าว'
                     ? '02-354-0082'

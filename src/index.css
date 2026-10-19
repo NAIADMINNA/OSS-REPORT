@@ -122,7 +122,32 @@
     align-items: flex-start !important;
   }
 
-  /* Poster container: Perfectly fitted to standard A4 sheet without horizontal or vertical clipping */
+  #doe-print-sheet {
+    display: flex !important;
+    width: 100% !important;
+    justify-content: center !important;
+    align-items: flex-start !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  #doe-print-sheet img {
+    width: 198mm !important;
+    max-width: 198mm !important;
+    max-height: 287mm !important;
+    height: auto !important;
+    object-fit: contain !important;
+    display: block !important;
+    margin: 0 auto !important;
+  }
+
+  .has-print-image .poster-zoom-wrapper {
+    display: none !important;
+  }
+
+  /* Fallback Poster container: Maintain 780px coordinate layout and scale proportionally to A4 without horizontal squeezing */
   #doe-poster-capture {
     box-shadow: none !important;
     border: 1px solid #cbd5e1 !important;
@@ -131,12 +156,13 @@
     page-break-inside: avoid !important;
     break-inside: avoid !important;
     page-break-after: avoid !important;
-    width: 100% !important;
-    max-width: 198mm !important;
+    width: 780px !important;
+    min-width: 780px !important;
+    max-width: 780px !important;
     min-height: auto !important;
     box-sizing: border-box !important;
-    border-radius: 14px !important;
-    padding: 22px !important;
+    border-radius: 16px !important;
+    zoom: 0.91;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }

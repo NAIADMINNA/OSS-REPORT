@@ -209,7 +209,7 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
     <>
       {/* ================= MASCOT FLOATING AVATAR ================= */}
       <div
-        className={`fixed bottom-5 z-40 flex flex-col select-none transition-all duration-300 ${
+        className={`fixed bottom-5 z-40 flex flex-col select-none transition-all duration-300 no-print ${
           position === 'left' ? 'left-4 sm:left-5 items-start' : 'right-4 sm:right-5 items-end'
         }`}
       >

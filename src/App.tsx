@@ -988,7 +988,7 @@ export default function App() {
 
       {/* Toast Alert with Action / Undo Support */}
       {toastState && (
-        <div className="fixed bottom-6 right-6 z-50 bg-white text-slate-800 px-4 py-3 rounded-xl shadow-xl border border-slate-200 ring-1 ring-slate-950/5 flex items-center gap-3 text-xs font-semibold animate-in slide-in-from-bottom duration-200">
+        <div className="fixed bottom-6 right-6 z-50 bg-white text-slate-800 px-4 py-3 rounded-xl shadow-xl border border-slate-200 ring-1 ring-slate-950/5 flex items-center gap-3 text-xs font-semibold animate-in slide-in-from-bottom duration-200 no-print">
           <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
           <span>{toastState.message}</span>
           {toastState.actionLabel && toastState.onAction && (
@@ -1121,7 +1121,7 @@ export default function App() {
 
                   {/* Scaled Poster Container */}
                   <div className="overflow-hidden rounded-xl border border-slate-200 flex justify-center bg-slate-100/70 p-2 h-[870px]">
-                    <div className="origin-top" style={{ transform: 'scale(0.63)' }}>
+                    <div className="origin-top shrink-0" style={{ transform: 'scale(0.63)' }}>
                       <InfographicPoster
                         report={livePreviewReport}
                         categories={categories}

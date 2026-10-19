@@ -1,8 +1,8 @@
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo, useEffect } from 'react';
 import { DOEReport, QueueMetricCategory, ReportCategory, SystemConfig } from '../types/doe';
 import { formatThaiDateFull } from '../utils/thaiDate';
 import { InfographicPoster } from './InfographicPoster';
-import { toPng } from 'html-to-image';
+import { capturePosterToPng, getEmbeddedGoogleFontsCSS } from '../utils/posterExport';
 import {
   X,
   Download,
@@ -51,6 +51,8 @@ export const PosterPreviewModal: React.FC<PosterPreviewModalProps> = ({
     type: 'success' | 'info';
   } | null>(null);
 
+  const [printImageDataUrl, setPrintImageDataUrl] = useState<string | null>(null);
+
   const displayReport = useMemo(() => {
     if (overrideCenterName === null) return report;
     return { ...report, centerName: overrideCenterName };
@@ -60,34 +62,47 @@ export const PosterPreviewModal: React.FC<PosterPreviewModalProps> = ({
     displayReport.centerName === MOBILE_UNIT_CENTER_NAME ||
     displayReport.centerName?.includes('Mobile Unit');
 
+  // Pre-warm embedded Google Fonts and pre-render print sheet image in background
+  useEffect(() => {
+    let cancelled = false;
+    getEmbeddedGoogleFontsCSS().catch(() => {});
+
+    const timer = setTimeout(async () => {
+      if (!posterRef.current || cancelled) return;
+      try {
+        const dataUrl = await capturePosterToPng(posterRef.current, 2.2);
+        if (!cancelled) {
+          setPrintImageDataUrl(dataUrl);
+        }
+      } catch {
+        // Ignore background pre-render errors
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [displayReport, categories, queueMetrics, systemConfig, customLogoUrl]);
+
+  const triggerPngDownloadFromUrl = (dataUrl: string) => {
+    const link = document.createElement('a');
+    const safeName = displayReport.officeName.replace(/\s+/g, '_');
+    link.download = `DOE_Report_${safeName}_${displayReport.reportDate}.png`;
+    link.href = dataUrl;
+    link.click();
+  };
+
   const handleDownloadPng = async () => {
     if (!posterRef.current) return;
     try {
       setDownloading(true);
       setDownloadError(null);
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
-      let dataUrl: string;
-      try {
-        dataUrl = await toPng(posterRef.current, {
-          cacheBust: true,
-          pixelRatio: 2, // High resolution for crisp text & prints
-          skipFonts: true, // Prevents SecurityError when reading remote CSS font rules
-        });
-      } catch (firstErr) {
-        console.warn('Initial toPng failed, retrying with standard pixel ratio...', firstErr);
-        dataUrl = await toPng(posterRef.current, {
-          cacheBust: false,
-          pixelRatio: 1,
-          skipFonts: true,
-        });
-      }
-
-      const link = document.createElement('a');
-      const safeName = displayReport.officeName.replace(/\s+/g, '_');
-      link.download = `DOE_Report_${safeName}_${displayReport.reportDate}.png`;
-      link.href = dataUrl;
-      link.click();
+      const dataUrl = await capturePosterToPng(posterRef.current, 2.5);
+      setPrintImageDataUrl(dataUrl);
+      triggerPngDownloadFromUrl(dataUrl);
     } catch (err) {
       console.error('Failed to generate poster image', err);
       setDownloadError('ไม่สามารถดาวน์โหลดรูปภาพได้ กรุณาลองใหม่อีกครั้ง');
@@ -97,10 +112,22 @@ export const PosterPreviewModal: React.FC<PosterPreviewModalProps> = ({
   };
 
   const handlePrint = async () => {
+    if (!posterRef.current) return;
     try {
       setIsPrinting(true);
       setPrintFeedback(null);
       setDownloadError(null);
+
+      // 1. Capture high-res image BEFORE invoking window.print() so @media print does not distort layout during capture
+      let highResUrl = printImageDataUrl;
+      try {
+        highResUrl = await capturePosterToPng(posterRef.current, 2.5);
+        setPrintImageDataUrl(highResUrl);
+        // Wait for React state & image decode before opening print dialog
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      } catch (captureErr) {
+        console.warn('Pre-print image capture warning:', captureErr);
+      }
 
       // Check if running inside iframe (such as AI Studio preview sandbox)
       const isInsideIframe = window.self !== window.top;
@@ -114,17 +141,17 @@ export const PosterPreviewModal: React.FC<PosterPreviewModalProps> = ({
       }
 
       // If running inside a sandboxed iframe, the browser may silently suppress window.print()
-      // Provide an automatic high-res download fallback and clear status feedback:
-      if (isInsideIframe) {
-        await handleDownloadPng();
+      // Provide an automatic high-res download fallback using the already-captured image:
+      if (isInsideIframe && highResUrl) {
+        triggerPngDownloadFromUrl(highResUrl);
         setPrintFeedback({
           type: 'info',
-          text: 'ระบบได้ส่งคำสั่งพิมพ์ไปยังเบราว์เซอร์ พร้อมดาวน์โหลดไฟล์ภาพความละเอียดสูง (High-Res 300 DPI) ให้ทันที เพื่อให้พิมพ์หรือนำไปใช้งานได้อย่างคมชัดสวยงาม 100%',
+          text: 'ระบบได้ส่งคำสั่งพิมพ์ไปยังเบราว์เซอร์ พร้อมดาวน์โหลดไฟล์ภาพความละเอียดสูง (High-Res 300 DPI) ให้ทันที เพื่อให้พิมพ์หรือบันทึกเป็น PDF ได้อย่างคมชัดสวยงาม 100% โดยข้อความไม่ซ้อนทับกัน',
         });
       } else if (printTriggered) {
         setPrintFeedback({
           type: 'success',
-          text: 'เปิดหน้าต่างพิมพ์ของเบราว์เซอร์เรียบร้อยแล้ว (แนะนำให้เปิด "กราฟิกพื้นหลัง / Background graphics" ในหน้าต่างพิมพ์เพื่อให้สีสันและแถบกราฟิกสดใสคมชัด)',
+          text: 'เปิดหน้าต่างพิมพ์ / บันทึกเป็น PDF เรียบร้อยแล้ว (จัดหน้า A4 เต็มแผ่นคมชัด 100% โดยข้อความและกราฟิกไม่ซ้อนทับกัน)',
         });
       }
     } catch (err) {
@@ -305,8 +332,28 @@ export const PosterPreviewModal: React.FC<PosterPreviewModalProps> = ({
         )}
 
         {/* Poster Viewer Container */}
-        <div className="flex-1 overflow-auto p-4 sm:p-6 flex justify-center items-start bg-slate-100/90 poster-viewer-container print:p-0 print:bg-white">
-          <div className="transition-transform duration-200 poster-zoom-wrapper" style={{ transform: `scale(${zoomScale})`, transformOrigin: 'top center' }}>
+        <div
+          className={`flex-1 overflow-auto p-4 sm:p-6 flex justify-center items-start bg-slate-100/90 poster-viewer-container print:p-0 print:bg-white ${
+            printImageDataUrl ? 'has-print-image' : ''
+          }`}
+        >
+          {/* Dedicated High-Res Print/PDF Sheet: guarantees 0% text overlap and 100% color fidelity on A4 */}
+          {printImageDataUrl && (
+            <div id="doe-print-sheet" className="hidden print:flex print:w-full print:items-center print:justify-center">
+              <img
+                src={printImageDataUrl}
+                alt={`โปสเตอร์รายงาน ${displayReport.officeName}`}
+                className="w-[198mm] max-h-[287mm] object-contain mx-auto"
+              />
+            </div>
+          )}
+
+          <div
+            className={`transition-transform duration-200 poster-zoom-wrapper shrink-0 ${
+              printImageDataUrl ? 'print:hidden' : ''
+            }`}
+            style={{ transform: `scale(${zoomScale})`, transformOrigin: 'top center' }}
+          >
             <InfographicPoster
               ref={posterRef}
               report={displayReport}
