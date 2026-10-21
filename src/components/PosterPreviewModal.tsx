@@ -55,7 +55,41 @@ export const PosterPreviewModal: React.FC<PosterPreviewModalProps> = ({
 
   const displayReport = useMemo(() => {
     if (overrideCenterName === null) return report;
-    return { ...report, centerName: overrideCenterName };
+    const isNowMobile =
+      overrideCenterName === MOBILE_UNIT_CENTER_NAME ||
+      overrideCenterName.includes('Mobile Unit');
+
+    let nextOfficeName = report.officeName;
+    let nextOfficeNameEn = report.officeNameEn;
+
+    if (report.officeId === 'overview') {
+      if (isNowMobile) {
+        nextOfficeName =
+          report.region && report.region !== 'ทั้งหมด' && report.region !== 'เฉพาะกิจ'
+            ? `หน่วยบริการเคลื่อนที่ (Mobile Unit) (${report.region})`
+            : 'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit)';
+        nextOfficeNameEn =
+          report.region && report.region !== 'ทั้งหมด' && report.region !== 'เฉพาะกิจ'
+            ? `Foreign Workers Employment Mobile Unit (${report.region})`
+            : 'Foreign Workers Employment Mobile Unit (National Overview)';
+      } else {
+        nextOfficeName =
+          report.region && report.region !== 'ทั้งหมด'
+            ? `ศูนย์บริการใบอนุญาตทำงาน (${report.region})`
+            : 'ศูนย์บริการใบอนุญาตทำงาน (ภาพรวมทั้งประเทศ)';
+        nextOfficeNameEn =
+          report.region && report.region !== 'ทั้งหมด'
+            ? `Foreign Workers Employment Center (${report.region})`
+            : 'Foreign Workers Employment Center (National Overview)';
+      }
+    }
+
+    return {
+      ...report,
+      officeName: nextOfficeName,
+      officeNameEn: nextOfficeNameEn,
+      centerName: overrideCenterName,
+    };
   }, [report, overrideCenterName]);
 
   const isMobile =
@@ -272,7 +306,20 @@ export const PosterPreviewModal: React.FC<PosterPreviewModalProps> = ({
             <div className="inline-flex items-center bg-slate-200/90 p-0.5 rounded-lg border border-slate-300 shadow-inner">
               <button
                 type="button"
-                onClick={() => setOverrideCenterName(report.centerName)}
+                onClick={() => {
+                  const origIsMobile =
+                    report.centerName === MOBILE_UNIT_CENTER_NAME ||
+                    report.centerName?.includes('Mobile Unit');
+                  if (origIsMobile) {
+                    setOverrideCenterName(
+                      report.officeId === 'overview'
+                        ? 'ภาพรวม 76 จังหวัด + กทม. 10 พื้นที่'
+                        : 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'
+                    );
+                  } else {
+                    setOverrideCenterName(report.centerName);
+                  }
+                }}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all cursor-pointer ${
                   !isMobile
                     ? 'bg-white text-blue-900 shadow-xs ring-1 ring-slate-300/60 font-bold'

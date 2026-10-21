@@ -1,6 +1,7 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { DOEReport, EmploymentOffice, QueueMetricCategory, ReportCategory } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
+import { DEFAULT_CATEGORIES } from '../data/initialAdminData';
 import {
   formatNumber,
   formatThaiDateShort,
@@ -30,7 +31,41 @@ import {
   XCircle,
   Check,
   CalendarRange,
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  FolderOpen,
+  Truck,
+  MapPin,
 } from 'lucide-react';
+
+const THAI_MONTHS_FULL = [
+  'มกราคม',
+  'กุมภาพันธ์',
+  'มีนาคม',
+  'เมษายน',
+  'พฤษภาคม',
+  'มิถุนายน',
+  'กรกฎาคม',
+  'สิงหาคม',
+  'กันยายน',
+  'ตุลาคม',
+  'พฤศจิกายน',
+  'ธันวาคม',
+];
+
+const MOBILE_UNIT_DEFAULT_LABEL =
+  'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit)';
+
+function isMobileUnitCenter(centerName?: string, region?: string): boolean {
+  const c = (centerName || '').toLowerCase();
+  return (
+    region === 'เฉพาะกิจ' ||
+    c.includes('mobile unit') ||
+    c.includes('เคลื่อนที่') ||
+    c.includes('เฉพาะกิจ')
+  );
+}
 
 interface DashboardViewProps {
   reports: DOEReport[];
@@ -84,15 +119,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     if (categories && categories.length > 0) {
       return categories.filter((c) => c.isActive);
     }
-    return [
-      { id: 'section59', code: 'ม.59', title: 'กลุ่มมาตรา 59', subLabel: 'คนต่างด้าวทั่วไป', color: 'bg-sky-500', isActive: true },
-      { id: 'section62', code: 'ม.62', title: 'กลุ่มมาตรา 62', subLabel: 'ผู้เชี่ยวชาญ/ช่างฝีมือ', color: 'bg-blue-600', isActive: true },
-      { id: 'section63_1', code: 'ม.63/1', title: 'กลุ่มมาตรา 63/1', subLabel: 'ชนกลุ่มน้อย/มีสถานะ', color: 'bg-indigo-500', isActive: true },
-      { id: 'section63_2', code: 'ม.63/2', title: 'กลุ่มมาตรา 63/2', subLabel: 'มติ ครม. 4 สัญชาติ', color: 'bg-blue-800', isActive: true },
-      { id: 'section64', code: 'ม.64', title: 'กลุ่มมาตรา 64', subLabel: 'แรงงานไป-กลับ/ฤดูกาล', color: 'bg-teal-500', isActive: true },
-      { id: 'modifyDetails', code: 'เปลี่ยนแปลง', title: 'เปลี่ยนแปลงรายการ', subLabel: 'ย้ายนายจ้าง/สถานที่', color: 'bg-violet-600', isActive: true },
-      { id: 'substituteCard', code: 'ใบแทน', title: 'ใบแทนใบอนุญาต', subLabel: 'ชำรุด/สูญหาย/ขอแทน', color: 'bg-amber-500', isActive: true },
-    ];
+    return DEFAULT_CATEGORIES;
   }, [categories]);
 
   // Available distinct dates from existing reports (always including today)
@@ -102,8 +129,52 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return Array.from(datesSet).sort((a, b) => b.localeCompare(a));
   }, [reports, todayStr]);
 
+  // Group availableDates by same Month and same Buddhist Era Year (ปี พ.ศ.)
+  const availableMonthGroups = useMemo(() => {
+    const groupsMap = new Map<
+      string,
+      {
+        monthKey: string;
+        monthName: string;
+        thaiYear: number;
+        monthLabel: string;
+        dates: { date: string; reportCount: number }[];
+        totalReportsInMonth: number;
+      }
+    >();
+
+    availableDates.forEach((d) => {
+      if (!d || d.length < 7) return;
+      const [yStr, mStr] = d.split('-');
+      const year = Number(yStr);
+      const monthIdx = Number(mStr) - 1;
+      if (isNaN(year) || isNaN(monthIdx) || monthIdx < 0 || monthIdx > 11) return;
+
+      const monthKey = `${yStr}-${mStr}`;
+      const thaiYear = year + 543;
+      const monthName = THAI_MONTHS_FULL[monthIdx];
+      const monthLabel = `เดือน${monthName} พ.ศ. ${thaiYear}`;
+      const countForDate = reports.filter((r) => r.reportDate === d).length;
+
+      if (!groupsMap.has(monthKey)) {
+        const countInMonth = reports.filter((r) => (r.reportDate || '').startsWith(monthKey)).length;
+        groupsMap.set(monthKey, {
+          monthKey,
+          monthName,
+          thaiYear,
+          monthLabel,
+          dates: [],
+          totalReportsInMonth: countInMonth,
+        });
+      }
+      groupsMap.get(monthKey)!.dates.push({ date: d, reportCount: countForDate });
+    });
+
+    return Array.from(groupsMap.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  }, [availableDates, reports]);
+
   // Selected Cycle/Date Filter Key:
-  // 'custom' | 'single:YYYY-MM-DD' | 'all'
+  // 'custom' | 'single:YYYY-MM-DD' | 'month:YYYY-MM' | 'all'
   // Default to today: 'single:' + todayStr
   const [selectedCycleKey, setSelectedCycleKey] = useState<string>(
     () => `single:${getTodayIsoDate()}`
@@ -115,8 +186,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     () => getTodayIsoDate()
   );
 
+  // State for custom Month -> Daily dropdown
+  const [isDateDropdownOpen, setIsDateDropdownOpen] = useState<boolean>(false);
+  const [expandedMonthKey, setExpandedMonthKey] = useState<string | null>(null);
+  const dateDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dateDropdownRef.current &&
+        !dateDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsDateDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   // Selected Region
   const [selectedRegion, setSelectedRegion] = useState<string>('ทั้งหมด');
+
+  // Selected Center / Mobile Unit filter:
+  // 'all' | 'type:standard' | 'type:mobile' | 'center:<centerName>'
+  const [selectedCenterFilter, setSelectedCenterFilter] = useState<string>('all');
 
   // Search input for office/province in table
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -129,6 +222,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     if (resetSignal) {
       setSelectedReportId(null);
       setSelectedRegion('ทั้งหมด');
+      setSelectedCenterFilter('all');
       setSearchQuery('');
     }
   }, [resetSignal]);
@@ -150,6 +244,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   }, [availableDates, selectedCycleKey, todayStr]);
 
+  // Display text for the current selectedCycleKey in the Date selector button
+  const selectedDateDisplayLabel = useMemo(() => {
+    if (selectedCycleKey === 'all') {
+      return `📊 ภาพรวมสะสมทั้งหมด (${reports.length} รายการ)`;
+    }
+    if (selectedCycleKey === 'custom') {
+      return '📅 กำหนดช่วงวันที่เอง...';
+    }
+    if (selectedCycleKey.startsWith('month:')) {
+      const ym = selectedCycleKey.replace('month:', '');
+      const foundMonth = availableMonthGroups.find((g) => g.monthKey === ym);
+      if (foundMonth) {
+        return `🗓️ รวมทั้ง${foundMonth.monthLabel} (${foundMonth.dates.length} วัน)`;
+      }
+    }
+    if (selectedCycleKey.startsWith('single:')) {
+      const d = selectedCycleKey.replace('single:', '');
+      return d === todayStr
+        ? `รายวัน (วันนี้): ${formatThaiDateShort(d)} (${d})`
+        : `รายวัน: ${formatThaiDateShort(d)} (${d})`;
+    }
+    return formatThaiDateShort(selectedCycleKey);
+  }, [selectedCycleKey, reports.length, availableMonthGroups, todayStr]);
+
   // Computed Date Range / Period Bounds
   const { filterStartDate, filterEndDate, isCycleMode, activePeriodLabel } = useMemo(() => {
     if (selectedCycleKey === 'all') {
@@ -158,6 +276,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         filterEndDate: null,
         isCycleMode: true,
         activePeriodLabel: 'ภาพรวมสะสมทั้งหมด (ทุกช่วงวัน)',
+      };
+    }
+    if (selectedCycleKey.startsWith('month:')) {
+      const ym = selectedCycleKey.replace('month:', '');
+      const [yStr, mStr] = ym.split('-');
+      const y = Number(yStr);
+      const m = Number(mStr);
+      const lastDay = new Date(y, m, 0).getDate();
+      const start = `${ym}-01`;
+      const end = `${ym}-${String(lastDay).padStart(2, '0')}`;
+      const monthName = THAI_MONTHS_FULL[m - 1] || '';
+      const thaiYear = y + 543;
+      return {
+        filterStartDate: start,
+        filterEndDate: end,
+        isCycleMode: true,
+        activePeriodLabel: `ประจำเดือน${monthName} พ.ศ. ${thaiYear}`,
       };
     }
     if (selectedCycleKey.startsWith('cycle:')) {
@@ -196,8 +331,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   }, [selectedCycleKey, customStartDate, customEndDate]);
 
-  // 1. In Dashboard: ONLY show reported reports matching the filter
-  const reportedList = useMemo(() => {
+  // Base reports matching Date, Region, and Search (before Center/Mobile Unit filter)
+  const baseDateRegionReports = useMemo(() => {
     return reports.filter((r) => {
       const rDate = r.reportDate || '';
       let matchDate = true;
@@ -219,10 +354,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     });
   }, [reports, filterStartDate, filterEndDate, selectedRegion, searchQuery]);
 
-  // Group and sort reported list by region
+  // Helper to check if a report matches selectedCenterFilter
+  const matchesCenterFilter = (r: DOEReport, filterVal: string): boolean => {
+    if (!filterVal || filterVal === 'all') return true;
+    const isMob = isMobileUnitCenter(r.centerName, r.region);
+    if (filterVal === 'type:mobile') return isMob;
+    if (filterVal === 'type:standard') return !isMob;
+    if (filterVal.startsWith('center:')) {
+      const targetCenter = filterVal.replace('center:', '');
+      return (r.centerName || '').trim() === targetCenter.trim();
+    }
+    return true;
+  };
+
+  // 1. In Dashboard: ONLY show reported reports matching all active filters (including Center / Mobile Unit)
+  const reportedList = useMemo(() => {
+    return baseDateRegionReports.filter((r) => matchesCenterFilter(r, selectedCenterFilter));
+  }, [baseDateRegionReports, selectedCenterFilter]);
+
+  // Group and sort reported list by region for the Province selector (deduplicated per officeId)
   const groupedReportedList = useMemo(() => {
     const groups: Record<string, DOEReport[]> = {};
-    for (const r of reportedList) {
+    const seenOffices = new Set<string>();
+    for (const r of baseDateRegionReports) {
+      const officeKey = r.officeId || r.id;
+      if (seenOffices.has(officeKey)) continue;
+      seenOffices.add(officeKey);
       const reg = r.region || 'อื่นๆ';
       if (!groups[reg]) groups[reg] = [];
       groups[reg].push(r);
@@ -237,28 +394,99 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         regionLabel: getRegionLabel(reg),
         reports: groups[reg],
       }));
-  }, [reportedList]);
-
-  // Reports belonging to the selected office
-  const selectedOfficeReports = useMemo(() => {
-    if (!selectedReportId) return [];
-    const baseRep = reports.find((r) => r.id === selectedReportId);
-    if (!baseRep) return [];
-    const matchingInFilter = reportedList.filter((r) => r.officeId === baseRep.officeId);
-    if (matchingInFilter.length > 0) return matchingInFilter;
-    // Fallback: If date filter excluded this report, still return baseRep so user can view its stats!
-    return [baseRep];
-  }, [reports, selectedReportId, reportedList]);
+  }, [baseDateRegionReports]);
 
   // Active selected report (if user picked a province from the table or dropdown)
   const activeSelectedReport = useMemo(() => {
     if (!selectedReportId) return null;
     return (
       reportedList.find((r) => r.id === selectedReportId) ||
+      baseDateRegionReports.find((r) => r.id === selectedReportId) ||
       reports.find((r) => r.id === selectedReportId) ||
       null
     );
-  }, [reportedList, selectedReportId, reports]);
+  }, [reportedList, baseDateRegionReports, selectedReportId, reports]);
+
+  // Available Centers / Mobile Unit options for the current selection (Province or Region/Overview)
+  const centerFilterOptions = useMemo(() => {
+    const scopedReports = activeSelectedReport
+      ? baseDateRegionReports.filter((r) => r.officeId === activeSelectedReport.officeId)
+      : baseDateRegionReports;
+
+    let standardCount = 0;
+    let mobileCount = 0;
+    const centerMap = new Map<string, { name: string; count: number; isMobile: boolean }>();
+
+    // If a specific province is selected, pre-populate its standard center & Mobile Unit so user always sees both choices
+    if (activeSelectedReport) {
+      const officeConfig = (offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES).find(
+        (o) => o.id === activeSelectedReport.officeId
+      );
+      const stdCenterName =
+        officeConfig?.centerName ||
+        (!isMobileUnitCenter(activeSelectedReport.centerName, activeSelectedReport.region)
+          ? activeSelectedReport.centerName
+          : '');
+      if (stdCenterName) {
+        centerMap.set(stdCenterName, {
+          name: stdCenterName,
+          count: 0,
+          isMobile: false,
+        });
+      }
+      centerMap.set(MOBILE_UNIT_DEFAULT_LABEL, {
+        name: MOBILE_UNIT_DEFAULT_LABEL,
+        count: 0,
+        isMobile: true,
+      });
+    }
+
+    scopedReports.forEach((r) => {
+      const isMob = isMobileUnitCenter(r.centerName, r.region);
+      if (isMob) mobileCount += 1;
+      else standardCount += 1;
+
+      const cName = (r.centerName || '').trim();
+      if (cName) {
+        const existing = centerMap.get(cName);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          centerMap.set(cName, {
+            name: cName,
+            count: 1,
+            isMobile: isMob,
+          });
+        }
+      }
+    });
+
+    const distinctCenters = Array.from(centerMap.values()).sort((a, b) => {
+      if (a.isMobile !== b.isMobile) return a.isMobile ? 1 : -1;
+      return a.name.localeCompare(b.name, 'th');
+    });
+
+    return {
+      totalCount: scopedReports.length,
+      standardCount,
+      mobileCount,
+      distinctCenters,
+    };
+  }, [activeSelectedReport, baseDateRegionReports, offices]);
+
+  // Reports belonging to the selected office (filtered by selectedCenterFilter)
+  const selectedOfficeReports = useMemo(() => {
+    if (!selectedReportId || !activeSelectedReport) return [];
+    const matchingInFilter = reportedList.filter(
+      (r) => r.officeId === activeSelectedReport.officeId
+    );
+    if (matchingInFilter.length > 0) return matchingInFilter;
+    // If the user selected a center type that has 0 reports for this province in the active period, return empty stats for that province+center
+    if (selectedCenterFilter !== 'all') {
+      return [];
+    }
+    return [activeSelectedReport];
+  }, [selectedReportId, activeSelectedReport, reportedList, selectedCenterFilter]);
 
   // 2. Regional / National Metrics Summary
   const {
@@ -379,8 +607,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // 3. Compute Displayed Statistics (Shows single province if selected, or aggregate otherwise)
   const displayedStats = useMemo(() => {
-    if (selectedOfficeReports.length > 0) {
-      const rep = selectedOfficeReports[0];
+    if (selectedReportId && activeSelectedReport) {
+      const rep = selectedOfficeReports[0] || activeSelectedReport;
       let totalQueue = 0;
       let totalIssued = 0;
       let totalVerified = 0;
@@ -441,11 +669,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       const notIssuedRate =
         totalQueue > 0 ? ((totalNotIssued / totalQueue) * 100).toFixed(1) : '0';
 
+      let resolvedCenterName = rep.centerName;
+      if (selectedCenterFilter === 'type:mobile') {
+        resolvedCenterName = MOBILE_UNIT_DEFAULT_LABEL;
+      } else if (selectedCenterFilter.startsWith('center:')) {
+        resolvedCenterName = selectedCenterFilter.replace('center:', '');
+      }
+
       return {
         isDrilldown: true,
-        officeId: rep.officeId,
-        officeName: rep.officeName,
-        centerName: rep.centerName,
+        officeId: activeSelectedReport.officeId,
+        officeName: activeSelectedReport.officeName,
+        centerName: resolvedCenterName,
         reportDate: activePeriodLabel,
         totalQueue,
         totalIssued,
@@ -471,16 +706,34 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       };
     }
 
+    const baseOverviewTitle =
+      selectedRegion === 'ทั้งหมด'
+        ? 'ภาพรวมทั้งประเทศ'
+        : selectedRegion === 'เฉพาะกิจ'
+        ? 'รวมศูนย์เฉพาะกิจ'
+        : selectedRegion;
+
+    const centerSuffix =
+      selectedCenterFilter === 'type:mobile'
+        ? ' (เฉพาะหน่วยบริการเคลื่อนที่ Mobile Unit)'
+        : selectedCenterFilter === 'type:standard'
+        ? ' (เฉพาะศูนย์บริการประจำสำนักงาน)'
+        : selectedCenterFilter.startsWith('center:')
+        ? ` (${selectedCenterFilter.replace('center:', '')})`
+        : '';
+
     return {
       isDrilldown: false,
       officeId: 'overview',
-      officeName:
-        selectedRegion === 'ทั้งหมด'
-          ? 'ภาพรวมทั้งประเทศ'
+      officeName: `${baseOverviewTitle}${centerSuffix}`,
+      centerName:
+        selectedCenterFilter === 'type:mobile'
+          ? MOBILE_UNIT_DEFAULT_LABEL
+          : selectedCenterFilter.startsWith('center:')
+          ? selectedCenterFilter.replace('center:', '')
           : selectedRegion === 'เฉพาะกิจ'
           ? 'รวมศูนย์เฉพาะกิจ'
-          : selectedRegion,
-      centerName: selectedRegion === 'เฉพาะกิจ' ? 'รวมศูนย์เฉพาะกิจ' : '',
+          : '',
       reportDate: activePeriodLabel,
       totalQueue: nationalStats.totalQueue,
       totalIssued: nationalStats.totalIssued,
@@ -504,25 +757,59 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       customSums: nationalStats.customSums,
       customQueueSums: nationalStats.customQueueSums,
     };
-  }, [selectedOfficeReports, nationalStats, selectedRegion, activePeriodLabel, categories]);
+  }, [
+    selectedReportId,
+    activeSelectedReport,
+    selectedOfficeReports,
+    nationalStats,
+    selectedRegion,
+    selectedCenterFilter,
+    activePeriodLabel,
+    categories,
+  ]);
 
   // Helper to build a DOEReport object for the infographic poster reflecting the active period / cycle
   const buildPosterReport = (
     mode: 'overview' | 'office',
     targetOfficeId?: string
   ): DOEReport => {
-    const isOverview = mode === 'overview';
+    const isMobileFilter =
+      selectedCenterFilter === 'type:mobile' ||
+      selectedRegion === 'เฉพาะกิจ' ||
+      (selectedCenterFilter.startsWith('center:') &&
+        isMobileUnitCenter(selectedCenterFilter.replace('center:', '')));
+
+    const explicitCenterName = selectedCenterFilter.startsWith('center:')
+      ? selectedCenterFilter.replace('center:', '')
+      : null;
+
+    // If a specific standard center name is chosen in Overview mode, check if it belongs to a specific office
+    const matchedOfficeByCenter =
+      explicitCenterName && !isMobileFilter
+        ? (offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES).find(
+            (o) => (o.centerName || '').trim() === explicitCenterName.trim()
+          )
+        : undefined;
+
+    const effectiveTargetOfficeId =
+      mode === 'office'
+        ? targetOfficeId
+        : matchedOfficeByCenter
+        ? matchedOfficeByCenter.id
+        : undefined;
+
+    const isOverview = mode === 'overview' && !effectiveTargetOfficeId;
     const targetReports = isOverview
       ? reportedList
-      : reportedList.filter((r) => r.officeId === targetOfficeId);
+      : reportedList.filter((r) => r.officeId === effectiveTargetOfficeId);
 
     const targetOfficeObj =
-      offices?.find((o) => o.id === targetOfficeId) ||
-      EMPLOYMENT_OFFICES.find((o) => o.id === targetOfficeId);
+      offices?.find((o) => o.id === effectiveTargetOfficeId) ||
+      EMPLOYMENT_OFFICES.find((o) => o.id === effectiveTargetOfficeId);
 
     const baseRep =
       targetReports[0] ||
-      reports.find((r) => r.officeId === targetOfficeId) ||
+      reports.find((r) => r.officeId === effectiveTargetOfficeId) ||
       (targetOfficeObj
         ? ({
             officeId: targetOfficeObj.id,
@@ -588,13 +875,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     });
 
     const officeName = isOverview
-      ? selectedRegion === 'ทั้งหมด'
+      ? isMobileFilter
+        ? selectedRegion === 'ทั้งหมด' || selectedRegion === 'เฉพาะกิจ'
+          ? 'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit)'
+          : `หน่วยบริการเคลื่อนที่ (Mobile Unit) (${selectedRegion})`
+        : explicitCenterName
+        ? explicitCenterName
+        : selectedRegion === 'ทั้งหมด'
         ? 'ศูนย์บริการใบอนุญาตทำงาน (ภาพรวมทั้งประเทศ)'
         : `ศูนย์บริการใบอนุญาตทำงาน (${selectedRegion})`
       : targetOfficeObj?.name || baseRep?.officeName || 'สำนักงานจัดหางาน';
 
     const officeNameEn = isOverview
-      ? selectedRegion === 'ทั้งหมด'
+      ? isMobileFilter
+        ? selectedRegion === 'ทั้งหมด' || selectedRegion === 'เฉพาะกิจ'
+          ? 'Foreign Workers Employment Mobile Unit (National Overview)'
+          : `Foreign Workers Employment Mobile Unit (${selectedRegion})`
+        : selectedRegion === 'ทั้งหมด'
         ? 'Foreign Workers Employment Center (National Overview)'
         : selectedRegion === 'เฉพาะกิจ'
         ? 'Foreign Workers Employment Center (Special Task Force)'
@@ -602,12 +899,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       : targetOfficeObj?.nameEn || baseRep?.officeNameEn || 'Provincial Employment Office';
 
     const centerName = isOverview
-      ? selectedRegion === 'ทั้งหมด'
+      ? isMobileFilter
+        ? explicitCenterName || MOBILE_UNIT_DEFAULT_LABEL
+        : explicitCenterName
+        ? explicitCenterName
+        : selectedCenterFilter === 'type:standard'
+        ? selectedRegion === 'ทั้งหมด'
+          ? 'ศูนย์บริการประจำสำนักงาน (76 จังหวัด + กทม. 10 พื้นที่)'
+          : `ศูนย์บริการประจำสำนักงานในพื้นที่ ${selectedRegion}`
+        : selectedRegion === 'ทั้งหมด'
         ? 'ภาพรวม 76 จังหวัด + กทม. 10 พื้นที่'
         : selectedRegion === 'เฉพาะกิจ'
-        ? 'รวมศูนย์เฉพาะกิจ'
+        ? MOBILE_UNIT_DEFAULT_LABEL
         : `รวมสำนักงานจัดหางานในพื้นที่ ${selectedRegion}`
-      : targetOfficeObj?.centerName || baseRep?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+      : isMobileFilter
+      ? explicitCenterName || MOBILE_UNIT_DEFAULT_LABEL
+      : explicitCenterName
+      ? explicitCenterName
+      : selectedCenterFilter === 'type:standard'
+      ? targetOfficeObj?.centerName || baseRep?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'
+      : baseRep?.centerName || targetOfficeObj?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
 
     return {
       id: `poster-cycle-${Date.now()}`,
@@ -694,143 +1005,440 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6">
       {/* 1. TOP NATIONAL DASHBOARD CONTROL BAR */}
-      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-blue-900 text-white flex items-center justify-center shadow-md shrink-0">
-              <Globe2 className="w-6 h-6 text-amber-400" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider bg-blue-100 text-blue-900 px-2.5 py-0.5 rounded-full">
-                  DOE National Overview
-                </span>
-                <span className="text-sm text-slate-500 hidden sm:inline">
-                  ครอบคลุม 76 จังหวัด + กทม. 10 พื้นที่
-                </span>
+      <div className="bg-white rounded-2xl p-5 sm:p-6 border border-slate-200/90 shadow-xs space-y-4">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#0f2856] via-blue-900 to-sky-800 text-white flex items-center justify-center shadow-md ring-4 ring-blue-50 shrink-0">
+                <Globe2 className="w-6 h-6 text-amber-300" />
               </div>
-              <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight mt-0.5 font-['Prompt']">
-                แดชบอร์ดสรุปผลการปฏิบัติงานภาพรวมทั้งประเทศ
-              </h2>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider bg-gradient-to-r from-blue-900 to-indigo-900 text-amber-300 px-3 py-0.5 rounded-full shadow-2xs">
+                    DOE National Overview
+                  </span>
+                  <span className="text-xs sm:text-sm font-semibold text-slate-500 hidden sm:inline">
+                    • ครอบคลุม 76 จังหวัด + กทม. 10 พื้นที่
+                  </span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight mt-1 font-['Prompt'] tracking-tight">
+                  แดชบอร์ดสรุปผลการปฏิบัติงานภาพรวมทั้งประเทศ
+                </h2>
+              </div>
             </div>
           </div>
 
-          {/* Date & Region Selectors */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Date / Period Cycle Filter */}
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm shadow-2xs">
-              <CalendarRange className="w-4.5 h-4.5 text-blue-700 shrink-0" />
-              <label htmlFor="dashboard-date-filter" className="text-slate-800 font-bold text-sm shrink-0">
-                รอบ/ช่วงวันที่:
-              </label>
-              <select
-                id="dashboard-date-filter"
-                value={selectedCycleKey}
-                onChange={(e) => {
-                  setSelectedCycleKey(e.target.value);
-                  setSelectedReportId(null);
-                }}
-                className="bg-transparent font-bold text-slate-900 focus:outline-hidden cursor-pointer text-sm"
-              >
-                <option value="custom">
-                  📅 กำหนดช่วงวันที่เอง (ระบุวันเริ่ม - สิ้นสุด)...
-                </option>
+          {/* Date, Region, Province & Center/Mobile Unit Selectors + Primary Actions */}
+          <div className="w-full bg-gradient-to-r from-slate-50/95 via-sky-50/40 to-slate-50/95 p-3 sm:p-3.5 rounded-2xl border border-slate-200/90 shadow-inner flex flex-wrap items-stretch gap-2.5">
+            {/* 1. Date / Period Cycle Filter (Grouped by Month & Buddhist Year -> Click Month to show Daily) */}
+            <div
+              ref={dateDropdownRef}
+              className="relative flex items-center gap-2.5 bg-white hover:border-blue-300 border border-slate-200/90 rounded-xl px-3 py-2 text-sm shadow-2xs transition-all min-w-[230px] flex-1 sm:flex-initial"
+            >
+              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 flex items-center justify-center shrink-0">
+                <CalendarRange className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="block text-[10.5px] font-bold uppercase tracking-wider text-slate-400 leading-none mb-1">
+                  รอบ / ช่วงวันที่รายงาน
+                </span>
+                <button
+                  type="button"
+                  id="dashboard-date-filter"
+                  onClick={() => {
+                    setIsDateDropdownOpen((prev) => {
+                      const nextOpen = !prev;
+                      if (nextOpen) {
+                        setExpandedMonthKey(null);
+                      }
+                      return nextOpen;
+                    });
+                  }}
+                  className="w-full flex items-center justify-between gap-2 bg-transparent font-extrabold text-slate-900 focus:outline-hidden cursor-pointer text-xs sm:text-sm text-left leading-tight"
+                >
+                  <span className="truncate">{selectedDateDisplayLabel}</span>
+                  <ChevronDown
+                    className={`w-4 h-4 text-slate-400 shrink-0 transition-transform duration-200 ${
+                      isDateDropdownOpen ? 'rotate-180 text-blue-700' : ''
+                    }`}
+                  />
+                </button>
+              </div>
 
-                <optgroup label="📆 เลือกดูแบบรายวัน">
-                  {availableDates.map((d) => (
-                    <option key={`single:${d}`} value={`single:${d}`}>
-                      {d === todayStr
-                        ? `รายวัน (วันนี้): ${formatThaiDateShort(d)} (${d})`
-                        : `รายวัน: ${formatThaiDateShort(d)} (${d})`}
-                    </option>
+              {isDateDropdownOpen && (
+                <div className="absolute left-0 top-full mt-2 w-80 sm:w-96 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 overflow-hidden">
+                  {/* Top Options: Custom Range & All Cumulative */}
+                  <div className="p-2 border-b border-slate-100 bg-slate-50/70 space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCycleKey('custom');
+                        setSelectedReportId(null);
+                        setIsDateDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                        selectedCycleKey === 'custom'
+                          ? 'bg-blue-900 text-white'
+                          : 'text-slate-700 hover:bg-slate-200/70'
+                      }`}
+                    >
+                      <span>📅 กำหนดช่วงวันที่เอง (ระบุวันเริ่ม - สิ้นสุด)...</span>
+                      {selectedCycleKey === 'custom' && <Check className="w-4 h-4 shrink-0" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCycleKey('all');
+                        setSelectedReportId(null);
+                        setIsDateDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                        selectedCycleKey === 'all'
+                          ? 'bg-blue-900 text-white'
+                          : 'text-slate-700 hover:bg-slate-200/70'
+                      }`}
+                    >
+                      <span>📊 ภาพรวมสะสมทั้งหมด ({reports.length} รายการ)</span>
+                      {selectedCycleKey === 'all' && <Check className="w-4 h-4 shrink-0" />}
+                    </button>
+                  </div>
+
+                  {/* Grouped by Month & Buddhist Era Year (ปี พ.ศ.) */}
+                  <div className="p-2.5 max-h-80 overflow-y-auto space-y-1.5">
+                    <div className="px-2 py-1 flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+                        📆 เลือกดูแบบรายวัน (คลิกเลือกเดือนเพื่อดูรายวัน)
+                      </span>
+                    </div>
+
+                    {availableMonthGroups.map((group) => {
+                      const isExpanded = expandedMonthKey === group.monthKey;
+                      const isActiveMonth =
+                        selectedCycleKey === `month:${group.monthKey}` ||
+                        (selectedCycleKey.startsWith('single:') &&
+                          selectedCycleKey.replace('single:', '').startsWith(group.monthKey));
+
+                      return (
+                        <div
+                          key={group.monthKey}
+                          className={`rounded-xl border transition-all overflow-hidden ${
+                            isExpanded
+                              ? 'border-blue-300 bg-blue-50/30 shadow-2xs'
+                              : isActiveMonth
+                              ? 'border-sky-200 bg-sky-50/50'
+                              : 'border-slate-200 bg-white'
+                          }`}
+                        >
+                          {/* Month Header Button: Click to expand/collapse daily options */}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedMonthKey((prev) =>
+                                prev === group.monthKey ? null : group.monthKey
+                              )
+                            }
+                            className="w-full px-3 py-2.5 text-left flex items-center justify-between gap-2 hover:bg-blue-50/70 transition-colors cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div
+                                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                  isExpanded || isActiveMonth
+                                    ? 'bg-blue-900 text-amber-300'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {isExpanded ? (
+                                  <FolderOpen className="w-4 h-4" />
+                                ) : (
+                                  <Folder className="w-4 h-4" />
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-sm font-extrabold text-slate-900 font-['Prompt'] truncate">
+                                  {group.monthLabel}
+                                </div>
+                                <div className="text-[11px] text-slate-500 font-medium">
+                                  มีข้อมูล {group.dates.length} วัน • รวม {group.totalReportsInMonth} รายงาน
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-900">
+                                {isExpanded ? 'ซ่อนรายวัน' : 'คลิกดูรายวัน'}
+                              </span>
+                              {isExpanded ? (
+                                <ChevronDown className="w-4 h-4 text-blue-700" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4 text-slate-400" />
+                              )}
+                            </div>
+                          </button>
+
+                          {/* Expanded Daily List inside the selected Month */}
+                          {isExpanded && (
+                            <div className="px-2.5 pb-2.5 pt-1 border-t border-blue-100 bg-white space-y-1">
+                              {group.dates.map(({ date: d, reportCount }) => {
+                                const isSelectedDay = selectedCycleKey === `single:${d}`;
+                                const isToday = d === todayStr;
+                                return (
+                                  <button
+                                    key={`single:${d}`}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedCycleKey(`single:${d}`);
+                                      setSelectedReportId(null);
+                                      setIsDateDropdownOpen(false);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                      isSelectedDay
+                                        ? 'bg-blue-900 text-white shadow-2xs'
+                                        : 'text-slate-800 hover:bg-sky-50'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <Calendar
+                                        className={`w-3.5 h-3.5 shrink-0 ${
+                                          isSelectedDay ? 'text-amber-300' : 'text-sky-600'
+                                        }`}
+                                      />
+                                      <span className="truncate">
+                                        {isToday
+                                          ? `รายวัน (วันนี้): ${formatThaiDateShort(d)} (${d})`
+                                          : `รายวัน: ${formatThaiDateShort(d)} (${d})`}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <span
+                                        className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${
+                                          isSelectedDay
+                                            ? 'bg-blue-800 text-amber-200'
+                                            : 'bg-slate-100 text-slate-600'
+                                        }`}
+                                      >
+                                        {reportCount} แห่ง
+                                      </span>
+                                      {isSelectedDay && <Check className="w-3.5 h-3.5 text-amber-300" />}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Region Selector */}
+            <div className="flex items-center gap-2.5 bg-white hover:border-indigo-300 border border-slate-200/90 rounded-xl px-3 py-2 text-sm shadow-2xs transition-all min-w-[195px] flex-1 sm:flex-initial">
+              <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 flex items-center justify-center shrink-0">
+                <Filter className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <label
+                  htmlFor="dashboard-region-filter"
+                  className="block text-[10.5px] font-bold uppercase tracking-wider text-slate-400 leading-none mb-1"
+                >
+                  ภูมิภาค
+                </label>
+                <select
+                  id="dashboard-region-filter"
+                  value={selectedRegion}
+                  onChange={(e) => {
+                    setSelectedRegion(e.target.value);
+                    setSelectedReportId(null);
+                  }}
+                  className="w-full bg-transparent font-extrabold text-blue-950 focus:outline-hidden cursor-pointer text-xs sm:text-sm leading-tight truncate"
+                >
+                  <option value="ทั้งหมด">ภาพรวมทั้งประเทศ (ทุกภาค)</option>
+                  <option value="กรุงเทพมหานคร">กรุงเทพมหานคร (10 พื้นที่)</option>
+                  <option value="ภาคกลางและตะวันตก">ภาคกลางและตะวันตก (16 จังหวัด)</option>
+                  <option value="ภาคตะวันออก">ภาคตะวันออก (8 จังหวัด)</option>
+                  <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ (20 จังหวัด)</option>
+                  <option value="ภาคเหนือ">ภาคเหนือ (17 จังหวัด)</option>
+                  <option value="ภาคใต้">ภาคใต้ (14 จังหวัด)</option>
+                  <option value="เฉพาะกิจ">เฉพาะกิจ (Mobile Unit)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* 3. Province Quick Selector (Grouped by Region) */}
+            <div
+              className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm shadow-2xs border transition-all min-w-[205px] flex-1 sm:flex-initial ${
+                activeSelectedReport
+                  ? 'bg-sky-50/90 border-sky-300 ring-2 ring-sky-200/50'
+                  : 'bg-white hover:border-sky-300 border-slate-200/90'
+              }`}
+            >
+              <div
+                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                  activeSelectedReport
+                    ? 'bg-sky-600 text-white border-sky-600'
+                    : 'bg-sky-50 text-sky-700 border-sky-100'
+                }`}
+              >
+                <Building2 className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <label
+                  htmlFor="dashboard-province-filter"
+                  className="block text-[10.5px] font-bold uppercase tracking-wider text-slate-400 leading-none mb-1"
+                >
+                  เลือกพื้นที่ / จังหวัด
+                </label>
+                <select
+                  id="dashboard-province-filter"
+                  value={
+                    activeSelectedReport
+                      ? groupedReportedList
+                          .flatMap((g) => g.reports)
+                          .find((r) => r.officeId === activeSelectedReport.officeId)?.id ||
+                        selectedReportId ||
+                        'all'
+                      : 'all'
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSelectedReportId(val === 'all' ? null : val);
+                    setSelectedCenterFilter('all');
+                  }}
+                  className="w-full bg-transparent font-extrabold text-blue-950 focus:outline-hidden cursor-pointer max-w-[200px] truncate text-xs sm:text-sm leading-tight"
+                >
+                  <option value="all">
+                    ดูภาพรวมทั้งหมด ({groupedReportedList.reduce((acc, g) => acc + g.reports.length, 0)} จังหวัด)
+                  </option>
+                  {groupedReportedList.map((group) => (
+                    <optgroup key={group.region} label={group.regionLabel}>
+                      {group.reports.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.officeName}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
-                </optgroup>
-
-                <option value="all">
-                  📊 ภาพรวมสะสมทั้งหมด (รายงานทั้งหมด {reports.length} รายการ)
-                </option>
-              </select>
+                </select>
+              </div>
             </div>
 
-            {/* Region Selector */}
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm shadow-2xs">
-              <Filter className="w-4.5 h-4.5 text-slate-500 shrink-0" />
-              <label htmlFor="dashboard-region-filter" className="text-slate-700 font-bold text-sm shrink-0">ภูมิภาค:</label>
-              <select
-                id="dashboard-region-filter"
-                value={selectedRegion}
-                onChange={(e) => {
-                  setSelectedRegion(e.target.value);
-                  setSelectedReportId(null);
-                }}
-                className="bg-transparent font-bold text-blue-950 focus:outline-hidden cursor-pointer text-sm"
+            {/* 4. Center / Mobile Unit Selector (ต่อจากการเลือกจังหวัด) */}
+            <div
+              className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm shadow-2xs border transition-all min-w-[225px] flex-1 sm:flex-initial ${
+                selectedCenterFilter === 'type:mobile' ||
+                (selectedCenterFilter.startsWith('center:') &&
+                  isMobileUnitCenter(selectedCenterFilter.replace('center:', '')))
+                  ? 'bg-gradient-to-r from-amber-50 via-orange-50/60 to-amber-50 border-amber-300 ring-2 ring-amber-200/60'
+                  : selectedCenterFilter !== 'all'
+                  ? 'bg-sky-50/90 border-sky-300 ring-2 ring-sky-200/50'
+                  : 'bg-white hover:border-teal-300 border-slate-200/90'
+              }`}
+            >
+              <div
+                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                  selectedCenterFilter === 'type:mobile' ||
+                  (selectedCenterFilter.startsWith('center:') &&
+                    isMobileUnitCenter(selectedCenterFilter.replace('center:', '')))
+                    ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
+                    : selectedCenterFilter !== 'all'
+                    ? 'bg-sky-600 text-white border-sky-600'
+                    : 'bg-teal-50 text-teal-700 border-teal-100'
+                }`}
               >
-                <option value="ทั้งหมด">ภาพรวมทั้งประเทศ (ทุกภาค)</option>
-                <option value="กรุงเทพมหานคร">กรุงเทพมหานคร (10 พื้นที่)</option>
-                <option value="ภาคกลางและตะวันตก">ภาคกลางและตะวันตก (16 จังหวัด)</option>
-                <option value="ภาคตะวันออก">ภาคตะวันออก (8 จังหวัด)</option>
-                <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ (20 จังหวัด)</option>
-                <option value="ภาคเหนือ">ภาคเหนือ (17 จังหวัด)</option>
-                <option value="ภาคใต้">ภาคใต้ (14 จังหวัด)</option>
-                <option value="เฉพาะกิจ">เฉพาะกิจ (Mobile Unit)</option>
-              </select>
-            </div>
+                {selectedCenterFilter === 'type:mobile' ||
+                (selectedCenterFilter.startsWith('center:') &&
+                  isMobileUnitCenter(selectedCenterFilter.replace('center:', ''))) ? (
+                  <Truck className="w-4 h-4" />
+                ) : (
+                  <MapPin className="w-4 h-4" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <label
+                  htmlFor="dashboard-center-filter"
+                  className="block text-[10.5px] font-bold uppercase tracking-wider text-slate-400 leading-none mb-1"
+                >
+                  เลือกศูนย์ / Mobile Unit
+                </label>
+                <select
+                  id="dashboard-center-filter"
+                  value={selectedCenterFilter}
+                  onChange={(e) => setSelectedCenterFilter(e.target.value)}
+                  className="w-full bg-transparent font-extrabold text-blue-950 focus:outline-hidden cursor-pointer max-w-[230px] truncate text-xs sm:text-sm leading-tight"
+                >
+                  <option value="all">
+                    {activeSelectedReport
+                      ? `รวมทุกศูนย์ของจังหวัดนี้ (${centerFilterOptions.totalCount} รายการ)`
+                      : `ทุกศูนย์บริการ + Mobile Unit (${centerFilterOptions.totalCount} รายการ)`}
+                  </option>
 
-            {/* Province Quick Selector (Grouped by Region) */}
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm shadow-2xs">
-              <Building2 className="w-4.5 h-4.5 text-slate-500 shrink-0" />
-              <label htmlFor="dashboard-province-filter" className="text-slate-700 font-bold text-sm shrink-0">เลือกจังหวัด:</label>
-              <select
-                id="dashboard-province-filter"
-                value={selectedReportId || 'all'}
-                onChange={(e) => setSelectedReportId(e.target.value === 'all' ? null : e.target.value)}
-                className="bg-transparent font-bold text-blue-950 focus:outline-hidden cursor-pointer max-w-[200px] truncate text-sm"
-              >
-                <option value="all">ดูภาพรวมทั้งหมด ({reportedList.length} แห่ง)</option>
-                {groupedReportedList.map((group) => (
-                  <optgroup key={group.region} label={group.regionLabel}>
-                    {group.reports.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.officeName} {r.centerName ? `• ${r.centerName}` : ''} ({formatThaiDateShort(r.reportDate)})
-                      </option>
-                    ))}
+                  <optgroup label="จำแนกตามรูปแบบบริการ (ศูนย์ประจำ vs Mobile Unit)">
+                    <option value="type:standard">
+                      🏢 ศูนย์บริการประจำสำนักงาน ({centerFilterOptions.standardCount} รายการ)
+                    </option>
+                    <option value="type:mobile">
+                      🚚 หน่วยบริการเคลื่อนที่ (Mobile Unit) ({centerFilterOptions.mobileCount} รายการ)
+                    </option>
                   </optgroup>
-                ))}
-              </select>
+
+                  {centerFilterOptions.distinctCenters.length > 0 && (
+                    <optgroup
+                      label={
+                        activeSelectedReport
+                          ? `รายชื่อศูนย์ของ ${activeSelectedReport.officeName}`
+                          : 'เลือกชื่อศูนย์บริการ / จุดบริการเฉพาะ'
+                      }
+                    >
+                      {centerFilterOptions.distinctCenters.map((c) => (
+                        <option key={c.name} value={`center:${c.name}`}>
+                          {c.isMobile ? '🚚' : '🏢'} {c.name} ({c.count} รายการ)
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
             </div>
 
-            {/* View Infographic Poster for the active cycle / view */}
-            <button
-              type="button"
-              onClick={() => {
-                const reportForPoster = buildPosterReport(
-                  displayedStats.isDrilldown && activeSelectedReport ? 'office' : 'overview',
-                  activeSelectedReport?.officeId
-                );
-                onSelectReport(reportForPoster);
-              }}
-              className="text-sm font-bold px-4 py-2 bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-500 hover:to-blue-600 text-white rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:shadow-md active:scale-95"
-              title="เปิดดูและดาวน์โหลดโปสเตอร์สรุปผลตามรอบที่เลือก"
-            >
-              <Eye className="w-4.5 h-4.5 text-amber-300" />
-              <span>
-                {selectedCycleKey === 'all'
-                  ? 'ดูโปสเตอร์ภาพรวมสะสม'
-                  : selectedCycleKey === 'custom'
-                  ? 'ดูโปสเตอร์ตามช่วงวันที่'
-                  : selectedCycleKey.startsWith('single:')
-                  ? 'ดูโปสเตอร์ประจำวัน'
-                  : 'ดูโปสเตอร์สรุปผล'}
-              </span>
-            </button>
+            {/* 5. Action Buttons Group */}
+            <div className="flex items-center gap-2 ml-auto flex-wrap sm:flex-nowrap">
+              {/* View Infographic Poster for the active cycle / view */}
+              <button
+                type="button"
+                onClick={() => {
+                  const reportForPoster = buildPosterReport(
+                    displayedStats.isDrilldown && activeSelectedReport ? 'office' : 'overview',
+                    activeSelectedReport?.officeId
+                  );
+                  onSelectReport(reportForPoster);
+                }}
+                className="h-full min-h-[46px] text-xs sm:text-sm font-bold px-4 py-2.5 bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-700 hover:from-sky-500 hover:to-indigo-600 text-white rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:shadow-md active:scale-95 shrink-0"
+                title="เปิดดูและดาวน์โหลดโปสเตอร์สรุปผลตามรอบที่เลือก"
+              >
+                <Eye className="w-4 h-4 text-amber-300 shrink-0" />
+                <span>
+                  {selectedCycleKey === 'all'
+                    ? 'ดูโปสเตอร์ภาพรวมสะสม'
+                    : selectedCycleKey === 'custom'
+                    ? 'ดูโปสเตอร์ตามช่วงวันที่'
+                    : selectedCycleKey.startsWith('single:')
+                    ? 'ดูโปสเตอร์ประจำวัน'
+                    : 'ดูโปสเตอร์สรุปผล'}
+                </span>
+              </button>
 
-            <button
-              onClick={() => onNewReport()}
-              className="text-sm font-bold px-4 py-2 bg-blue-900 hover:bg-blue-800 text-white rounded-xl shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
-            >
-              <PlusCircle className="w-4.5 h-4.5" />
-              <span>บันทึกรายงาน</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onNewReport()}
+                className="h-full min-h-[46px] text-xs sm:text-sm font-bold px-4 py-2.5 bg-[#0f2856] hover:bg-blue-900 text-white rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:shadow-md active:scale-95 shrink-0"
+              >
+                <PlusCircle className="w-4 h-4 text-emerald-300 shrink-0" />
+                <span>บันทึกรายงาน</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -970,9 +1578,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={() => {
-                const targetPoster = isCycleMode
-                  ? buildPosterReport('office', activeSelectedReport?.officeId)
-                  : activeSelectedReport;
+                const targetPoster =
+                  isCycleMode || selectedCenterFilter !== 'all' || selectedOfficeReports.length > 1
+                    ? buildPosterReport('office', activeSelectedReport?.officeId)
+                    : {
+                        ...activeSelectedReport,
+                        centerName: displayedStats.centerName || activeSelectedReport.centerName,
+                      };
                 if (targetPoster) onSelectReport(targetPoster);
               }}
               className="text-sm font-bold px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
@@ -1503,6 +2115,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             onClick={() => {
                               const targetPoster = isCycleMode
                                 ? buildPosterReport('office', report.officeId)
+                                : selectedCenterFilter === 'type:mobile' || selectedRegion === 'เฉพาะกิจ'
+                                ? { ...report, centerName: MOBILE_UNIT_DEFAULT_LABEL }
+                                : selectedCenterFilter.startsWith('center:')
+                                ? { ...report, centerName: selectedCenterFilter.replace('center:', '') }
                                 : report;
                               onSelectReport(targetPoster);
                             }}

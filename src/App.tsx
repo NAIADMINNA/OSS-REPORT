@@ -191,6 +191,23 @@ export default function App() {
     return EMPLOYMENT_OFFICES;
   });
 
+  const normalizeCategoriesList = (list: ReportCategory[]): ReportCategory[] => {
+    const orderMap = new Map(DEFAULT_CATEGORIES.map((c, idx) => [c.id, idx]));
+    // If both section59 and cat_1791818621214 exist and section59 is placed before cat_1791818621214,
+    // restore the official 1–8 order
+    const idxCat1 = list.findIndex((c) => c.id === 'cat_1791818621214');
+    const idxSec59 = list.findIndex((c) => c.id === 'section59');
+    if (idxCat1 > 0 && idxSec59 >= 0 && idxSec59 < idxCat1) {
+      return [...list].sort((a, b) => {
+        const oa = orderMap.get(a.id) ?? 999;
+        const ob = orderMap.get(b.id) ?? 999;
+        if (oa !== ob) return oa - ob;
+        return a.id.localeCompare(b.id);
+      });
+    }
+    return list;
+  };
+
   // 3. Categories / Sections Database (กลุ่มมาตรา)
   const [categories, setCategories] = useState<ReportCategory[]>(() => {
     try {
@@ -198,7 +215,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return normalizeCategoriesList(parsed);
         }
       }
     } catch (e) {
@@ -432,7 +449,7 @@ export default function App() {
         // 4. Subscribe to categories
         const unsubCats = subscribeCategories((onlineCats) => {
           if (onlineCats && onlineCats.length > 0) {
-            setCategories(onlineCats);
+            setCategories(normalizeCategoriesList(onlineCats));
           }
         });
         unsubs.push(unsubCats);
@@ -902,18 +919,51 @@ export default function App() {
     let finalReport = { ...savedReport };
     const existingByIdIndex = reports.findIndex((r) => r.id === finalReport.id);
 
-    // If not in edit mode and the user switched to a different office or date after a previous save,
-    // generate a fresh ID so it never overwrites the previous office's report
+    const isMobileCenterStr = (c?: string) => {
+      const lower = (c || '').toLowerCase();
+      return lower.includes('mobile unit') || lower.includes('เคลื่อนที่');
+    };
+
+    // If not in edit mode and the user switched to a different office, date, or center/Mobile Unit after a previous save,
+    // generate a fresh ID so it never overwrites the previous center's report
     if (
       !isEditingExistingReport &&
       existingByIdIndex >= 0 &&
       (reports[existingByIdIndex].officeId !== finalReport.officeId ||
-        reports[existingByIdIndex].reportDate !== finalReport.reportDate)
+        reports[existingByIdIndex].reportDate !== finalReport.reportDate ||
+        (reports[existingByIdIndex].centerName || '').trim() !==
+          (finalReport.centerName || '').trim())
     ) {
       finalReport = {
         ...finalReport,
         id: `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    // Ensure no duplicate report for the same office + date + center slot (1 per standard center name, 1 per Mobile Unit)
+    const duplicateSameSlot = reports.find((r) => {
+      if (r.id === finalReport.id) return false;
+      const sameDate = r.reportDate === finalReport.reportDate;
+      const sameOffice =
+        r.officeId === finalReport.officeId ||
+        (r.officeName || '').trim() === (finalReport.officeName || '').trim();
+      if (!sameDate || !sameOffice) return false;
+      const rIsMob = isMobileCenterStr(r.centerName);
+      const finalIsMob = isMobileCenterStr(finalReport.centerName);
+      if (rIsMob && finalIsMob) return true;
+      if (!rIsMob && !finalIsMob) {
+        return (r.centerName || '').trim() === (finalReport.centerName || '').trim();
+      }
+      return false;
+    });
+
+    if (duplicateSameSlot && !isEditingExistingReport) {
+      finalReport = {
+        ...finalReport,
+        id: duplicateSameSlot.id,
+        createdAt: duplicateSameSlot.createdAt || finalReport.createdAt,
         updatedAt: new Date().toISOString(),
       };
     }
@@ -1239,6 +1289,9 @@ export default function App() {
                 <ReportForm
                   key={currentReport.id}
                   initialReport={currentReport}
+                  reports={reports}
+                  isEditingExistingReport={isEditingExistingReport}
+                  onEditExistingReport={handleEditReport}
                   onSave={handleSaveReport}
                   onPreviewLive={setLivePreviewReport}
                   onClearForm={handleClearCurrentReport}

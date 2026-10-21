@@ -63,6 +63,7 @@ export interface EmploymentOffice {
   name: string;
   nameEn: string;
   centerName: string;
+  additionalCenters?: string[];
   region: 'กรุงเทพมหานคร' | 'ภาคกลางและตะวันตก' | 'ภาคเหนือ' | 'ภาคตะวันออกเฉียงเหนือ' | 'ภาคตะวันออก' | 'ภาคใต้' | 'เฉพาะกิจ' | 'ส่วนกลาง';
   defaultPhone?: string;
   defaultLine?: string;

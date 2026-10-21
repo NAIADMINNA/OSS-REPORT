@@ -1,5 +1,6 @@
 import React, { forwardRef, useMemo } from 'react';
 import { DOEReport, QueueMetricCategory, ReportCategory, SystemConfig } from '../types/doe';
+import { DEFAULT_CATEGORIES } from '../data/initialAdminData';
 import { DOELogo } from './DOELogo';
 import { formatNumber, formatThaiDateFull } from '../utils/thaiDate';
 import {
@@ -57,123 +58,44 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
     const notIssuedMetricInfo = getQueueMetric('cardsNotIssued', 'บัตรเสีย', 'ใบ');
 
     // Determine active sections list
-    const activeCategories = categories ? categories.filter((c) => c.isActive) : null;
+    const activeCategories =
+      categories && categories.length > 0
+        ? categories.filter((c) => c.isActive)
+        : DEFAULT_CATEGORIES;
 
-    const sections = activeCategories
-      ? activeCategories.map((c, idx) => {
-          let count = 0;
-          if (c.id === 'section59') count = report.section59 || 0;
-          else if (c.id === 'section62') count = report.section62 || 0;
-          else if (c.id === 'section63_1') count = report.section63_1 || 0;
-          else if (c.id === 'section63_2') count = report.section63_2 || 0;
-          else if (c.id === 'section64') count = report.section64 || 0;
-          else if (c.id === 'mouGroup') count = report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0;
-          else if (c.id === 'modifyDetails') count = report.modifyDetails || 0;
-          else if (c.id === 'substituteCard') count = report.substituteCard || 0;
-          else count = report.customCategoryValues?.[c.id] || 0;
+    const sections = activeCategories.map((c, idx) => {
+      let count = 0;
+      if (c.id === 'section59') count = report.section59 || 0;
+      else if (c.id === 'section62') count = report.section62 || 0;
+      else if (c.id === 'section63_1') count = report.section63_1 || 0;
+      else if (c.id === 'section63_2') count = report.section63_2 || 0;
+      else if (c.id === 'section64') count = report.section64 || 0;
+      else if (c.id === 'mouGroup')
+        count = report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0;
+      else if (c.id === 'modifyDetails') count = report.modifyDetails || 0;
+      else if (c.id === 'substituteCard') count = report.substituteCard || 0;
+      else count = report.customCategoryValues?.[c.id] || 0;
 
-          let icon = BookOpen;
-          if (c.id === 'section62') icon = FolderMinus;
-          else if (c.id === 'section63_1') icon = Wrench;
-          else if (c.id === 'section63_2') icon = Users;
-          else if (c.id === 'section64') icon = ShieldCheck;
-          else if (c.id === 'mouGroup') icon = Globe;
-          else if (c.id === 'modifyDetails') icon = Edit3;
-          else if (c.id === 'substituteCard') icon = CreditCard;
+      let icon = BookOpen;
+      if (c.id === 'section62') icon = FolderMinus;
+      else if (c.id === 'section63_1') icon = Wrench;
+      else if (c.id === 'section63_2') icon = Users;
+      else if (c.id === 'section64') icon = ShieldCheck;
+      else if (c.id === 'mouGroup') icon = Globe;
+      else if (c.id === 'modifyDetails') icon = Edit3;
+      else if (c.id === 'substituteCard') icon = CreditCard;
 
-          return {
-            id: c.id,
-            code: c.code || `ม.${idx + 1}`,
-            title: c.title,
-            desc: c.subLabel,
-            count,
-            icon,
-            color: c.color || 'from-blue-600 to-indigo-600',
-            isPrimary: c.id === 'section59' || idx === 0,
-          };
-        })
-      : [
-          {
-            id: 'sec59',
-            code: 'ม.59',
-            title: 'กลุ่มมาตรา 59',
-            desc: 'คนต่างด้าวทำงานทั่วไป',
-            count: report.section59 || 0,
-            icon: BookOpen,
-            color: 'from-blue-600 to-indigo-600',
-            isPrimary: true,
-          },
-          {
-            id: 'sec62',
-            code: 'ม.62',
-            title: 'กลุ่มมาตรา 62',
-            desc: 'ผู้เชี่ยวชาญ / ช่างฝีมือ',
-            count: report.section62 || 0,
-            icon: FolderMinus,
-            color: 'from-indigo-600 to-purple-600',
-            isPrimary: false,
-          },
-          {
-            id: 'sec63_1',
-            code: 'ม.63/1',
-            title: 'กลุ่มมาตรา 63/1',
-            desc: 'ชนกลุ่มน้อย / ผู้มีสถานะตามกฎหมาย',
-            count: report.section63_1 || 0,
-            icon: Wrench,
-            color: 'from-cyan-600 to-blue-600',
-            isPrimary: false,
-          },
-          {
-            id: 'sec63_2',
-            code: 'ม.63/2',
-            title: 'กลุ่มมาตรา 63/2',
-            desc: 'กลุ่มมติ ครม. / แรงงาน 4 สัญชาติ',
-            count: report.section63_2 || 0,
-            icon: Users,
-            color: 'from-amber-500 to-orange-500',
-            isPrimary: false,
-          },
-          {
-            id: 'sec64',
-            code: 'ม.64',
-            title: 'กลุ่มมาตรา 64',
-            desc: 'แรงงานไป-กลับ หรือตามฤดูกาล',
-            count: report.section64 || 0,
-            icon: ShieldCheck,
-            color: 'from-teal-600 to-emerald-600',
-            isPrimary: false,
-          },
-          {
-            id: 'secMOU',
-            code: 'MOU',
-            title: 'กลุ่มนำเข้าตาม MOU',
-            desc: 'แรงงานต่างด้าวนำเข้าตามข้อตกลง MOU',
-            count: report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0,
-            icon: Globe,
-            color: 'from-emerald-600 to-teal-600',
-            isPrimary: false,
-          },
-          {
-            id: 'secModify',
-            code: 'เปลี่ยนแปลง',
-            title: 'เปลี่ยนแปลงรายการ',
-            desc: 'ย้ายนายจ้าง / แก้ไขข้อมูลใบอนุญาต',
-            count: report.modifyDetails || 0,
-            icon: Edit3,
-            color: 'from-violet-600 to-purple-600',
-            isPrimary: false,
-          },
-          {
-            id: 'secSub',
-            code: 'ใบแทน',
-            title: 'ใบแทนใบอนุญาตทำงาน',
-            desc: 'กรณีสูญหาย / บัตรชำรุด / ขอใบแทน',
-            count: report.substituteCard || 0,
-            icon: CreditCard,
-            color: 'from-rose-500 to-pink-600',
-            isPrimary: false,
-          },
-        ];
+      return {
+        id: c.id,
+        code: c.code || `ม.${idx + 1}`,
+        title: c.title,
+        desc: c.subLabel,
+        count,
+        icon,
+        color: c.color || 'from-blue-600 to-indigo-600',
+        isPrimary: idx === 0,
+      };
+    });
 
     const totalIssuedGroups = sections.reduce((acc, s) => acc + s.count, 0);
     const effectiveCardsIssued = Math.max(report.cardsIssued || 0, totalIssuedGroups);
@@ -220,9 +142,21 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
       rawDateStr.includes('ทุกช่วงวัน') ||
       rawDateStr.includes('ถึง');
 
+    const isMobileUnitPoster =
+      (report.centerName || '').includes('Mobile Unit') ||
+      ((report.centerName || '').includes('หน่วยบริการ') &&
+        (report.centerName || '').includes('เคลื่อนที่')) ||
+      (report.officeName || '').includes('Mobile Unit');
+
     let cycleBadge = isCycle ? 'ประจำรอบการรายงาน' : 'ข้อมูลรายงานประจำวัน';
     let cleanDateText = rawDateStr;
-    let cycleSubText = isCycle ? 'สรุปสถิติผลการดำเนินงานตามรอบ' : 'ศูนย์บริการใบอนุญาตทำงานประจำพื้นที่';
+    let cycleSubText = isCycle
+      ? isMobileUnitPoster
+        ? 'สรุปสถิติหน่วยบริการเคลื่อนที่ (Mobile Unit)'
+        : 'สรุปสถิติผลการดำเนินงานตามรอบ'
+      : isMobileUnitPoster
+      ? 'หน่วยบริการเคลื่อนที่ (Mobile Unit)'
+      : 'ศูนย์บริการใบอนุญาตทำงานประจำพื้นที่';
 
     if (rawDateStr.includes('รอบที่ 1')) {
       cycleBadge = 'ประจำรอบที่ 1';
@@ -244,7 +178,9 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
     } else if (rawDateStr.includes('ทุกช่วงวัน')) {
       cycleBadge = 'ภาพรวมข้อมูลสะสม';
       cleanDateText = 'ทุกช่วงวันของการเปิดบริการ';
-      cycleSubText = 'สถิติสะสมตั้งแต่วันแรกถึงปัจจุบัน';
+      cycleSubText = isMobileUnitPoster
+        ? 'สถิติสะสมหน่วยบริการเคลื่อนที่ (Mobile Unit)'
+        : 'สถิติสะสมตั้งแต่วันแรกถึงปัจจุบัน';
     } else if (rawDateStr.startsWith('ประจำรอบ: วันที่ ')) {
       cycleBadge = 'ประจำรอบการรายงาน';
       cleanDateText = rawDateStr.replace('ประจำรอบ: วันที่ ', 'วันที่ ').trim();
@@ -296,9 +232,15 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
       return 9;
     }, [report.officeNameEn]);
 
-    const reportTitleText =
+    const baseReportTitleText =
       systemConfig?.reportTitle ||
       'รายงานผลการปฏิบัติงานศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+
+    const reportTitleText =
+      isMobileUnitPoster &&
+      baseReportTitleText === 'รายงานผลการปฏิบัติงานศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'
+        ? 'รายงานผลการปฏิบัติงานหน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่'
+        : baseReportTitleText;
 
     const reportTitleFontSize = useMemo(() => {
       const len = reportTitleText.trim().length;
@@ -311,12 +253,13 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
     // Center name display logic for clean multiline rendering without negative margins or vertical offsets
     const centerNameDisplay = useMemo(() => {
       const name = report.centerName || '';
-      if (!name) {
+      if (!name && !isMobileUnitPoster) {
         return { isMultiline: false, line1: '', line2: '', hasSeparator: false, fontSize: '11.5px' };
       }
 
       // Check for Mobile Unit (หน่วยบริการเคลื่อนที่)
       if (
+        isMobileUnitPoster ||
         name.includes('Mobile Unit') ||
         (name.includes('หน่วยบริการ') && name.includes('เคลื่อนที่'))
       ) {
@@ -488,7 +431,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                     <span>{cycleSubText}</span>
                   </>
                 ) : (
-                  <span>ศูนย์บริการใบอนุญาตทำงานประจำพื้นที่</span>
+                  <span>{cycleSubText}</span>
                 )}
               </div>
             </div>

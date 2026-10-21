@@ -1,9 +1,8 @@
-import React, { useState, useId, useMemo } from 'react';
+import React, { useState, useId, useMemo, useRef, useEffect } from 'react';
 import { DOEReport } from '../types/doe';
 import { formatThaiDateShort, formatThaiDateFull } from '../utils/thaiDate';
 import { AdminPinModal } from './AdminPinModal';
 import {
-  FileText,
   Search,
   Calendar,
   Copy,
@@ -18,6 +17,52 @@ import {
   ChevronRight,
   ChevronsUpDown,
 } from 'lucide-react';
+
+const THAI_MONTHS_FULL = [
+  'มกราคม',
+  'กุมภาพันธ์',
+  'มีนาคม',
+  'เมษายน',
+  'พฤษภาคม',
+  'มิถุนายน',
+  'กรกฎาคม',
+  'สิงหาคม',
+  'กันยายน',
+  'ตุลาคม',
+  'พฤศจิกายน',
+  'ธันวาคม',
+];
+
+function getMonthMetaFromIsoDate(dateStr: string): {
+  monthKey: string;
+  monthLabel: string;
+  shortMonthLabel: string;
+} {
+  if (!dateStr || dateStr.length < 7 || !dateStr.includes('-')) {
+    return {
+      monthKey: 'unknown',
+      monthLabel: 'ไม่ระบุเดือน/ปี',
+      shortMonthLabel: 'ไม่ระบุเดือน',
+    };
+  }
+  const [yStr, mStr] = dateStr.split('-');
+  const year = Number(yStr);
+  const monthIdx = Number(mStr) - 1;
+  if (isNaN(year) || isNaN(monthIdx) || monthIdx < 0 || monthIdx > 11) {
+    return {
+      monthKey: 'unknown',
+      monthLabel: 'ไม่ระบุเดือน/ปี',
+      shortMonthLabel: 'ไม่ระบุเดือน',
+    };
+  }
+  const thaiYear = year + 543;
+  const monthName = THAI_MONTHS_FULL[monthIdx];
+  return {
+    monthKey: `${yStr}-${mStr}`,
+    monthLabel: `เดือน${monthName} พ.ศ. ${thaiYear}`,
+    shortMonthLabel: `${monthName} ${thaiYear}`,
+  };
+}
 
 interface DailyNotesTableProps {
   reports: DOEReport[];
@@ -48,8 +93,25 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
   const [copiedSummary, setCopiedSummary] = useState(false);
   const [copiedFolderDate, setCopiedFolderDate] = useState<string | null>(null);
 
-  // Track which daily folders are collapsed (by default, folders are expanded for quick viewing)
+  // Track which month is expanded into daily folders (by default collapsed into month names)
+  const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
+  // Track which daily folders are collapsed inside an expanded month
   const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({});
+
+  // Custom dropdown state for Date Filter
+  const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
+  const [dropdownExpandedMonth, setDropdownExpandedMonth] = useState<string | null>(null);
+  const dateDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dateDropdownRef.current && !dateDropdownRef.current.contains(e.target as Node)) {
+        setIsDateDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Admin authentication state
   const [adminModalOpen, setAdminModalOpen] = useState(false);
@@ -84,7 +146,42 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
     return allFolderStats.map((f) => f.date);
   }, [allFolderStats]);
 
-  // Filtered reports list
+  // Group allFolderStats by same Month and Buddhist Year (ปี พ.ศ.) for the top shelf & dropdown
+  const allMonthGroups = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        monthKey: string;
+        monthLabel: string;
+        shortMonthLabel: string;
+        days: typeof allFolderStats;
+        totalReports: number;
+        totalWithNotes: number;
+      }
+    >();
+
+    allFolderStats.forEach((f) => {
+      const meta = getMonthMetaFromIsoDate(f.date);
+      if (!map.has(meta.monthKey)) {
+        map.set(meta.monthKey, {
+          monthKey: meta.monthKey,
+          monthLabel: meta.monthLabel,
+          shortMonthLabel: meta.shortMonthLabel,
+          days: [],
+          totalReports: 0,
+          totalWithNotes: 0,
+        });
+      }
+      const grp = map.get(meta.monthKey)!;
+      grp.days.push(f);
+      grp.totalReports += f.total;
+      grp.totalWithNotes += f.withNotes;
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  }, [allFolderStats]);
+
+  // Filtered reports list (supports 'ทั้งหมด', 'month:YYYY-MM', or 'YYYY-MM-DD')
   const filteredReports = useMemo(() => {
     return reports.filter((r) => {
       const q = (searchTerm || '').toLowerCase().trim();
@@ -99,8 +196,15 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
       const matchRegion =
         selectedRegion === 'ทั้งหมด' || r.region === selectedRegion;
 
-      const matchDate =
-        selectedDate === 'ทั้งหมด' || r.reportDate === selectedDate;
+      let matchDate = true;
+      if (selectedDate !== 'ทั้งหมด') {
+        if (selectedDate.startsWith('month:')) {
+          const ym = selectedDate.replace('month:', '');
+          matchDate = (r.reportDate || '').startsWith(ym);
+        } else {
+          matchDate = r.reportDate === selectedDate;
+        }
+      }
 
       const hasNotes = Boolean(r.notes && r.notes.trim().length > 0);
       const matchNotesFilter = onlyWithNotes ? hasNotes : true;
@@ -143,10 +247,55 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
       });
   }, [filteredReports]);
 
+  // Group dailyFolders by Month & Buddhist Year for the main list
+  const monthlyDailyFolders = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        monthKey: string;
+        monthLabel: string;
+        shortMonthLabel: string;
+        folders: DailyNoteFolder[];
+        totalItems: number;
+        totalNotes: number;
+        allItemsInMonth: DOEReport[];
+      }
+    >();
+
+    dailyFolders.forEach((folder) => {
+      const meta = getMonthMetaFromIsoDate(folder.date);
+      if (!map.has(meta.monthKey)) {
+        map.set(meta.monthKey, {
+          monthKey: meta.monthKey,
+          monthLabel: meta.monthLabel,
+          shortMonthLabel: meta.shortMonthLabel,
+          folders: [],
+          totalItems: 0,
+          totalNotes: 0,
+          allItemsInMonth: [],
+        });
+      }
+      const grp = map.get(meta.monthKey)!;
+      grp.folders.push(folder);
+      grp.totalItems += folder.items.length;
+      grp.totalNotes += folder.notesCount;
+      grp.allItemsInMonth.push(...folder.items);
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  }, [dailyFolders]);
+
   // Reports with non-empty notes
   const reportsWithNotesCount = useMemo(() => {
     return reports.filter((r) => Boolean(r.notes && r.notes.trim().length > 0)).length;
   }, [reports]);
+
+  const toggleMonth = (monthKey: string) => {
+    setExpandedMonths((prev) => ({
+      ...prev,
+      [monthKey]: !prev[monthKey],
+    }));
+  };
 
   const toggleFolder = (date: string) => {
     setCollapsedDates((prev) => ({
@@ -156,16 +305,29 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
   };
 
   const expandAllFolders = () => {
+    const allM: Record<string, boolean> = {};
+    allMonthGroups.forEach((m) => {
+      allM[m.monthKey] = true;
+    });
+    setExpandedMonths(allM);
     setCollapsedDates({});
   };
 
   const collapseAllFolders = () => {
-    const next: Record<string, boolean> = {};
-    dailyFolders.forEach((f) => {
-      next[f.date] = true;
-    });
-    setCollapsedDates(next);
+    setExpandedMonths({});
   };
+
+  const selectedDateDisplayLabel = useMemo(() => {
+    if (selectedDate === 'ทั้งหมด') {
+      return `ทุกโฟลเดอร์ (${allMonthGroups.length} เดือน • ${allFolderStats.length} วัน)`;
+    }
+    if (selectedDate.startsWith('month:')) {
+      const ym = selectedDate.replace('month:', '');
+      const found = allMonthGroups.find((m) => m.monthKey === ym);
+      return found ? `📁 รวมทั้ง${found.monthLabel} (${found.days.length} วัน)` : selectedDate;
+    }
+    return `📅 รายวัน: ${formatThaiDateShort(selectedDate)} (${selectedDate})`;
+  }, [selectedDate, allMonthGroups, allFolderStats.length]);
 
   // Export Table to CSV / Excel (supports all filtered or a single folder date)
   const handleExportCSV = (targetList: DOEReport[], fileSuffix?: string) => {
@@ -301,36 +463,42 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
         </div>
       </div>
 
-      {/* 2. DAILY FOLDERS SHELF (คลังโฟลเดอร์รายวัน) */}
-      {allFolderStats.length > 0 && (
+      {/* 2. MONTHLY -> DAILY FOLDERS SHELF (คลังโฟลเดอร์รายเดือน -> คลิกเดือนเพื่อแสดงรายวัน) */}
+      {allMonthGroups.length > 0 && (
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <FolderOpen className="w-4.5 h-4.5 text-amber-500" />
               <span className="text-xs sm:text-sm font-extrabold text-slate-900 font-['Prompt']">
-                คลังโฟลเดอร์บันทึกประจำวัน ({allFolderStats.length} โฟลเดอร์)
+                คลังโฟลเดอร์บันทึกประจำวัน ({allMonthGroups.length} เดือน • {allFolderStats.length} วัน)
               </span>
               <span className="text-[11px] text-slate-500">
-                คลิกเลือกโฟลเดอร์วันที่ต้องการเปิดดู หรือดูรวมทุกโฟลเดอร์ด้านล่าง
+                รวมกลุ่มตามเดือนและปี พ.ศ. เดียวกัน — คลิกเลือกชื่อเดือนเพื่อกางดูโฟลเดอร์รายวัน
               </span>
             </div>
 
-            {selectedDate !== 'ทั้งหมด' && (
+            {(selectedDate !== 'ทั้งหมด' || Object.values(expandedMonths).some(Boolean)) && (
               <button
                 type="button"
-                onClick={() => setSelectedDate('ทั้งหมด')}
+                onClick={() => {
+                  setSelectedDate('ทั้งหมด');
+                  setExpandedMonths({});
+                }}
                 className="text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-lg border border-blue-200 transition-colors cursor-pointer"
               >
-                แสดงครบทุกโฟลเดอร์ ({allFolderStats.length} วัน)
+                รีเซ็ตมุมมอง (ยุบรวมตามเดือน)
               </button>
             )}
           </div>
 
+          {/* Row 1: All Folders + Month Folder Cards */}
           <div className="flex items-center gap-2.5 overflow-x-auto pb-1.5">
             {/* All Folders Card */}
             <button
               type="button"
-              onClick={() => setSelectedDate('ทั้งหมด')}
+              onClick={() => {
+                setSelectedDate('ทั้งหมด');
+              }}
               className={`shrink-0 px-3.5 py-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
                 selectedDate === 'ทั้งหมด'
                   ? 'bg-gradient-to-r from-blue-900 to-indigo-900 text-white border-blue-900 shadow-xs'
@@ -348,7 +516,7 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
               </div>
               <div>
                 <div className="text-xs font-extrabold font-['Prompt'] leading-tight">
-                  ทุกโฟลเดอร์รายวัน
+                  ทุกเดือน / ทุกโฟลเดอร์
                 </div>
                 <div
                   className={`text-[11px] mt-0.5 ${
@@ -360,31 +528,45 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
               </div>
             </button>
 
-            {/* Individual Daily Folder Cards */}
-            {allFolderStats.map((folder) => {
-              const isSelected = selectedDate === folder.date;
+            {/* Month Cards (Grouped by same Month & ปี พ.ศ.) */}
+            {allMonthGroups.map((mGroup) => {
+              const isMonthExpanded = Boolean(expandedMonths[mGroup.monthKey]);
+              const isMonthSelected =
+                selectedDate === `month:${mGroup.monthKey}` ||
+                (!selectedDate.startsWith('month:') &&
+                  selectedDate !== 'ทั้งหมด' &&
+                  selectedDate.startsWith(mGroup.monthKey));
+
               return (
                 <button
-                  key={folder.date}
+                  key={mGroup.monthKey}
                   type="button"
                   onClick={() => {
-                    setSelectedDate(isSelected ? 'ทั้งหมด' : folder.date);
-                    setCollapsedDates((prev) => ({ ...prev, [folder.date]: false }));
+                    const willExpand = !isMonthExpanded;
+                    setExpandedMonths((prev) => ({
+                      ...prev,
+                      [mGroup.monthKey]: willExpand,
+                    }));
+                    if (willExpand) {
+                      setSelectedDate(`month:${mGroup.monthKey}`);
+                    } else if (isMonthSelected) {
+                      setSelectedDate('ทั้งหมด');
+                    }
                   }}
                   className={`shrink-0 px-3.5 py-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
-                    isSelected
+                    isMonthExpanded || isMonthSelected
                       ? 'bg-gradient-to-r from-sky-700 to-blue-800 text-white border-blue-800 shadow-xs ring-2 ring-sky-300/60'
-                      : 'bg-amber-50/50 hover:bg-amber-50 text-slate-800 border-amber-200/80'
+                      : 'bg-amber-50/60 hover:bg-amber-100/70 text-slate-800 border-amber-200'
                   }`}
                 >
                   <div
                     className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
-                      isSelected
+                      isMonthExpanded || isMonthSelected
                         ? 'bg-amber-400 text-slate-950'
-                        : 'bg-amber-100 text-amber-700 border border-amber-200'
+                        : 'bg-amber-100 text-amber-800 border border-amber-200'
                     }`}
                   >
-                    {isSelected ? (
+                    {isMonthExpanded || isMonthSelected ? (
                       <FolderOpen className="w-5 h-5" />
                     ) : (
                       <Folder className="w-5 h-5" />
@@ -392,31 +574,28 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
                   </div>
                   <div>
                     <div className="text-xs font-extrabold font-['Prompt'] leading-tight flex items-center gap-1.5">
-                      <span>{folder.thaiDateShort}</span>
+                      <span>{mGroup.monthLabel}</span>
                       <span
-                        className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                          isSelected
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                          isMonthExpanded || isMonthSelected
                             ? 'bg-white/20 text-white'
-                            : 'bg-white text-slate-600 border border-slate-200'
+                            : 'bg-blue-100 text-blue-900'
                         }`}
                       >
-                        {folder.total} ฉบับ
+                        {mGroup.days.length} วัน
                       </span>
                     </div>
                     <div
-                      className={`text-[11px] mt-0.5 flex items-center gap-1 ${
-                        isSelected
-                          ? 'text-amber-200'
-                          : folder.withNotes > 0
-                          ? 'text-amber-800 font-semibold'
-                          : 'text-slate-400'
+                      className={`text-[11px] mt-0.5 flex items-center gap-1.5 ${
+                        isMonthExpanded || isMonthSelected ? 'text-amber-200' : 'text-slate-600'
                       }`}
                     >
-                      <MessageSquare className="w-3 h-3 shrink-0" />
-                      <span>
-                        {folder.withNotes > 0
-                          ? `มีหมายเหตุ ${folder.withNotes} แห่ง`
-                          : 'ไม่มีหมายเหตุเพิ่มเติม'}
+                      <span>รวม {mGroup.totalReports} ฉบับ</span>
+                      <span>•</span>
+                      <span>มีหมายเหตุ {mGroup.totalWithNotes} แห่ง</span>
+                      <span>•</span>
+                      <span className="underline font-semibold">
+                        {isMonthExpanded ? 'ซ่อนรายวัน ▲' : 'คลิกดูรายวัน ▼'}
                       </span>
                     </div>
                   </div>
@@ -424,6 +603,110 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
               );
             })}
           </div>
+
+          {/* Row 2: Daily Folder Cards when a Month is clicked/expanded */}
+          {allMonthGroups
+            .filter(
+              (mGroup) =>
+                expandedMonths[mGroup.monthKey] ||
+                selectedDate === `month:${mGroup.monthKey}` ||
+                (selectedDate !== 'ทั้งหมด' &&
+                  !selectedDate.startsWith('month:') &&
+                  selectedDate.startsWith(mGroup.monthKey))
+            )
+            .map((mGroup) => (
+              <div
+                key={`days-shelf-${mGroup.monthKey}`}
+                className="p-3 rounded-xl bg-sky-50/70 border border-sky-200 space-y-2 animate-in fade-in duration-150"
+              >
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2 text-xs font-extrabold text-blue-950 font-['Prompt']">
+                    <Calendar className="w-4 h-4 text-sky-700" />
+                    <span>
+                      เลือกรายวันของ {mGroup.monthLabel} ({mGroup.days.length} วัน):
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(`month:${mGroup.monthKey}`)}
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
+                      selectedDate === `month:${mGroup.monthKey}`
+                        ? 'bg-blue-900 text-white border-blue-900'
+                        : 'bg-white text-blue-800 border-blue-200 hover:bg-blue-50'
+                    }`}
+                  >
+                    แสดงทุกวันใน{mGroup.shortMonthLabel} ({mGroup.days.length} วัน)
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                  {mGroup.days.map((folder) => {
+                    const isSelected = selectedDate === folder.date;
+                    return (
+                      <button
+                        key={folder.date}
+                        type="button"
+                        onClick={() => {
+                          setSelectedDate(
+                            isSelected ? `month:${mGroup.monthKey}` : folder.date
+                          );
+                          setCollapsedDates((prev) => ({ ...prev, [folder.date]: false }));
+                        }}
+                        className={`shrink-0 px-3 py-2 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2 ${
+                          isSelected
+                            ? 'bg-gradient-to-r from-blue-900 to-indigo-900 text-white border-blue-900 shadow-xs ring-2 ring-sky-300/60'
+                            : 'bg-white hover:bg-amber-50 text-slate-800 border-slate-200'
+                        }`}
+                      >
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                            isSelected
+                              ? 'bg-amber-400 text-slate-950'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {isSelected ? (
+                            <FolderOpen className="w-4 h-4" />
+                          ) : (
+                            <Folder className="w-4 h-4" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-xs font-extrabold font-['Prompt'] leading-tight flex items-center gap-1.5">
+                            <span>รายวัน: {folder.thaiDateShort}</span>
+                            <span
+                              className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                                isSelected
+                                  ? 'bg-white/20 text-white'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {folder.total} ฉบับ
+                            </span>
+                          </div>
+                          <div
+                            className={`text-[10.5px] mt-0.5 flex items-center gap-1 ${
+                              isSelected
+                                ? 'text-amber-200'
+                                : folder.withNotes > 0
+                                ? 'text-amber-800 font-semibold'
+                                : 'text-slate-400'
+                            }`}
+                          >
+                            <MessageSquare className="w-3 h-3 shrink-0" />
+                            <span>
+                              {folder.withNotes > 0
+                                ? `มีหมายเหตุ ${folder.withNotes} แห่ง`
+                                : 'ไม่มีหมายเหตุเพิ่มเติม'}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
         </div>
       )}
 
@@ -460,22 +743,190 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
             <option value="เฉพาะกิจ">🚚 เฉพาะกิจ (Mobile Unit)</option>
           </select>
 
-          {/* Date Selector */}
-          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs sm:text-sm">
-            <Calendar className="w-4 h-4 text-slate-500" />
-            <span className="text-slate-500 text-xs font-medium">โฟลเดอร์วันที่:</span>
-            <select
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-transparent font-bold text-slate-800 focus:outline-hidden cursor-pointer text-xs sm:text-sm"
+          {/* Date Selector (Grouped by Month & ปี พ.ศ. -> Click Month to show Daily) */}
+          <div
+            ref={dateDropdownRef}
+            className="relative flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs sm:text-sm"
+          >
+            <Calendar className="w-4 h-4 text-blue-700 shrink-0" />
+            <span className="text-slate-600 text-xs font-bold shrink-0">โฟลเดอร์วันที่:</span>
+            <button
+              type="button"
+              onClick={() => {
+                setIsDateDropdownOpen((prev) => {
+                  const next = !prev;
+                  if (next) setDropdownExpandedMonth(null);
+                  return next;
+                });
+              }}
+              className="flex items-center gap-1.5 font-bold text-slate-900 focus:outline-hidden cursor-pointer text-xs sm:text-sm"
             >
-              <option value="ทั้งหมด">ทุกโฟลเดอร์รายวัน ({availableDates.length} วัน)</option>
-              {availableDates.map((d) => (
-                <option key={d} value={d}>
-                  📁 {formatThaiDateShort(d)} ({d})
-                </option>
-              ))}
-            </select>
+              <span>{selectedDateDisplayLabel}</span>
+              <ChevronDown
+                className={`w-4 h-4 text-slate-500 transition-transform ${
+                  isDateDropdownOpen ? 'rotate-180 text-blue-700' : ''
+                }`}
+              />
+            </button>
+
+            {isDateDropdownOpen && (
+              <div className="absolute left-0 top-full mt-2 w-80 sm:w-96 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 overflow-hidden">
+                <div className="p-2 border-b border-slate-100 bg-slate-50/70">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDate('ทั้งหมด');
+                      setIsDateDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                      selectedDate === 'ทั้งหมด'
+                        ? 'bg-blue-900 text-white'
+                        : 'text-slate-700 hover:bg-slate-200/70'
+                    }`}
+                  >
+                    <span>📁 ทุกโฟลเดอร์ ({allMonthGroups.length} เดือน • {allFolderStats.length} วัน)</span>
+                    {selectedDate === 'ทั้งหมด' && <Check className="w-4 h-4 shrink-0" />}
+                  </button>
+                </div>
+
+                <div className="p-2.5 max-h-80 overflow-y-auto space-y-1.5">
+                  <div className="px-2 py-0.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+                    📆 คลิกเลือกเดือนเพื่อดูรายวัน
+                  </div>
+                  {allMonthGroups.map((mGroup) => {
+                    const isExpanded = dropdownExpandedMonth === mGroup.monthKey;
+                    const isActive =
+                      selectedDate === `month:${mGroup.monthKey}` ||
+                      (selectedDate !== 'ทั้งหมด' &&
+                        !selectedDate.startsWith('month:') &&
+                        selectedDate.startsWith(mGroup.monthKey));
+
+                    return (
+                      <div
+                        key={mGroup.monthKey}
+                        className={`rounded-xl border transition-all overflow-hidden ${
+                          isExpanded
+                            ? 'border-blue-300 bg-blue-50/30'
+                            : isActive
+                            ? 'border-sky-200 bg-sky-50/40'
+                            : 'border-slate-200 bg-white'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDropdownExpandedMonth((prev) =>
+                              prev === mGroup.monthKey ? null : mGroup.monthKey
+                            )
+                          }
+                          className="w-full px-3 py-2.5 text-left flex items-center justify-between gap-2 hover:bg-blue-50/70 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div
+                              className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                isExpanded || isActive
+                                  ? 'bg-blue-900 text-amber-300'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {isExpanded ? (
+                                <FolderOpen className="w-4 h-4" />
+                              ) : (
+                                <Folder className="w-4 h-4" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs sm:text-sm font-extrabold text-slate-900 font-['Prompt'] truncate">
+                                {mGroup.monthLabel}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {mGroup.days.length} วัน • รวม {mGroup.totalReports} ฉบับ (มีหมายเหตุ {mGroup.totalWithNotes})
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-900">
+                              {isExpanded ? 'ซ่อนรายวัน' : 'คลิกดูรายวัน'}
+                            </span>
+                            {isExpanded ? (
+                              <ChevronDown className="w-4 h-4 text-blue-700" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-slate-400" />
+                            )}
+                          </div>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="px-2.5 pb-2.5 pt-1 border-t border-blue-100 bg-white space-y-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedDate(`month:${mGroup.monthKey}`);
+                                setExpandedMonths((prev) => ({
+                                  ...prev,
+                                  [mGroup.monthKey]: true,
+                                }));
+                                setIsDateDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                                selectedDate === `month:${mGroup.monthKey}`
+                                  ? 'bg-sky-700 text-white'
+                                  : 'bg-sky-50 text-sky-900 hover:bg-sky-100'
+                              }`}
+                            >
+                              <span>📊 ดูทุกวันใน{mGroup.monthLabel} ({mGroup.days.length} วัน)</span>
+                              {selectedDate === `month:${mGroup.monthKey}` && (
+                                <Check className="w-3.5 h-3.5 shrink-0" />
+                              )}
+                            </button>
+
+                            {mGroup.days.map((dItem) => {
+                              const isSelectedDay = selectedDate === dItem.date;
+                              return (
+                                <button
+                                  key={dItem.date}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedDate(dItem.date);
+                                    setExpandedMonths((prev) => ({
+                                      ...prev,
+                                      [mGroup.monthKey]: true,
+                                    }));
+                                    setCollapsedDates((prev) => ({
+                                      ...prev,
+                                      [dItem.date]: false,
+                                    }));
+                                    setIsDateDropdownOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                    isSelectedDay
+                                      ? 'bg-blue-900 text-white'
+                                      : 'text-slate-800 hover:bg-sky-50'
+                                  }`}
+                                >
+                                  <span className="truncate">
+                                    📅 รายวัน: {dItem.thaiDateShort} ({dItem.date})
+                                  </span>
+                                  <span
+                                    className={`text-[10.5px] px-2 py-0.5 rounded-full shrink-0 ${
+                                      isSelectedDay
+                                        ? 'bg-blue-800 text-amber-200'
+                                        : 'bg-slate-100 text-slate-600'
+                                    }`}
+                                  >
+                                    {dItem.total} ฉบับ (หมายเหตุ {dItem.withNotes})
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Toggle: Only with notes */}
@@ -492,24 +943,24 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
-          {dailyFolders.length > 1 && (
+          {monthlyDailyFolders.length > 0 && (
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
               <button
                 type="button"
                 onClick={expandAllFolders}
                 className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg hover:bg-white text-slate-700 transition-colors cursor-pointer flex items-center gap-1"
-                title="กางออกดูรายละเอียดทุกโฟลเดอร์"
+                title="กางออกดูโฟลเดอร์รายวันในทุกเดือน"
               >
                 <ChevronsUpDown className="w-3.5 h-3.5 text-blue-600" />
-                <span>กางออกทั้งหมด</span>
+                <span>กางรายวันทั้งหมด</span>
               </button>
               <button
                 type="button"
                 onClick={collapseAllFolders}
                 className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg hover:bg-white text-slate-700 transition-colors cursor-pointer"
-                title="พับเก็บเหลือเฉพาะหัวโฟลเดอร์รายวัน"
+                title="ยุบรวมเป็นชื่อเดือนทั้งหมด"
               >
-                พับเก็บทั้งหมด
+                ยุบรวมเป็นรายเดือน
               </button>
             </div>
           )}
@@ -545,8 +996,8 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
         </div>
       </div>
 
-      {/* 4. DAILY FOLDERS LIST (แสดงแยกตามโฟลเดอร์รายวัน) */}
-      {dailyFolders.length === 0 ? (
+      {/* 4. MONTHLY -> DAILY FOLDERS LIST (รวมเป็นชื่อเดือน เมื่อคลิกเลือกเดือนจึงแสดงโฟลเดอร์รายวัน) */}
+      {monthlyDailyFolders.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs py-16 text-center text-slate-400">
           <div className="flex flex-col items-center justify-center gap-2">
             <AlertCircle className="w-10 h-10 text-slate-300" />
@@ -560,205 +1011,302 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
         </div>
       ) : (
         <div className="space-y-4">
-          {dailyFolders.map((folder) => {
-            const isCollapsed = Boolean(collapsedDates[folder.date]);
-            const isThisFolderCopied = copiedFolderDate === folder.date;
+          {monthlyDailyFolders.map((monthGroup) => {
+            const isSingleDateInThisMonth =
+              selectedDate !== 'ทั้งหมด' &&
+              !selectedDate.startsWith('month:') &&
+              selectedDate.startsWith(monthGroup.monthKey);
+            const isMonthSelected = selectedDate === `month:${monthGroup.monthKey}`;
+            const isMonthExpanded =
+              Boolean(expandedMonths[monthGroup.monthKey]) ||
+              isMonthSelected ||
+              isSingleDateInThisMonth ||
+              Boolean(searchTerm.trim());
 
             return (
               <div
-                key={folder.date}
-                className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden transition-all"
+                key={monthGroup.monthKey}
+                className="bg-white rounded-2xl border-2 border-slate-200/90 shadow-xs overflow-hidden transition-all"
               >
-                {/* Folder Header Bar */}
-                <div className="p-4 bg-gradient-to-r from-amber-50/90 via-slate-50 to-sky-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                {/* MONTH FOLDER HEADER: Click to expand/collapse daily folders */}
+                <div className="p-4 bg-gradient-to-r from-blue-950 via-blue-900 to-indigo-900 text-white flex flex-wrap items-center justify-between gap-3">
                   <button
                     type="button"
-                    onClick={() => toggleFolder(folder.date)}
-                    className="flex items-center gap-3 text-left cursor-pointer group flex-1 min-w-[240px]"
+                    onClick={() => toggleMonth(monthGroup.monthKey)}
+                    className="flex items-center gap-3.5 text-left cursor-pointer group flex-1 min-w-[240px]"
                   >
-                    <div className="w-10 h-10 rounded-xl bg-amber-400/90 group-hover:bg-amber-400 text-slate-950 flex items-center justify-center shadow-2xs shrink-0 transition-colors">
-                      {isCollapsed ? (
-                        <Folder className="w-5 h-5" />
+                    <div className="w-11 h-11 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center shadow-md shrink-0 transition-transform group-hover:scale-105">
+                      {isMonthExpanded ? (
+                        <FolderOpen className="w-6 h-6" />
                       ) : (
-                        <FolderOpen className="w-5 h-5" />
+                        <Folder className="w-6 h-6" />
                       )}
                     </div>
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-md bg-blue-900 text-white font-mono">
-                          โฟลเดอร์ประจำวัน
+                        <span className="text-[10.5px] font-extrabold px-2.5 py-0.5 rounded-md bg-amber-400 text-slate-950 font-mono">
+                          โฟลเดอร์ประจำเดือน
                         </span>
-                        <h3 className="font-black text-slate-900 text-sm sm:text-base font-['Prompt'] group-hover:text-blue-800 transition-colors">
-                          {folder.thaiDateFull}
+                        <h3 className="font-black text-white text-base sm:text-lg font-['Prompt'] group-hover:text-amber-300 transition-colors">
+                          {monthGroup.monthLabel}
                         </h3>
-                        <span className="text-xs font-mono text-slate-500">
-                          ({folder.date})
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-white/15 text-sky-200 border border-white/20">
+                          รวม {monthGroup.folders.length} วัน
                         </span>
                       </div>
-                      <div className="flex items-center gap-2.5 mt-1 text-xs text-slate-600 flex-wrap">
-                        <span className="font-semibold text-blue-800">
-                          รายงานในโฟลเดอร์นี้: {folder.items.length} แห่ง
+                      <div className="flex items-center gap-2.5 mt-1 text-xs text-sky-100 flex-wrap">
+                        <span>รายงานรวมในเดือนนี้: <b className="text-white">{monthGroup.totalItems}</b> ฉบับ</span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1 text-amber-300 font-semibold">
+                          <MessageSquare className="w-3.5 h-3.5" />
+                          <span>มีบันทึกหมายเหตุรวม {monthGroup.totalNotes} แห่ง</span>
                         </span>
                         <span>•</span>
-                        <span
-                          className={`font-semibold flex items-center gap-1 ${
-                            folder.notesCount > 0 ? 'text-amber-800' : 'text-slate-400'
-                          }`}
-                        >
-                          <MessageSquare className="w-3.5 h-3.5 text-amber-600" />
-                          <span>มีบันทึกหมายเหตุ {folder.notesCount} แห่ง</span>
+                        <span className="text-amber-200 underline font-bold">
+                          {isMonthExpanded ? 'คลิกเพื่อยุบรวมเป็นชื่อเดือน ▲' : 'คลิกเลือกเดือนเพื่อแสดงโฟลเดอร์รายวัน ▼'}
                         </span>
                       </div>
                     </div>
                   </button>
 
-                  {/* Per-Folder Actions */}
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => handleCopySummary(folder.items, folder.date)}
-                      className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 text-slate-800 border border-amber-300 shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                      title={`คัดลอกสรุปหมายเหตุเฉพาะโฟลเดอร์วันที่ ${folder.thaiDateShort}`}
+                      onClick={() => handleExportCSV(monthGroup.allItemsInMonth, monthGroup.monthKey)}
+                      className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-colors flex items-center gap-1.5 cursor-pointer"
+                      title={`ส่งออก CSV ทั้ง${monthGroup.monthLabel}`}
                     >
-                      {isThisFolderCopied ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          <span className="text-emerald-700">คัดลอกโฟลเดอร์นี้แล้ว!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5 text-amber-600" />
-                          <span>คัดลอกเฉพาะวันนี้</span>
-                        </>
-                      )}
+                      <Download className="w-3.5 h-3.5 text-amber-300" />
+                      <span>CSV ทั้งเดือน ({monthGroup.totalItems})</span>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => handleExportCSV(folder.items, folder.date)}
-                      className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                      title={`ส่งออกไฟล์ CSV เฉพาะโฟลเดอร์วันที่ ${folder.thaiDateShort}`}
+                      onClick={() => toggleMonth(monthGroup.monthKey)}
+                      className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
                     >
-                      <Download className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>CSV วันนี้</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => toggleFolder(folder.date)}
-                      className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                    >
-                      {isCollapsed ? (
+                      {isMonthExpanded ? (
                         <>
-                          <span>เปิดโฟลเดอร์</span>
-                          <ChevronRight className="w-4 h-4" />
-                        </>
-                      ) : (
-                        <>
-                          <span>พับเก็บ</span>
+                          <span>ซ่อนรายวัน</span>
                           <ChevronDown className="w-4 h-4" />
+                        </>
+                      ) : (
+                        <>
+                          <span>ดูรายวัน ({monthGroup.folders.length} วัน)</span>
+                          <ChevronRight className="w-4 h-4" />
                         </>
                       )}
                     </button>
                   </div>
                 </div>
 
-                {/* Folder Contents Table */}
-                {!isCollapsed && (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs sm:text-sm">
-                      <thead className="bg-slate-100/80 text-slate-800 font-extrabold border-b border-slate-200 uppercase tracking-wider text-xs font-['Prompt']">
-                        <tr>
-                          <th className="py-3 px-4 text-center w-16 whitespace-nowrap">
-                            ลำดับ
-                          </th>
-                          <th className="py-3 px-4 w-40 whitespace-nowrap">
-                            วันที่
-                          </th>
-                          <th className="py-3 px-4 w-80 whitespace-nowrap">
-                            ชื่อสำนักงานจัดหางาน
-                          </th>
-                          <th className="py-3 px-4">
-                            รายละเอียดที่บันทึกเข้ามาในโฟลเดอร์
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {folder.items.map((report, idx) => {
-                          const hasNoteText = Boolean(
-                            report.notes && report.notes.trim().length > 0
-                          );
+                {/* DAILY FOLDERS INSIDE THIS MONTH (Shown only when Month is clicked/expanded) */}
+                {isMonthExpanded && (
+                  <div className="p-3 sm:p-4 bg-slate-50/70 space-y-4">
+                    {monthGroup.folders.map((folder) => {
+                      const isCollapsed = Boolean(collapsedDates[folder.date]);
+                      const isThisFolderCopied = copiedFolderDate === folder.date;
 
-                          return (
-                            <tr
-                              key={report.id}
-                              className={`hover:bg-blue-50/40 transition-colors ${
-                                hasNoteText ? 'bg-white' : 'bg-slate-50/30'
-                              }`}
+                      return (
+                        <div
+                          key={folder.date}
+                          className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden transition-all"
+                        >
+                          {/* Daily Folder Header Bar */}
+                          <div className="p-4 bg-gradient-to-r from-amber-50/90 via-slate-50 to-sky-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                            <button
+                              type="button"
+                              onClick={() => toggleFolder(folder.date)}
+                              className="flex items-center gap-3 text-left cursor-pointer group flex-1 min-w-[240px]"
                             >
-                              {/* คอลัมน์ที่ 1: ลำดับในโฟลเดอร์ */}
-                              <td className="py-3.5 px-4 text-center font-bold text-slate-600 whitespace-nowrap font-mono text-xs">
-                                {idx + 1}
-                              </td>
-
-                              {/* คอลัมน์ที่ 2: วันที่ */}
-                              <td className="py-3.5 px-4 whitespace-nowrap">
-                                <div className="font-bold text-slate-900 text-xs sm:text-sm font-['Prompt']">
-                                  {formatThaiDateShort(report.reportDate)}
-                                </div>
-                                <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                                  {report.reportDate}
-                                </div>
-                              </td>
-
-                              {/* คอลัมน์ที่ 3: ชื่อสำนักงานจัดหางาน */}
-                              <td className="py-3.5 px-4">
-                                <div className="font-bold text-slate-900 text-xs sm:text-sm font-['Prompt']">
-                                  {report.officeName}
-                                </div>
-                                <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-blue-50 text-blue-800 border border-blue-200">
-                                    {report.region}
-                                  </span>
-                                  <span className="text-[11px] text-slate-500 truncate max-w-[240px]">
-                                    {report.centerName}
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1.5">
-                                  <span>👤 {report.reporterName || '-'}</span>
-                                  {report.reporterPosition && (
-                                    <span className="text-slate-400">
-                                      ({report.reporterPosition})
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-
-                              {/* คอลัมน์ที่ 4: รายละเอียดที่บันทึกเข้ามา */}
-                              <td className="py-3.5 px-4">
-                                {hasNoteText ? (
-                                  <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 text-slate-800 text-xs sm:text-sm leading-relaxed shadow-2xs font-medium">
-                                    <div className="flex items-start gap-2">
-                                      <MessageSquare className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                                      <div className="space-y-1">
-                                        <span className="text-slate-900 font-semibold break-words whitespace-pre-wrap">
-                                          {report.notes}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
+                              <div className="w-10 h-10 rounded-xl bg-amber-400/90 group-hover:bg-amber-400 text-slate-950 flex items-center justify-center shadow-2xs shrink-0 transition-colors">
+                                {isCollapsed ? (
+                                  <Folder className="w-5 h-5" />
                                 ) : (
-                                  <div className="text-xs text-slate-400 italic flex items-center gap-1.5 py-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                                    <span>- ไม่ได้ระบุหมายเหตุเพิ่มเติม -</span>
-                                  </div>
+                                  <FolderOpen className="w-5 h-5" />
                                 )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-md bg-blue-900 text-white font-mono">
+                                    โฟลเดอร์รายวัน
+                                  </span>
+                                  <h4 className="font-black text-slate-900 text-sm sm:text-base font-['Prompt'] group-hover:text-blue-800 transition-colors">
+                                    {folder.thaiDateFull}
+                                  </h4>
+                                  <span className="text-xs font-mono text-slate-500">
+                                    ({folder.date})
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2.5 mt-1 text-xs text-slate-600 flex-wrap">
+                                  <span className="font-semibold text-blue-800">
+                                    รายงานในโฟลเดอร์นี้: {folder.items.length} แห่ง
+                                  </span>
+                                  <span>•</span>
+                                  <span
+                                    className={`font-semibold flex items-center gap-1 ${
+                                      folder.notesCount > 0 ? 'text-amber-800' : 'text-slate-400'
+                                    }`}
+                                  >
+                                    <MessageSquare className="w-3.5 h-3.5 text-amber-600" />
+                                    <span>มีบันทึกหมายเหตุ {folder.notesCount} แห่ง</span>
+                                  </span>
+                                </div>
+                              </div>
+                            </button>
+
+                            {/* Per-Folder Actions */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => handleCopySummary(folder.items, folder.date)}
+                                className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 text-slate-800 border border-amber-300 shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                                title={`คัดลอกสรุปหมายเหตุเฉพาะโฟลเดอร์วันที่ ${folder.thaiDateShort}`}
+                              >
+                                {isThisFolderCopied ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span className="text-emerald-700">คัดลอกโฟลเดอร์นี้แล้ว!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3.5 h-3.5 text-amber-600" />
+                                    <span>คัดลอกเฉพาะวันนี้</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleExportCSV(folder.items, folder.date)}
+                                className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                                title={`ส่งออกไฟล์ CSV เฉพาะโฟลเดอร์วันที่ ${folder.thaiDateShort}`}
+                              >
+                                <Download className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>CSV วันนี้</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => toggleFolder(folder.date)}
+                                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                              >
+                                {isCollapsed ? (
+                                  <>
+                                    <span>เปิดโฟลเดอร์</span>
+                                    <ChevronRight className="w-4 h-4" />
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>พับเก็บ</span>
+                                    <ChevronDown className="w-4 h-4" />
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Folder Contents Table */}
+                          {!isCollapsed && (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-xs sm:text-sm">
+                                <thead className="bg-slate-100/80 text-slate-800 font-extrabold border-b border-slate-200 uppercase tracking-wider text-xs font-['Prompt']">
+                                  <tr>
+                                    <th className="py-3 px-4 text-center w-16 whitespace-nowrap">
+                                      ลำดับ
+                                    </th>
+                                    <th className="py-3 px-4 w-40 whitespace-nowrap">
+                                      วันที่
+                                    </th>
+                                    <th className="py-3 px-4 w-80 whitespace-nowrap">
+                                      ชื่อสำนักงานจัดหางาน
+                                    </th>
+                                    <th className="py-3 px-4">
+                                      รายละเอียดที่บันทึกเข้ามาในโฟลเดอร์
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {folder.items.map((report, idx) => {
+                                    const hasNoteText = Boolean(
+                                      report.notes && report.notes.trim().length > 0
+                                    );
+
+                                    return (
+                                      <tr
+                                        key={report.id}
+                                        className={`hover:bg-blue-50/40 transition-colors ${
+                                          hasNoteText ? 'bg-white' : 'bg-slate-50/30'
+                                        }`}
+                                      >
+                                        {/* คอลัมน์ที่ 1: ลำดับในโฟลเดอร์ */}
+                                        <td className="py-3.5 px-4 text-center font-bold text-slate-600 whitespace-nowrap font-mono text-xs">
+                                          {idx + 1}
+                                        </td>
+
+                                        {/* คอลัมน์ที่ 2: วันที่ */}
+                                        <td className="py-3.5 px-4 whitespace-nowrap">
+                                          <div className="font-bold text-slate-900 text-xs sm:text-sm font-['Prompt']">
+                                            {formatThaiDateShort(report.reportDate)}
+                                          </div>
+                                          <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                                            {report.reportDate}
+                                          </div>
+                                        </td>
+
+                                        {/* คอลัมน์ที่ 3: ชื่อสำนักงานจัดหางาน */}
+                                        <td className="py-3.5 px-4">
+                                          <div className="font-bold text-slate-900 text-xs sm:text-sm font-['Prompt']">
+                                            {report.officeName}
+                                          </div>
+                                          <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-blue-50 text-blue-800 border border-blue-200">
+                                              {report.region}
+                                            </span>
+                                            <span className="text-[11px] text-slate-500 truncate max-w-[240px]">
+                                              {report.centerName}
+                                            </span>
+                                          </div>
+                                          <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1.5">
+                                            <span>👤 {report.reporterName || '-'}</span>
+                                            {report.reporterPosition && (
+                                              <span className="text-slate-400">
+                                                ({report.reporterPosition})
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+
+                                        {/* คอลัมน์ที่ 4: รายละเอียดที่บันทึกเข้ามา */}
+                                        <td className="py-3.5 px-4">
+                                          {hasNoteText ? (
+                                            <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 text-slate-800 text-xs sm:text-sm leading-relaxed shadow-2xs font-medium">
+                                              <div className="flex items-start gap-2">
+                                                <MessageSquare className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                                                <div className="space-y-1">
+                                                  <span className="text-slate-900 font-semibold break-words whitespace-pre-wrap">
+                                                    {report.notes}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <div className="text-xs text-slate-400 italic flex items-center gap-1.5 py-1">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                                              <span>- ไม่ได้ระบุหมายเหตุเพิ่มเติม -</span>
+                                            </div>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

@@ -7,7 +7,7 @@ import {
   ReporterProfile,
 } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
-import { DEFAULT_QUEUE_METRICS } from '../data/initialAdminData';
+import { DEFAULT_CATEGORIES, DEFAULT_QUEUE_METRICS } from '../data/initialAdminData';
 import { formatThaiDateFull, formatNumber, getTodayIsoDate } from '../utils/thaiDate';
 import { groupAndSortOfficesByRegion } from '../utils/officeUtils';
 import { AdminPinModal } from './AdminPinModal';
@@ -41,6 +41,9 @@ export const MOBILE_UNIT_CENTER_NAME =
 
 interface ReportFormProps {
   initialReport?: DOEReport | null;
+  reports?: DOEReport[];
+  isEditingExistingReport?: boolean;
+  onEditExistingReport?: (report: DOEReport) => void;
   onSave: (report: DOEReport) => void;
   onPreviewLive: (report: DOEReport) => void;
   onClearForm?: () => void;
@@ -60,6 +63,9 @@ interface ReportFormProps {
 
 export const ReportForm: React.FC<ReportFormProps> = ({
   initialReport,
+  reports = [],
+  isEditingExistingReport = false,
+  onEditExistingReport,
   onSave,
   onPreviewLive,
   onClearForm,
@@ -123,16 +129,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     if (categories && categories.length > 0) {
       return categories.filter((c) => c.isActive);
     }
-    return [
-      { id: 'section59', code: 'ม.59', title: 'กลุ่มมาตรา 59', subLabel: 'คนต่างด้าวทำงานทั่วไปตามมาตรา 59', isActive: true },
-      { id: 'section62', code: 'ม.62', title: 'กลุ่มมาตรา 62', subLabel: 'ผู้มีความรู้ความเชี่ยวชาญ/ช่างฝีมือ', isActive: true },
-      { id: 'section63_1', code: 'ม.63/1', title: 'กลุ่มมาตรา 63/1', subLabel: 'ชนกลุ่มน้อย / ผู้มีสถานะตามกฎหมาย', isActive: true },
-      { id: 'section63_2', code: 'ม.63/2', title: 'กลุ่มมาตรา 63/2', subLabel: 'กลุ่มมติ ครม. / แรงงาน 4 สัญชาติ', isActive: true },
-      { id: 'section64', code: 'ม.64', title: 'กลุ่มมาตรา 64', subLabel: 'แรงงานนำเข้าแบบไป-กลับ หรือตามฤดูกาล', isActive: true },
-      { id: 'mouGroup', code: 'MOU', title: 'กลุ่มนำเข้าตาม MOU', subLabel: 'แรงงานต่างด้าวนำเข้าตามข้อตกลง MOU', isActive: true },
-      { id: 'modifyDetails', code: 'เปลี่ยนแปลง', title: 'เปลี่ยนแปลงรายการในใบอนุญาตทำงาน', subLabel: 'ย้ายนายจ้าง / เปลี่ยนแปลงสถานที่ทำงาน', isActive: true },
-      { id: 'substituteCard', code: 'ใบแทน', title: 'ใบแทนใบอนุญาตทำงาน', subLabel: 'กรณีบัตรชำรุด สูญหาย หรือขอใบแทน', isActive: true },
-    ];
+    return DEFAULT_CATEGORIES;
   }, [categories]);
 
   const activeQueueMetrics = useMemo(() => {
@@ -236,26 +233,222 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     return officeList.find((o) => o.id === selectedOfficeId) || officeList[0];
   }, [officeList, selectedOfficeId]);
 
+  const checkIsMobileUnitName = (name?: string) => {
+    if (!name) return false;
+    return (
+      name === MOBILE_UNIT_CENTER_NAME ||
+      name.includes('Mobile Unit') ||
+      name.includes('หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่')
+    );
+  };
+
+  // Helper to get the 1 or 2 standard center names belonging to a given office
+  const getStandardCentersForOffice = (office?: EmploymentOffice): string[] => {
+    if (!office) return ['ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'];
+    const centers: string[] = [];
+    const addUnique = (c?: string) => {
+      const trimmed = c?.trim();
+      if (trimmed && !checkIsMobileUnitName(trimmed) && !centers.includes(trimmed)) {
+        centers.push(trimmed);
+      }
+    };
+    addUnique(office.centerName);
+    if (Array.isArray(office.additionalCenters)) {
+      office.additionalCenters.forEach(addUnique);
+    }
+    // Also check if officeList has another entry with the exact same office name
+    officeList.forEach((o) => {
+      if (o.name === office.name) {
+        addUnique(o.centerName);
+        if (Array.isArray(o.additionalCenters)) {
+          o.additionalCenters.forEach(addUnique);
+        }
+      }
+    });
+    if (centers.length === 0) {
+      centers.push('ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว');
+    }
+    // Limit to 1 or 2 standard centers per office as specified
+    return centers.slice(0, 2);
+  };
+
+  const officeStandardCenters = useMemo(() => {
+    return getStandardCentersForOffice(currentSelectedOffice);
+  }, [currentSelectedOffice, officeList]);
+
   const standardOfficeCenterName = useMemo(() => {
-    return currentSelectedOffice?.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
-  }, [currentSelectedOffice]);
+    return officeStandardCenters[0] || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
+  }, [officeStandardCenters]);
 
   // Determine if active center is Mobile Unit or Office Standard
   const isMobileCenter = useMemo(() => {
-    return (
-      formData.centerName === MOBILE_UNIT_CENTER_NAME ||
-      Boolean(formData.centerName?.includes('Mobile Unit')) ||
-      Boolean(formData.centerName?.includes('หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่'))
-    );
+    return checkIsMobileUnitName(formData.centerName);
   }, [formData.centerName]);
+
+  // Compute daily submission status for each center slot of the current office on formData.reportDate
+  const dailyQuotaInfo = useMemo(() => {
+    const targetDate = formData.reportDate;
+    const officeId = currentSelectedOffice?.id || formData.officeId;
+    const officeName = currentSelectedOffice?.name || formData.officeName;
+
+    const sameDayOfficeReports = reports.filter(
+      (r) =>
+        r.reportDate === targetDate &&
+        (r.officeId === officeId || r.officeName === officeName)
+    );
+
+    const standardSlots = officeStandardCenters.map((centerName, idx) => {
+      const matchedReport = sameDayOfficeReports.find((r) => {
+        if (checkIsMobileUnitName(r.centerName)) return false;
+        if (officeStandardCenters.length === 1) {
+          return true;
+        }
+        return (r.centerName || '').trim() === centerName.trim();
+      });
+      const isEditingThis =
+        Boolean(isEditingExistingReport) &&
+        Boolean(initialReport?.id) &&
+        matchedReport?.id === initialReport?.id;
+
+      return {
+        key: `standard_${idx}`,
+        type: 'standard' as const,
+        index: idx,
+        label:
+          officeStandardCenters.length > 1
+            ? `ศูนย์บริการประจำสำนักงาน (แห่งที่ ${idx + 1})`
+            : 'ศูนย์บริการประจำสำนักงาน',
+        centerName,
+        existingReport: matchedReport || null,
+        isSubmitted: Boolean(matchedReport) && !isEditingThis,
+        isEditingThis,
+      };
+    });
+
+    const mobileMatchedReport = sameDayOfficeReports.find((r) =>
+      checkIsMobileUnitName(r.centerName)
+    );
+    const isEditingMobile =
+      Boolean(isEditingExistingReport) &&
+      Boolean(initialReport?.id) &&
+      mobileMatchedReport?.id === initialReport?.id;
+
+    const mobileSlot = {
+      key: 'mobile_unit',
+      type: 'mobile' as const,
+      index: 0,
+      label: 'หน่วยบริการเคลื่อนที่ (Mobile Unit)',
+      centerName: MOBILE_UNIT_CENTER_NAME,
+      existingReport: mobileMatchedReport || null,
+      isSubmitted: Boolean(mobileMatchedReport) && !isEditingMobile,
+      isEditingThis: isEditingMobile,
+    };
+
+    const allSlots = [...standardSlots, mobileSlot];
+    const activeSlot =
+      allSlots.find((s) =>
+        s.type === 'mobile'
+          ? isMobileCenter
+          : !isMobileCenter &&
+            (officeStandardCenters.length === 1 ||
+              s.centerName.trim() === (formData.centerName || '').trim())
+      ) || standardSlots[0];
+
+    const availableSlots = allSlots.filter((s) => !s.isSubmitted);
+    const standardSubmittedCount = standardSlots.filter(
+      (s) => Boolean(s.existingReport)
+    ).length;
+    const mobileSubmittedCount = mobileSlot.existingReport ? 1 : 0;
+
+    return {
+      standardSlots,
+      mobileSlot,
+      allSlots,
+      activeSlot,
+      availableSlots,
+      standardSubmittedCount,
+      standardMaxCount: standardSlots.length,
+      mobileSubmittedCount,
+      mobileMaxCount: 1,
+      totalSubmittedCount: standardSubmittedCount + mobileSubmittedCount,
+      totalMaxCount: standardSlots.length + 1,
+      isCurrentSlotBlocked: Boolean(activeSlot?.isSubmitted),
+    };
+  }, [
+    reports,
+    formData.reportDate,
+    formData.officeId,
+    formData.officeName,
+    formData.centerName,
+    currentSelectedOffice,
+    officeStandardCenters,
+    isMobileCenter,
+    isEditingExistingReport,
+    initialReport?.id,
+  ]);
+
+  // Helper to pick the first unreported center name for a given office and date
+  const pickAvailableCenterForOfficeAndDate = (
+    office: EmploymentOffice,
+    isoDate: string,
+    preferredCenterName?: string
+  ): string => {
+    const stdCenters = getStandardCentersForOffice(office);
+    const sameDayOfficeReports = reports.filter(
+      (r) =>
+        r.reportDate === isoDate &&
+        (r.officeId === office.id || r.officeName === office.name)
+    );
+
+    const isSlotTaken = (cName: string, isMob: boolean) => {
+      return sameDayOfficeReports.some((r) => {
+        if (isEditingExistingReport && initialReport?.id && r.id === initialReport.id) {
+          return false;
+        }
+        if (isMob) return checkIsMobileUnitName(r.centerName);
+        if (checkIsMobileUnitName(r.centerName)) return false;
+        if (stdCenters.length === 1) return true;
+        return (r.centerName || '').trim() === cName.trim();
+      });
+    };
+
+    // If preferredCenterName is valid for this office and not yet taken, keep it
+    if (preferredCenterName) {
+      const isPrefMobile = checkIsMobileUnitName(preferredCenterName);
+      if (isPrefMobile && !isSlotTaken(MOBILE_UNIT_CENTER_NAME, true)) {
+        return MOBILE_UNIT_CENTER_NAME;
+      }
+      if (!isPrefMobile && stdCenters.includes(preferredCenterName) && !isSlotTaken(preferredCenterName, false)) {
+        return preferredCenterName;
+      }
+    }
+
+    // Otherwise find first available standard center
+    for (const cName of stdCenters) {
+      if (!isSlotTaken(cName, false)) {
+        return cName;
+      }
+    }
+
+    // Otherwise check if Mobile Unit is available
+    if (!isSlotTaken(MOBILE_UNIT_CENTER_NAME, true)) {
+      return MOBILE_UNIT_CENTER_NAME;
+    }
+
+    // If all slots are already submitted for that date, default to primary center
+    return stdCenters[0] || office.centerName;
+  };
 
   // Keep formData's officeName & standard centerName synced if Admin updates the selected office
   useEffect(() => {
     if (!currentSelectedOffice) return;
     if (formData.officeId !== currentSelectedOffice.id) return;
+    const validStdCenters = getStandardCentersForOffice(currentSelectedOffice);
     const expectedCenter = isMobileCenter
       ? formData.centerName
-      : currentSelectedOffice.centerName || formData.centerName;
+      : validStdCenters.includes(formData.centerName)
+      ? formData.centerName
+      : validStdCenters[0] || formData.centerName;
     if (
       formData.officeName !== currentSelectedOffice.name ||
       formData.region !== currentSelectedOffice.region ||
@@ -273,16 +466,23 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     }
   }, [currentSelectedOffice]);
 
-  // Switch between Standard Office Center and Mobile Unit
-  const handleCenterTypeChange = (type: 'standard' | 'mobile') => {
-    const nextCenterName =
-      type === 'mobile' ? MOBILE_UNIT_CENTER_NAME : standardOfficeCenterName;
+  // Select a specific Standard Center or Mobile Unit slot
+  const handleSelectCenterSlot = (targetCenterName: string) => {
     const updated = {
       ...formData,
-      centerName: nextCenterName,
+      centerName: targetCenterName,
     };
     setFormData(updated);
     triggerPreview(updated);
+  };
+
+  // Switch between Standard Office Center and Mobile Unit
+  const handleCenterTypeChange = (type: 'standard' | 'mobile', specificCenterName?: string) => {
+    const nextCenterName =
+      type === 'mobile'
+        ? MOBILE_UNIT_CENTER_NAME
+        : specificCenterName || standardOfficeCenterName;
+    handleSelectCenterSlot(nextCenterName);
   };
 
   // Inline Admin: Add New Center or Edit Current Center
@@ -292,7 +492,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       () => {
         setAdminCenterMode(mode);
         if (mode === 'edit') {
-          setEditCenterNameInput(currentSelectedOffice?.centerName || formData.centerName || '');
+          setEditCenterNameInput(
+            (!isMobileCenter && formData.centerName) ||
+              currentSelectedOffice?.centerName ||
+              ''
+          );
           setNewCenterOfficeNameInput(currentSelectedOffice?.name || formData.officeName || '');
         } else {
           setNewCenterNameInput('');
@@ -313,11 +517,24 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         return;
       }
       if (currentSelectedOffice && onUpdateOffices) {
-        const updatedOffices = officeList.map((o) =>
-          o.id === currentSelectedOffice.id
-            ? { ...o, name: trimmedOffice, centerName: trimmedCenter }
-            : o
-        );
+        const updatedOffices = officeList.map((o) => {
+          if (o.id !== currentSelectedOffice.id) return o;
+          // If editing the second standard center in additionalCenters
+          if (
+            Array.isArray(o.additionalCenters) &&
+            o.additionalCenters.includes(formData.centerName) &&
+            o.centerName !== formData.centerName
+          ) {
+            return {
+              ...o,
+              name: trimmedOffice,
+              additionalCenters: o.additionalCenters.map((c) =>
+                c === formData.centerName ? trimmedCenter : c
+              ),
+            };
+          }
+          return { ...o, name: trimmedOffice, centerName: trimmedCenter };
+        });
         onUpdateOffices(updatedOffices);
       }
       const updatedForm = {
@@ -340,6 +557,39 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       const finalCenterName =
         rawCenter || `ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว (${finalOfficeName})`;
       const finalRegion = (newCenterRegionInput || currentSelectedOffice?.region || 'ภาคกลางและตะวันตก') as EmploymentOffice['region'];
+
+      // Check if adding a 2nd standard center to an existing office
+      const matchingOffice = officeList.find((o) => o.name === finalOfficeName);
+      if (matchingOffice && getStandardCentersForOffice(matchingOffice).length < 2) {
+        const existingAdditional = matchingOffice.additionalCenters || [];
+        const nextAdditional = existingAdditional.includes(finalCenterName)
+          ? existingAdditional
+          : [...existingAdditional, finalCenterName].slice(0, 1);
+        if (onUpdateOffices) {
+          const updatedOffices = officeList.map((o) =>
+            o.id === matchingOffice.id
+              ? { ...o, additionalCenters: nextAdditional }
+              : o
+          );
+          onUpdateOffices(updatedOffices);
+        }
+        setSelectedOfficeId(matchingOffice.id);
+        const updatedForm = {
+          ...formData,
+          officeId: matchingOffice.id,
+          officeName: matchingOffice.name,
+          officeNameEn: matchingOffice.nameEn,
+          centerName: finalCenterName,
+          region: matchingOffice.region,
+        };
+        setFormData(updatedForm);
+        triggerPreview(updatedForm);
+        setShowAdminCenterPanel(false);
+        setNewCenterNameInput('');
+        onNotify?.(`เพิ่มศูนย์บริการแห่งที่ 2 "${finalCenterName}" ของ ${matchingOffice.name} เรียบร้อยแล้ว`);
+        return;
+      }
+
       const newOfficeItem: EmploymentOffice = {
         id: `office_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         name: finalOfficeName,
@@ -434,8 +684,10 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     if (office) {
       // Check if a registered reporter belongs to this office
       const matchingReporter = reporters?.find((r) => r.officeId === office.id);
-      const targetCenterName = isMobileCenter
-        ? formData.centerName || MOBILE_UNIT_CENTER_NAME
+      const targetCenterName = !isEditingExistingReport
+        ? pickAvailableCenterForOfficeAndDate(office, formData.reportDate)
+        : isMobileCenter
+        ? MOBILE_UNIT_CENTER_NAME
         : office.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
 
       const updated = {
@@ -522,10 +774,19 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   // Handle Date Change
   const handleDateChange = (isoDate: string) => {
     const thaiStr = formatThaiDateFull(isoDate);
+    const nextCenterName =
+      !isEditingExistingReport && currentSelectedOffice
+        ? pickAvailableCenterForOfficeAndDate(
+            currentSelectedOffice,
+            isoDate,
+            formData.centerName
+          )
+        : formData.centerName;
     const updated = {
       ...formData,
       reportDate: isoDate,
       reportDateThaiStr: thaiStr,
+      centerName: nextCenterName,
     };
     setFormData(updated);
     triggerPreview(updated);
@@ -611,8 +872,24 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     }
   }, [formData.queueAppointment]);
 
+  const centerSelectorRef = useRef<HTMLDivElement | null>(null);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Enforce per-day per-office reporting quota:
+    // 1 or 2 times according to standard centers owned by the office, and/or 1 time for Mobile Unit
+    if (dailyQuotaInfo.isCurrentSlotBlocked) {
+      const blockedSlotLabel = dailyQuotaInfo.activeSlot?.centerName || formData.centerName;
+      onNotify?.(
+        `⚠️ "${formData.officeName}" ได้ส่งรายงานของ "${blockedSlotLabel}" ในวันที่ ${formData.reportDateThaiStr} ครบโควตา (1/1 ครั้ง) แล้ว กรุณาเลือกศูนย์อื่นที่ยังว่าง หรือคลิกแก้ไขรายงานเดิม`
+      );
+      if (centerSelectorRef.current) {
+        centerSelectorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
+
     const isNameMissing = !formData.reporterName || !formData.reporterName.trim();
     const isPositionMissing = !formData.reporterPosition || !formData.reporterPosition.trim();
     const isPhoneMissing = !formData.phoneNumber || !formData.phoneNumber.trim();
@@ -983,82 +1260,183 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </span>
               </div>
 
-              {/* ตัวเลือกประเภทศูนย์บริการ: ศูนย์ประจำสำนักงาน vs หน่วยบริการเคลื่อนที่ (Mobile Unit) */}
-              <div className="pt-2.5 border-t border-slate-200/80 space-y-2">
+              {/* ตัวเลือกประเภทศูนย์บริการและโควตาการส่งรายงานต่อวัน (1-2 ครั้งตามชื่อศูนย์ที่มี และ/หรือ 1 ครั้งสำหรับ Mobile Unit) */}
+              <div
+                ref={centerSelectorRef}
+                className="pt-2.5 border-t border-slate-200/80 space-y-2.5"
+              >
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-[11px] font-bold text-slate-700">
-                    เลือกรูปแบบศูนย์บริการที่แสดงในรายงานและโปสเตอร์:
-                  </span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-bold text-slate-800">
+                      เลือกศูนย์บริการที่ต้องการรายงาน (ประจำวันที่ {formData.reportDateThaiStr}):
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-800 border border-blue-200">
+                      <span>
+                        สิทธิ์รายงานต่อวัน: ศูนย์ประจำสำนักงาน {dailyQuotaInfo.standardSubmittedCount}/
+                        {dailyQuotaInfo.standardMaxCount} ครั้ง
+                      </span>
+                      <span className="text-blue-300">•</span>
+                      <span>
+                        หน่วยบริการเคลื่อนที่ {dailyQuotaInfo.mobileSubmittedCount}/1 ครั้ง
+                      </span>
+                    </span>
+                  </div>
                   <span className="text-[10.5px] text-slate-500">
-                    คลิกสลับระหว่างศูนย์บริการประจำสำนักงาน หรือ Mobile Unit ได้ทันที
+                    รายงานได้ {dailyQuotaInfo.standardMaxCount} ครั้งตามชื่อศูนย์ที่มี และ/หรือ อีก 1 ครั้งสำหรับหน่วยบริการเคลื่อนที่
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {/* ปุ่มเลือกที่ 1: ศูนย์บริการประจำสำนักงาน */}
-                  <button
-                    type="button"
-                    onClick={() => handleCenterTypeChange('standard')}
-                    className={`text-left p-2.5 rounded-xl border transition-all flex items-start gap-2.5 cursor-pointer ${
-                      !isMobileCenter
-                        ? 'bg-white border-sky-500 ring-2 ring-sky-500/20 shadow-xs'
-                        : 'bg-white/70 hover:bg-white border-slate-200 text-slate-600'
-                    }`}
-                  >
-                    <div
-                      className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                        !isMobileCenter
-                          ? 'bg-sky-600 text-white'
-                          : 'bg-slate-100 text-slate-500'
-                      }`}
-                    >
-                      <MapPin className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-1">
-                        <span
-                          className={`text-xs font-extrabold ${
-                            !isMobileCenter ? 'text-sky-950' : 'text-slate-700'
+                <div
+                  className={`grid grid-cols-1 ${
+                    dailyQuotaInfo.standardSlots.length > 1
+                      ? 'lg:grid-cols-3'
+                      : 'sm:grid-cols-2'
+                  } gap-2.5`}
+                >
+                  {/* การ์ดเลือกศูนย์บริการประจำสำนักงาน (1 หรือ 2 ศูนย์ตามที่มีจริงของสำนักงาน) */}
+                  {dailyQuotaInfo.standardSlots.map((slot) => {
+                    const isSelected =
+                      !isMobileCenter &&
+                      (dailyQuotaInfo.standardSlots.length === 1 ||
+                        (formData.centerName || '').trim() === slot.centerName.trim());
+
+                    return (
+                      <div
+                        key={slot.key}
+                        onClick={() => handleCenterTypeChange('standard', slot.centerName)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            handleCenterTypeChange('standard', slot.centerName);
+                          }
+                        }}
+                        className={`text-left p-2.5 rounded-xl border transition-all flex items-start gap-2.5 cursor-pointer ${
+                          isSelected
+                            ? slot.isSubmitted
+                              ? 'bg-rose-50/70 border-rose-400 ring-2 ring-rose-400/25 shadow-xs'
+                              : 'bg-white border-sky-500 ring-2 ring-sky-500/20 shadow-xs'
+                            : slot.isSubmitted
+                            ? 'bg-slate-50/90 hover:bg-white border-slate-200/90 text-slate-500'
+                            : 'bg-white/70 hover:bg-white border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                            isSelected
+                              ? slot.isSubmitted
+                                ? 'bg-rose-600 text-white'
+                                : 'bg-sky-600 text-white'
+                              : slot.isSubmitted
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-slate-100 text-slate-500'
                           }`}
                         >
-                          ศูนย์บริการประจำสำนักงาน
-                        </span>
-                        {!isMobileCenter && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0">
-                            กำลังใช้งาน
+                          {slot.isSubmitted ? (
+                            <CheckCircle2 className="w-4 h-4" />
+                          ) : (
+                            <MapPin className="w-4 h-4" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-1 flex-wrap">
+                            <span
+                              className={`text-xs font-extrabold ${
+                                isSelected ? 'text-sky-950' : 'text-slate-700'
+                              }`}
+                            >
+                              {slot.label}
+                            </span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {slot.isEditingThis ? (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                  กำลังแก้ไข (1/1 ครั้ง)
+                                </span>
+                              ) : slot.isSubmitted ? (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  ส่งแล้ว (1/1 ครั้ง)
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                                  0/1 ครั้ง
+                                </span>
+                              )}
+                              {isSelected && !slot.isSubmitted && !slot.isEditingThis && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">
+                                  กำลังเลือก
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <span
+                            className="text-[11px] text-slate-600 font-medium truncate block mt-0.5"
+                            title={slot.centerName}
+                          >
+                            {slot.centerName}
                           </span>
-                        )}
+                          {slot.isSubmitted && slot.existingReport && onEditExistingReport && (
+                            <div className="mt-1.5 flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70">
+                              <span className="text-[10px] text-emerald-700 font-semibold">
+                                บันทึกแล้ว ({formatNumber(slot.existingReport.cardsIssued)} ใบ)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onEditExistingReport(slot.existingReport!);
+                                }}
+                                className="text-[10.5px] font-bold text-blue-700 hover:text-blue-900 underline cursor-pointer"
+                              >
+                                คลิกแก้ไขรายงานนี้
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <span
-                        className="text-[11px] text-slate-500 truncate block mt-0.5"
-                        title={standardOfficeCenterName}
-                      >
-                        {standardOfficeCenterName}
-                      </span>
-                    </div>
-                  </button>
+                    );
+                  })}
 
-                  {/* ปุ่มเลือกที่ 2: หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit) */}
-                  <button
-                    type="button"
+                  {/* การ์ดเลือกหน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit) (1 ครั้ง/วัน) */}
+                  <div
                     onClick={() => handleCenterTypeChange('mobile')}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleCenterTypeChange('mobile');
+                      }
+                    }}
                     className={`text-left p-2.5 rounded-xl border transition-all flex items-start gap-2.5 cursor-pointer ${
                       isMobileCenter
-                        ? 'bg-amber-50/70 border-amber-500 ring-2 ring-amber-500/25 shadow-xs'
+                        ? dailyQuotaInfo.mobileSlot.isSubmitted
+                          ? 'bg-rose-50/70 border-rose-400 ring-2 ring-rose-400/25 shadow-xs'
+                          : 'bg-amber-50/70 border-amber-500 ring-2 ring-amber-500/25 shadow-xs'
+                        : dailyQuotaInfo.mobileSlot.isSubmitted
+                        ? 'bg-slate-50/90 hover:bg-white border-slate-200/90 text-slate-500'
                         : 'bg-white/70 hover:bg-white border-slate-200 text-slate-600'
                     }`}
                   >
                     <div
                       className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
                         isMobileCenter
-                          ? 'bg-amber-500 text-white'
+                          ? dailyQuotaInfo.mobileSlot.isSubmitted
+                            ? 'bg-rose-600 text-white'
+                            : 'bg-amber-500 text-white'
+                          : dailyQuotaInfo.mobileSlot.isSubmitted
+                          ? 'bg-emerald-100 text-emerald-700'
                           : 'bg-amber-100/70 text-amber-700'
                       }`}
                     >
-                      <Truck className="w-4 h-4" />
+                      {dailyQuotaInfo.mobileSlot.isSubmitted ? (
+                        <CheckCircle2 className="w-4 h-4" />
+                      ) : (
+                        <Truck className="w-4 h-4" />
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
                         <span
                           className={`text-xs font-extrabold ${
                             isMobileCenter ? 'text-amber-950' : 'text-slate-800'
@@ -1066,21 +1444,95 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                         >
                           หน่วยบริการเคลื่อนที่ (Mobile Unit)
                         </span>
-                        {isMobileCenter && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-200/80 text-amber-950 shrink-0">
-                            กำลังใช้งาน
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {dailyQuotaInfo.mobileSlot.isEditingThis ? (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
+                              กำลังแก้ไข (1/1 ครั้ง)
+                            </span>
+                          ) : dailyQuotaInfo.mobileSlot.isSubmitted ? (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                              ส่งแล้ว (1/1 ครั้ง)
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100/80 text-amber-900">
+                              0/1 ครั้ง
+                            </span>
+                          )}
+                          {isMobileCenter &&
+                            !dailyQuotaInfo.mobileSlot.isSubmitted &&
+                            !dailyQuotaInfo.mobileSlot.isEditingThis && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-200/80 text-amber-950">
+                                กำลังเลือก
+                              </span>
+                            )}
+                        </div>
                       </div>
                       <span
-                        className="text-[11px] text-slate-500 truncate block mt-0.5"
+                        className="text-[11px] text-slate-600 font-medium truncate block mt-0.5"
                         title={MOBILE_UNIT_CENTER_NAME}
                       >
                         {MOBILE_UNIT_CENTER_NAME}
                       </span>
+                      {dailyQuotaInfo.mobileSlot.isSubmitted &&
+                        dailyQuotaInfo.mobileSlot.existingReport &&
+                        onEditExistingReport && (
+                          <div className="mt-1.5 flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70">
+                            <span className="text-[10px] text-emerald-700 font-semibold">
+                              บันทึกแล้ว ({formatNumber(dailyQuotaInfo.mobileSlot.existingReport.cardsIssued)} ใบ)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditExistingReport(dailyQuotaInfo.mobileSlot.existingReport!);
+                              }}
+                              className="text-[10.5px] font-bold text-blue-700 hover:text-blue-900 underline cursor-pointer"
+                            >
+                              คลิกแก้ไขรายงานนี้
+                            </button>
+                          </div>
+                        )}
                     </div>
-                  </button>
+                  </div>
                 </div>
+
+                {/* แจ้งเตือนกรณีศูนย์ที่เลือกส่งรายงานครบโควตาประจำวันแล้ว พร้อมปุ่มสลับศูนย์ที่ยังว่างหรือแก้ไขรายงานเดิม */}
+                {dailyQuotaInfo.isCurrentSlotBlocked && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div className="flex items-start gap-2 text-xs text-amber-950">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">
+                          {formData.officeName} ได้ส่งรายงานของ &ldquo;{dailyQuotaInfo.activeSlot?.centerName}&rdquo; ประจำวันที่ {formData.reportDateThaiStr} ไปแล้ว (ครบ 1/1 ครั้ง)
+                        </p>
+                        <p className="text-[11px] text-amber-800 mt-0.5">
+                          ใน 1 วันที่ สำนักงานจัดหางานสามารถรายงานได้ {dailyQuotaInfo.standardMaxCount} ครั้งตามชื่อศูนย์ที่มี และ/หรือ อีก 1 ครั้งกรณีเป็นหน่วยบริการเคลื่อนที่
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap shrink-0">
+                      {dailyQuotaInfo.availableSlots.map((avail) => (
+                        <button
+                          key={avail.key}
+                          type="button"
+                          onClick={() => handleSelectCenterSlot(avail.centerName)}
+                          className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white shadow-2xs cursor-pointer transition-colors"
+                        >
+                          สลับไปรายงาน: {avail.label}
+                        </button>
+                      ))}
+                      {dailyQuotaInfo.activeSlot?.existingReport && onEditExistingReport && (
+                        <button
+                          type="button"
+                          onClick={() => onEditExistingReport(dailyQuotaInfo.activeSlot!.existingReport!)}
+                          className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white hover:bg-amber-100 text-amber-950 border border-amber-400 shadow-2xs cursor-pointer transition-colors"
+                        >
+                          แก้ไขรายงานที่ส่งแล้วของศูนย์นี้
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* แสดงผลชื่อศูนย์บริการที่จะปรากฏบนหัวเรื่องรายงานและโปสเตอร์ + ปุ่มจัดการชื่อศูนย์สำหรับ Admin */}
@@ -1890,6 +2342,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
             className={`px-6 py-2.5 rounded-xl text-white font-bold text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer active:scale-98 ${
               justSaved
                 ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-300'
+                : dailyQuotaInfo.isCurrentSlotBlocked
+                ? 'bg-amber-600 hover:bg-amber-700'
                 : 'bg-blue-900 hover:bg-blue-800'
             }`}
           >
@@ -1898,10 +2352,19 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 <CheckCircle2 className="w-4 h-4" />
                 <span>บันทึกรายงานสำเร็จแล้ว!</span>
               </>
+            ) : dailyQuotaInfo.isCurrentSlotBlocked ? (
+              <>
+                <AlertCircle className="w-4 h-4" />
+                <span>ศูนย์นี้ส่งรายงานวันนี้ครบแล้ว (คลิกเพื่อดูตัวเลือก)</span>
+              </>
             ) : (
               <>
                 <Save className="w-4 h-4" />
-                <span>บันทึกรายงานผลการปฏิบัติงาน</span>
+                <span>
+                  {isEditingExistingReport
+                    ? 'บันทึกการแก้ไขรายงาน'
+                    : 'บันทึกรายงานผลการปฏิบัติงาน'}
+                </span>
               </>
             )}
           </button>

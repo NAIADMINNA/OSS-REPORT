@@ -136,13 +136,13 @@ export function generateLineSummaryText(
     categories && categories.length > 0
       ? categories.filter((c) => c.isActive)
       : [
-          { id: 'section59', title: 'กลุ่มมาตรา 59' },
-          { id: 'section62', title: 'กลุ่มมาตรา 62' },
-          { id: 'section63_1', title: 'กลุ่มมาตรา 63/1' },
-          { id: 'section63_2', title: 'กลุ่มมาตรา 63/2' },
-          { id: 'section64', title: 'กลุ่มมาตรา 64' },
-          { id: 'mouGroup', title: 'กลุ่มนำเข้าตาม MOU' },
-          { id: 'modifyDetails', title: 'เปลี่ยนแปลงรายการในใบอนุญาตทำงาน' },
+          { id: 'cat_1791818621214', title: 'กลุ่มมาตรา 63/2 (มติ ครม 11 พฤศจิกายน 2568)' },
+          { id: 'modifyDetails', title: 'กลุ่มมาตรา 59 / มาตรา 62' },
+          { id: 'section59', title: 'กลุ่มมาตรา 59 ( MOU )' },
+          { id: 'section62', title: 'มาตรา 63และกลุ่มมาตรา 63/1' },
+          { id: 'section63_1', title: 'กลุ่มมาตรา 63/2' },
+          { id: 'section63_2', title: 'กลุ่มมาตรา 64' },
+          { id: 'section64', title: 'เปลี่ยนแปลงรายการใบอนุญาตทำงาน' },
           { id: 'substituteCard', title: 'ใบแทนใบอนุญาตทำงาน' },
         ];
 
