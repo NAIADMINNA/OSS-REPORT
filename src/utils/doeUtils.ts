@@ -68,8 +68,10 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
     cardsNotIssued: Number(r.cardsNotIssued) || 0,
     missedAppointment: Number(r.missedAppointment) || 0,
     wrongAppointmentDate: Number(r.wrongAppointmentDate) || 0,
-    customQueueMetricValues:
-      r.customQueueMetricValues && typeof r.customQueueMetricValues === 'object'
+    customQueueValues:
+      r.customQueueValues && typeof r.customQueueValues === 'object'
+        ? (r.customQueueValues as Record<string, number>)
+        : r.customQueueMetricValues && typeof r.customQueueMetricValues === 'object'
         ? (r.customQueueMetricValues as Record<string, number>)
         : {},
     cumulativeCardsIssued: Number(r.cumulativeCardsIssued) || 0,

@@ -55,7 +55,11 @@ export function groupAndSortOfficesByRegion(offices: EmploymentOffice[]): Region
 
   // Sort offices within each region alphabetically (Thai locale with numeric ordering)
   for (const reg in grouped) {
-    grouped[reg].sort((a, b) => a.name.localeCompare(b.name, 'th', { numeric: true }));
+    grouped[reg].sort((a, b) => {
+      const nameCmp = (a.name || '').localeCompare(b.name || '', 'th', { numeric: true });
+      if (nameCmp !== 0) return nameCmp;
+      return (a.centerName || '').localeCompare(b.centerName || '', 'th', { numeric: true });
+    });
   }
 
   const result: RegionOfficeGroup[] = [];

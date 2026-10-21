@@ -52,6 +52,10 @@ interface ReportFormProps {
   adminPin?: string;
   onAdminAuthenticated?: () => void;
   onNavigateAdmin?: (subTab?: string) => void;
+  onUpdateOffices?: (offices: EmploymentOffice[]) => void;
+  onUpdateCategories?: (categories: ReportCategory[]) => void;
+  onUpdateQueueMetrics?: (metrics: QueueMetricCategory[]) => void;
+  onNotify?: (msg: string) => void;
 }
 
 export const ReportForm: React.FC<ReportFormProps> = ({
@@ -67,12 +71,34 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   adminPin = '0841543524',
   onAdminAuthenticated,
   onNavigateAdmin,
+  onUpdateOffices,
+  onUpdateCategories,
+  onUpdateQueueMetrics,
+  onNotify,
 }) => {
   const searchInputId = useId();
   const [officeSearch, setOfficeSearch] = useState('');
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>(
     initialReport?.officeId || EMPLOYMENT_OFFICES[0]?.id || 'bkk_1'
   );
+
+  // Inline Admin Quick-Add / Edit Panels
+  const [showAdminCenterPanel, setShowAdminCenterPanel] = useState(false);
+  const [adminCenterMode, setAdminCenterMode] = useState<'add' | 'edit'>('add');
+  const [newCenterNameInput, setNewCenterNameInput] = useState('');
+  const [newCenterOfficeNameInput, setNewCenterOfficeNameInput] = useState('');
+  const [newCenterRegionInput, setNewCenterRegionInput] = useState('');
+  const [editCenterNameInput, setEditCenterNameInput] = useState('');
+
+  const [showAdminCategoryPanel, setShowAdminCategoryPanel] = useState(false);
+  const [newCatTitleInput, setNewCatTitleInput] = useState('');
+  const [newCatSubLabelInput, setNewCatSubLabelInput] = useState('');
+  const [newCatCodeInput, setNewCatCodeInput] = useState('');
+
+  const [showAdminQueuePanel, setShowAdminQueuePanel] = useState(false);
+  const [newQueueTitleInput, setNewQueueTitleInput] = useState('');
+  const [newQueueUnitInput, setNewQueueUnitInput] = useState('คน');
+  const [newQueueSubLabelInput, setNewQueueSubLabelInput] = useState('');
 
   // Admin Verification Modal for protected fields (Center Name & Notes)
   const [adminModalOpen, setAdminModalOpen] = useState(false);
@@ -223,6 +249,30 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     );
   }, [formData.centerName]);
 
+  // Keep formData's officeName & standard centerName synced if Admin updates the selected office
+  useEffect(() => {
+    if (!currentSelectedOffice) return;
+    if (formData.officeId !== currentSelectedOffice.id) return;
+    const expectedCenter = isMobileCenter
+      ? formData.centerName
+      : currentSelectedOffice.centerName || formData.centerName;
+    if (
+      formData.officeName !== currentSelectedOffice.name ||
+      formData.region !== currentSelectedOffice.region ||
+      (!isMobileCenter && formData.centerName !== expectedCenter)
+    ) {
+      const updated = {
+        ...formData,
+        officeName: currentSelectedOffice.name,
+        officeNameEn: currentSelectedOffice.nameEn || currentSelectedOffice.name,
+        region: currentSelectedOffice.region,
+        centerName: expectedCenter,
+      };
+      setFormData(updated);
+      triggerPreview(updated);
+    }
+  }, [currentSelectedOffice]);
+
   // Switch between Standard Office Center and Mobile Unit
   const handleCenterTypeChange = (type: 'standard' | 'mobile') => {
     const nextCenterName =
@@ -233,6 +283,142 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     };
     setFormData(updated);
     triggerPreview(updated);
+  };
+
+  // Inline Admin: Add New Center or Edit Current Center
+  const handleOpenAdminCenterPanel = (mode: 'add' | 'edit') => {
+    requireAdmin(
+      mode === 'add' ? 'เพิ่มชื่อศูนย์บริการใหม่เข้าสู่ระบบ' : 'แก้ไขชื่อศูนย์บริการของสำนักงานนี้',
+      () => {
+        setAdminCenterMode(mode);
+        if (mode === 'edit') {
+          setEditCenterNameInput(currentSelectedOffice?.centerName || formData.centerName || '');
+          setNewCenterOfficeNameInput(currentSelectedOffice?.name || formData.officeName || '');
+        } else {
+          setNewCenterNameInput('');
+          setNewCenterOfficeNameInput(currentSelectedOffice?.name || formData.officeName || '');
+          setNewCenterRegionInput(currentSelectedOffice?.region || formData.region || 'ภาคกลางและตะวันตก');
+        }
+        setShowAdminCenterPanel(true);
+      }
+    );
+  };
+
+  const handleSaveAdminCenter = () => {
+    if (adminCenterMode === 'edit') {
+      const trimmedCenter = editCenterNameInput.trim();
+      const trimmedOffice = newCenterOfficeNameInput.trim() || currentSelectedOffice?.name || formData.officeName;
+      if (!trimmedCenter) {
+        onNotify?.('⚠️ กรุณาระบุชื่อศูนย์บริการ');
+        return;
+      }
+      if (currentSelectedOffice && onUpdateOffices) {
+        const updatedOffices = officeList.map((o) =>
+          o.id === currentSelectedOffice.id
+            ? { ...o, name: trimmedOffice, centerName: trimmedCenter }
+            : o
+        );
+        onUpdateOffices(updatedOffices);
+      }
+      const updatedForm = {
+        ...formData,
+        officeName: trimmedOffice,
+        centerName: trimmedCenter,
+      };
+      setFormData(updatedForm);
+      triggerPreview(updatedForm);
+      setShowAdminCenterPanel(false);
+      onNotify?.(`บันทึกการแก้ไขชื่อศูนย์ "${trimmedCenter}" เรียบร้อยแล้ว`);
+    } else {
+      const rawCenter = newCenterNameInput.trim();
+      const rawOffice = newCenterOfficeNameInput.trim();
+      if (!rawCenter && !rawOffice) {
+        onNotify?.('⚠️ กรุณาระบุชื่อศูนย์บริการใหม่ หรือ ชื่อสำนักงานจัดหางาน');
+        return;
+      }
+      const finalOfficeName = rawOffice || rawCenter;
+      const finalCenterName =
+        rawCenter || `ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว (${finalOfficeName})`;
+      const finalRegion = (newCenterRegionInput || currentSelectedOffice?.region || 'ภาคกลางและตะวันตก') as EmploymentOffice['region'];
+      const newOfficeItem: EmploymentOffice = {
+        id: `office_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        name: finalOfficeName,
+        nameEn: finalOfficeName,
+        centerName: finalCenterName,
+        region: finalRegion,
+        defaultPhone: currentSelectedOffice?.defaultPhone || formData.phoneNumber || '',
+        defaultLine: currentSelectedOffice?.defaultLine || formData.lineId || '',
+      };
+      if (onUpdateOffices) {
+        onUpdateOffices([...officeList, newOfficeItem]);
+      }
+      setOfficeSearch('');
+      setSelectedRegionFilter('ทั้งหมด');
+      setSelectedOfficeId(newOfficeItem.id);
+      const updatedForm = {
+        ...formData,
+        officeId: newOfficeItem.id,
+        officeName: newOfficeItem.name,
+        officeNameEn: newOfficeItem.nameEn,
+        centerName: newOfficeItem.centerName,
+        region: newOfficeItem.region,
+      };
+      setFormData(updatedForm);
+      triggerPreview(updatedForm);
+      setShowAdminCenterPanel(false);
+      setNewCenterNameInput('');
+      onNotify?.(`เพิ่มศูนย์บริการใหม่ "${newOfficeItem.centerName}" และเลือกใช้งานทันทีเรียบร้อยแล้ว`);
+    }
+  };
+
+  // Inline Admin: Quick Add Category in Section 2
+  const handleQuickAddCategory = () => {
+    const titleVal = newCatTitleInput.trim() || newCatCodeInput.trim();
+    if (!titleVal) {
+      onNotify?.('⚠️ กรุณาระบุชื่อหัวข้อกลุ่มเป้าหมายที่ต้องการเพิ่ม');
+      return;
+    }
+    const newCat: ReportCategory = {
+      id: `cat_${Date.now()}`,
+      code: newCatCodeInput.trim() || '',
+      title: titleVal,
+      subLabel: newCatSubLabelInput.trim() || '',
+      color: 'from-blue-600 to-indigo-600',
+      isActive: true,
+      isDefault: false,
+    };
+    const baseCats = categories && categories.length > 0 ? categories : activeCategories;
+    onUpdateCategories?.([...baseCats, newCat]);
+    setNewCatTitleInput('');
+    setNewCatSubLabelInput('');
+    setNewCatCodeInput('');
+    setShowAdminCategoryPanel(false);
+    onNotify?.(`เพิ่มหัวข้อใหม่ "${newCat.title}" เรียบร้อยแล้ว`);
+  };
+
+  // Inline Admin: Quick Add Queue Metric in Section 3
+  const handleQuickAddQueueMetric = () => {
+    const titleVal = newQueueTitleInput.trim();
+    if (!titleVal) {
+      onNotify?.('⚠️ กรุณาระบุชื่อหัวข้อสถานะคิว/บริการที่ต้องการเพิ่ม');
+      return;
+    }
+    const newQm: QueueMetricCategory = {
+      id: `custom_queue_${Date.now()}`,
+      title: titleVal,
+      unit: newQueueUnitInput.trim() || 'คน',
+      subLabel: newQueueSubLabelInput.trim() || '',
+      badgeColor: 'text-indigo-700 bg-indigo-50 border-indigo-200',
+      isActive: true,
+      isDefault: false,
+    };
+    const baseMetrics = queueMetrics && queueMetrics.length > 0 ? queueMetrics : activeQueueMetrics;
+    onUpdateQueueMetrics?.([...baseMetrics, newQm]);
+    setNewQueueTitleInput('');
+    setNewQueueUnitInput('คน');
+    setNewQueueSubLabelInput('');
+    setShowAdminQueuePanel(false);
+    onNotify?.(`เพิ่มหัวข้อสถานะคิวใหม่ "${newQm.title}" เรียบร้อยแล้ว`);
   };
 
   // Calculate live sums across all active categories (both default and custom)
@@ -897,26 +1083,178 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </div>
               </div>
 
-              {/* แสดงผลชื่อศูนย์บริการที่จะปรากฏบนหัวเรื่องรายงานและโปสเตอร์ */}
-              <div className="pt-2 border-t border-slate-200/80 flex items-center gap-2.5 min-w-0">
-                <div
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                    isMobileCenter
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-blue-100 text-blue-800'
-                  }`}
-                >
-                  {isMobileCenter ? <Truck className="w-4 h-4" /> : <MapPin className="w-4 h-4" />}
+              {/* แสดงผลชื่อศูนย์บริการที่จะปรากฏบนหัวเรื่องรายงานและโปสเตอร์ + ปุ่มจัดการชื่อศูนย์สำหรับ Admin */}
+              <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2.5 min-w-0">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <div
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      isMobileCenter
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-blue-100 text-blue-800'
+                    }`}
+                  >
+                    {isMobileCenter ? <Truck className="w-4 h-4" /> : <MapPin className="w-4 h-4" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[10.5px] text-slate-500 font-semibold block">
+                      ชื่อศูนย์บริการที่แสดงในหัวเรื่องรายงานและโปสเตอร์:
+                    </span>
+                    <span className="font-extrabold text-blue-900 text-xs sm:text-sm truncate block font-['Prompt']" title={formData.centerName}>
+                      {formData.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'}
+                    </span>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <span className="text-[10.5px] text-slate-500 font-semibold block">
-                    ชื่อศูนย์บริการที่แสดงในหัวเรื่องรายงานและโปสเตอร์:
-                  </span>
-                  <span className="font-extrabold text-blue-900 text-xs sm:text-sm truncate block font-['Prompt']" title={formData.centerName}>
-                    {formData.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'}
-                  </span>
+
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAdminCenterPanel('add')}
+                    className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+                    title="เพิ่มชื่อศูนย์บริการใหม่เข้าสู่ระบบ (สิทธิ์ Admin)"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>เพิ่มศูนย์บริการใหม่ (Admin)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAdminCenterPanel('edit')}
+                    className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+                    title="แก้ไขชื่อศูนย์บริการของสำนักงานนี้ (สิทธิ์ Admin)"
+                  >
+                    <Settings className="w-3.5 h-3.5 text-sky-600" />
+                    <span>แก้ไขชื่อศูนย์นี้ (Admin)</span>
+                  </button>
                 </div>
               </div>
+
+              {/* แผงจัดการเพิ่ม/แก้ไขชื่อศูนย์บริการด่วนสำหรับ Admin */}
+              {showAdminCenterPanel && (
+                <div className="mt-2 p-3.5 rounded-xl bg-emerald-50/80 border border-emerald-300 space-y-3 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                      <span className="font-bold text-xs text-emerald-950">
+                        {adminCenterMode === 'add'
+                          ? 'เพิ่มชื่อศูนย์บริการใหม่เข้าสู่ระบบ (บันทึกและเลือกใช้งานทันที)'
+                          : `แก้ไขชื่อศูนย์บริการของ: ${currentSelectedOffice?.name || formData.officeName}`}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {onNavigateAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => onNavigateAdmin('offices')}
+                          className="text-[11px] font-semibold text-emerald-800 hover:underline px-2 py-0.5 cursor-pointer"
+                        >
+                          เปิดหน้าจัดการศูนย์ทั้งหมด →
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowAdminCenterPanel(false)}
+                        className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-white/60 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {adminCenterMode === 'add' ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div className="sm:col-span-3">
+                        <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                          ชื่อศูนย์บริการใหม่ (แสดงในรายงานและโปสเตอร์) <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={newCenterNameInput}
+                          onChange={(e) => setNewCenterNameInput(e.target.value)}
+                          placeholder="เช่น ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว (ขาเข้า) จังหวัดสมุทรสาคร"
+                          className="w-full text-xs px-3 py-2 bg-white border border-emerald-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          ชื่อสำนักงานจัดหางานต้นสังกัด
+                        </label>
+                        <input
+                          type="text"
+                          value={newCenterOfficeNameInput}
+                          onChange={(e) => setNewCenterOfficeNameInput(e.target.value)}
+                          placeholder="เช่น สำนักงานจัดหางานจังหวัดสมุทรสาคร"
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          ภูมิภาค / ประเภทศูนย์
+                        </label>
+                        <select
+                          value={newCenterRegionInput || 'ภาคกลางและตะวันตก'}
+                          onChange={(e) => setNewCenterRegionInput(e.target.value)}
+                          className="w-full text-xs px-2.5 py-2 bg-white border border-slate-300 rounded-lg font-medium"
+                        >
+                          <option value="กรุงเทพมหานคร">กรุงเทพมหานคร</option>
+                          <option value="ภาคกลางและตะวันตก">ภาคกลางและตะวันตก</option>
+                          <option value="ภาคตะวันออก">ภาคตะวันออก</option>
+                          <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ</option>
+                          <option value="ภาคเหนือ">ภาคเหนือ</option>
+                          <option value="ภาคใต้">ภาคใต้</option>
+                          <option value="เฉพาะกิจ">เฉพาะกิจ</option>
+                        </select>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                          ชื่อศูนย์บริการที่แสดงในรายงานและโปสเตอร์ <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={editCenterNameInput}
+                          onChange={(e) => setEditCenterNameInput(e.target.value)}
+                          placeholder="ระบุชื่อศูนย์บริการ..."
+                          className="w-full text-xs px-3 py-2 bg-white border border-emerald-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          ชื่อสำนักงานจัดหางานต้นสังกัด
+                        </label>
+                        <input
+                          type="text"
+                          value={newCenterOfficeNameInput}
+                          onChange={(e) => setNewCenterOfficeNameInput(e.target.value)}
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdminCenterPanel(false)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveAdminCenter}
+                      className="text-xs px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>
+                        {adminCenterMode === 'add'
+                          ? 'บันทึกและเลือกศูนย์บริการนี้ทันที'
+                          : 'บันทึกการแก้ไขชื่อศูนย์'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1148,10 +1486,110 @@ export const ReportForm: React.FC<ReportFormProps> = ({
             <span className="w-2.5 h-2.5 rounded-full bg-sky-500" />
             <span>2. การออกบัตรใบอนุญาตทำงาน (จำแนกตาม {activeCategories.length} กลุ่มเป้าหมาย)</span>
           </div>
-          <div className="text-xs bg-sky-100 text-sky-800 font-bold px-3 py-1 rounded-full">
-            รวมออกบัตรแยกกลุ่ม: {formatNumber(totalSections)} คน
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="text-xs bg-sky-100 text-sky-800 font-bold px-3 py-1 rounded-full">
+              รวมออกบัตรแยกกลุ่ม: {formatNumber(totalSections)} คน
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                requireAdmin('เพิ่มหัวข้อกลุ่มเป้าหมายใหม่', () =>
+                  setShowAdminCategoryPanel((prev) => !prev)
+                )
+              }
+              className="text-xs bg-sky-700 hover:bg-sky-800 text-white font-bold px-2.5 py-1 rounded-md shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+              title="เพิ่มหัวข้อกลุ่มเป้าหมายหรือมาตราอื่นๆ เพิ่มเติมทันที (สิทธิ์ Admin)"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>เพิ่มหัวข้ออื่นๆ (Admin)</span>
+            </button>
+            {onNavigateAdmin && (
+              <button
+                type="button"
+                onClick={() => onNavigateAdmin('sections')}
+                className="text-xs bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold px-2.5 py-1 rounded-md shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+                title="จัดการหัวข้อกลุ่มเป้าหมายทั้งหมดในหน้า Admin"
+              >
+                <Settings className="w-3 h-3 text-sky-700" />
+                <span>ตั้งค่าหัวข้อ</span>
+              </button>
+            )}
           </div>
         </div>
+
+        {/* แผงเพิ่มหัวข้อกลุ่มเป้าหมายด่วนสำหรับ Admin ในส่วนที่ 2 */}
+        {showAdminCategoryPanel && (
+          <div className="p-3.5 rounded-xl bg-sky-50/80 border border-sky-300 space-y-3 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-sky-950">
+                <Plus className="w-4 h-4 text-sky-600" />
+                <span>เพิ่มหัวข้อกลุ่มเป้าหมาย / มาตราอื่นๆ เพิ่มเติม (แสดงในแบบฟอร์มและโปสเตอร์ทันที)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdminCategoryPanel(false)}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-white/60 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                  ชื่อหัวข้อกลุ่มเป้าหมาย <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={newCatTitleInput}
+                  onChange={(e) => setNewCatTitleInput(e.target.value)}
+                  placeholder="เช่น กลุ่มแรงงานพิเศษ / อื่นๆ"
+                  className="w-full text-xs px-3 py-2 bg-white border border-sky-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  คำอธิบายย่อย (ไม่บังคับ)
+                </label>
+                <input
+                  type="text"
+                  value={newCatSubLabelInput}
+                  onChange={(e) => setNewCatSubLabelInput(e.target.value)}
+                  placeholder="เช่น รายละเอียดเพิ่มเติมของกลุ่ม"
+                  className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  รหัสย่อ (ไม่บังคับ)
+                </label>
+                <input
+                  type="text"
+                  value={newCatCodeInput}
+                  onChange={(e) => setNewCatCodeInput(e.target.value)}
+                  placeholder="เช่น อื่นๆ (เว้นว่างได้)"
+                  className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAdminCategoryPanel(false)}
+                className="text-xs px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleQuickAddCategory}
+                className="text-xs px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>บันทึกเพิ่มหัวข้อนี้ทันที</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
           {activeCategories.map((cat, idx) => {
@@ -1227,19 +1665,106 @@ export const ReportForm: React.FC<ReportFormProps> = ({
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
               <span>ยอดออกบัตร ({formatNumber(formData.cardsIssued)} ใบ) คำนวณจากตัวเลขตามจริง {activeCategories.length} กลุ่ม</span>
             </div>
+            <button
+              type="button"
+              onClick={() =>
+                requireAdmin('เพิ่มหัวข้อสถานะคิวและการให้บริการใหม่', () =>
+                  setShowAdminQueuePanel((prev) => !prev)
+                )
+              }
+              className="text-xs bg-teal-700 hover:bg-teal-800 text-white font-bold px-2.5 py-1 rounded-md shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+              title="เพิ่มหัวข้อสถานะคิวหรือบริการอื่นๆ เพิ่มเติมทันที (สิทธิ์ Admin)"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>เพิ่มหัวข้อคิว/บริการ (Admin)</span>
+            </button>
             {onNavigateAdmin && (
               <button
                 type="button"
                 onClick={() => onNavigateAdmin('queue_metrics')}
-                className="text-xs bg-teal-700 hover:bg-teal-800 text-white font-bold px-2.5 py-1 rounded-md shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+                className="text-xs bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold px-2.5 py-1 rounded-md shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
                 title="จัดการ เพิ่ม ลบ หรือแก้ไขหัวข้อคิวและบริการในหน้า Admin"
               >
-                <Settings className="w-3 h-3" />
-                <span>จัดการหัวข้อ (Admin)</span>
+                <Settings className="w-3 h-3 text-teal-700" />
+                <span>ตั้งค่าหัวข้อ</span>
               </button>
             )}
           </div>
         </div>
+
+        {/* แผงเพิ่มหัวข้อสถานะคิวด่วนสำหรับ Admin ในส่วนที่ 3 */}
+        {showAdminQueuePanel && (
+          <div className="p-3.5 rounded-xl bg-teal-50/80 border border-teal-300 space-y-3 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-teal-950">
+                <Plus className="w-4 h-4 text-teal-600" />
+                <span>เพิ่มหัวข้อสถานะคิวและการให้บริการประจำวัน (แสดงในแบบฟอร์มและโปสเตอร์ทันที)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdminQueuePanel(false)}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-white/60 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                  ชื่อหัวข้อสถานะคิว/บริการ <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={newQueueTitleInput}
+                  onChange={(e) => setNewQueueTitleInput(e.target.value)}
+                  placeholder="เช่น คิว Walk-in / ให้คำปรึกษา"
+                  className="w-full text-xs px-3 py-2 bg-white border border-teal-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-teal-500 font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  หน่วยนับ
+                </label>
+                <input
+                  type="text"
+                  value={newQueueUnitInput}
+                  onChange={(e) => setNewQueueUnitInput(e.target.value)}
+                  placeholder="เช่น คน, คิว, ใบ, ราย"
+                  className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  คำอธิบายย่อย (ไม่บังคับ)
+                </label>
+                <input
+                  type="text"
+                  value={newQueueSubLabelInput}
+                  onChange={(e) => setNewQueueSubLabelInput(e.target.value)}
+                  placeholder="เช่น ผู้มารับบริการเพิ่มเติม"
+                  className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAdminQueuePanel(false)}
+                className="text-xs px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleQuickAddQueueMetric}
+                className="text-xs px-3.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>บันทึกเพิ่มหัวข้อคิวทันที</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
           {activeQueueMetrics.map((metric) => {

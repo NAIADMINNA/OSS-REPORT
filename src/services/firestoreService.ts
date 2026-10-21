@@ -190,6 +190,10 @@ export function subscribeDeletedReports(
   );
 }
 
+function cleanForFirestore<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data));
+}
+
 // 2. OFFICES
 export function subscribeOffices(
   onData: (offices: EmploymentOffice[]) => void,
@@ -201,8 +205,12 @@ export function subscribeOffices(
     (snapshot) => {
       const list: EmploymentOffice[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as EmploymentOffice);
+        const data = docSnap.data() as EmploymentOffice;
+        if (data && data.id && data.name) {
+          list.push(data);
+        }
       });
+      list.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
       onData(list);
     },
     (error) => {
@@ -214,8 +222,11 @@ export function subscribeOffices(
 
 export async function saveOfficeOnline(office: EmploymentOffice): Promise<void> {
   const docRef = doc(db, OFFICES_COLLECTION, office.id);
+  const trashRef = doc(db, DELETED_OFFICES_COLLECTION, office.id);
   try {
-    await setDoc(docRef, office, { merge: true });
+    const cleanOffice = cleanForFirestore(office);
+    await setDoc(docRef, cleanOffice, { merge: true });
+    await deleteDoc(trashRef).catch(() => {});
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${OFFICES_COLLECTION}/${office.id}`);
   }
@@ -225,7 +236,10 @@ export async function deleteOfficeOnline(office: EmploymentOffice): Promise<void
   const docRef = doc(db, OFFICES_COLLECTION, office.id);
   const trashRef = doc(db, DELETED_OFFICES_COLLECTION, office.id);
   try {
-    await setDoc(trashRef, office);
+    const cleanOffice = cleanForFirestore(office);
+    await setDoc(trashRef, cleanOffice, { merge: true }).catch((err) =>
+      console.warn('Could not archive office to trash:', err)
+    );
     await deleteDoc(docRef);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `${OFFICES_COLLECTION}/${office.id}`);
@@ -236,8 +250,9 @@ export async function restoreOfficeOnline(office: EmploymentOffice): Promise<voi
   const docRef = doc(db, OFFICES_COLLECTION, office.id);
   const trashRef = doc(db, DELETED_OFFICES_COLLECTION, office.id);
   try {
-    await setDoc(docRef, office);
-    await deleteDoc(trashRef);
+    const cleanOffice = cleanForFirestore(office);
+    await setDoc(docRef, cleanOffice, { merge: true });
+    await deleteDoc(trashRef).catch(console.warn);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${OFFICES_COLLECTION}/${office.id}`);
   }
@@ -253,8 +268,12 @@ export function subscribeDeletedOffices(
     (snapshot) => {
       const list: EmploymentOffice[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as EmploymentOffice);
+        const data = docSnap.data() as EmploymentOffice;
+        if (data && data.id && data.name) {
+          list.push(data);
+        }
       });
+      list.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
       onData(list);
     },
     (error) => {
@@ -273,9 +292,21 @@ export function subscribeCategories(
   return onSnapshot(
     colRef,
     (snapshot) => {
-      const list: ReportCategory[] = [];
+      const list: (ReportCategory & { sortOrder?: number })[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as ReportCategory);
+        const data = docSnap.data() as ReportCategory & { sortOrder?: number };
+        if (data && data.id && data.title) {
+          list.push(data);
+        }
+      });
+      const orderMap = new Map(DEFAULT_CATEGORIES.map((c, idx) => [c.id, idx]));
+      list.sort((a, b) => {
+        const orderA =
+          typeof a.sortOrder === 'number' ? a.sortOrder : (orderMap.get(a.id) ?? 999);
+        const orderB =
+          typeof b.sortOrder === 'number' ? b.sortOrder : (orderMap.get(b.id) ?? 999);
+        if (orderA !== orderB) return orderA - orderB;
+        return a.id.localeCompare(b.id);
       });
       onData(list);
     },
@@ -289,7 +320,7 @@ export function subscribeCategories(
 export async function saveCategoryOnline(category: ReportCategory): Promise<void> {
   const docRef = doc(db, CATEGORIES_COLLECTION, category.id);
   try {
-    await setDoc(docRef, category, { merge: true });
+    await setDoc(docRef, cleanForFirestore(category), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${CATEGORIES_COLLECTION}/${category.id}`);
   }
@@ -297,11 +328,18 @@ export async function saveCategoryOnline(category: ReportCategory): Promise<void
 
 export async function saveAllCategoriesOnline(categories: ReportCategory[]): Promise<void> {
   try {
+    const keepIds = new Set(categories.map((c) => c.id));
+    const existingSnap = await getDocs(collection(db, CATEGORIES_COLLECTION));
     const batch = writeBatch(db);
-    for (const cat of categories) {
+    existingSnap.forEach((docSnap) => {
+      if (!keepIds.has(docSnap.id)) {
+        batch.delete(docSnap.ref);
+      }
+    });
+    categories.forEach((cat, idx) => {
       const docRef = doc(db, CATEGORIES_COLLECTION, cat.id);
-      batch.set(docRef, cat, { merge: true });
-    }
+      batch.set(docRef, cleanForFirestore({ ...cat, sortOrder: idx }));
+    });
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, CATEGORIES_COLLECTION);
@@ -317,9 +355,21 @@ export function subscribeQueueMetrics(
   return onSnapshot(
     colRef,
     (snapshot) => {
-      const list: QueueMetricCategory[] = [];
+      const list: (QueueMetricCategory & { sortOrder?: number })[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as QueueMetricCategory);
+        const data = docSnap.data() as QueueMetricCategory & { sortOrder?: number };
+        if (data && data.id && data.title) {
+          list.push(data);
+        }
+      });
+      const orderMap = new Map(DEFAULT_QUEUE_METRICS.map((c, idx) => [c.id, idx]));
+      list.sort((a, b) => {
+        const orderA =
+          typeof a.sortOrder === 'number' ? a.sortOrder : (orderMap.get(a.id) ?? 999);
+        const orderB =
+          typeof b.sortOrder === 'number' ? b.sortOrder : (orderMap.get(b.id) ?? 999);
+        if (orderA !== orderB) return orderA - orderB;
+        return a.id.localeCompare(b.id);
       });
       onData(list);
     },
@@ -333,7 +383,7 @@ export function subscribeQueueMetrics(
 export async function saveQueueMetricOnline(metric: QueueMetricCategory): Promise<void> {
   const docRef = doc(db, QUEUE_METRICS_COLLECTION, metric.id);
   try {
-    await setDoc(docRef, metric, { merge: true });
+    await setDoc(docRef, cleanForFirestore(metric), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${QUEUE_METRICS_COLLECTION}/${metric.id}`);
   }
@@ -341,11 +391,18 @@ export async function saveQueueMetricOnline(metric: QueueMetricCategory): Promis
 
 export async function saveAllQueueMetricsOnline(metrics: QueueMetricCategory[]): Promise<void> {
   try {
+    const keepIds = new Set(metrics.map((m) => m.id));
+    const existingSnap = await getDocs(collection(db, QUEUE_METRICS_COLLECTION));
     const batch = writeBatch(db);
-    for (const m of metrics) {
+    existingSnap.forEach((docSnap) => {
+      if (!keepIds.has(docSnap.id)) {
+        batch.delete(docSnap.ref);
+      }
+    });
+    metrics.forEach((m, idx) => {
       const docRef = doc(db, QUEUE_METRICS_COLLECTION, m.id);
-      batch.set(docRef, m, { merge: true });
-    }
+      batch.set(docRef, cleanForFirestore({ ...m, sortOrder: idx }));
+    });
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, QUEUE_METRICS_COLLECTION);
@@ -370,9 +427,18 @@ export function subscribeReporters(
   return onSnapshot(
     colRef,
     (snapshot) => {
-      const list: ReporterProfile[] = [];
+      const list: (ReporterProfile & { sortOrder?: number })[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as ReporterProfile);
+        const data = docSnap.data() as ReporterProfile & { sortOrder?: number };
+        if (data && data.id && data.name) {
+          list.push(data);
+        }
+      });
+      list.sort((a, b) => {
+        const orderA = typeof a.sortOrder === 'number' ? a.sortOrder : 999;
+        const orderB = typeof b.sortOrder === 'number' ? b.sortOrder : 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.id.localeCompare(b.id);
       });
       onData(list);
     },
@@ -386,7 +452,7 @@ export function subscribeReporters(
 export async function saveReporterOnline(reporter: ReporterProfile): Promise<void> {
   const docRef = doc(db, REPORTERS_COLLECTION, reporter.id);
   try {
-    await setDoc(docRef, reporter, { merge: true });
+    await setDoc(docRef, cleanForFirestore(reporter), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${REPORTERS_COLLECTION}/${reporter.id}`);
   }
@@ -394,11 +460,18 @@ export async function saveReporterOnline(reporter: ReporterProfile): Promise<voi
 
 export async function saveAllReportersOnline(reporters: ReporterProfile[]): Promise<void> {
   try {
+    const keepIds = new Set(reporters.map((r) => r.id));
+    const existingSnap = await getDocs(collection(db, REPORTERS_COLLECTION));
     const batch = writeBatch(db);
-    for (const rep of reporters) {
+    existingSnap.forEach((docSnap) => {
+      if (!keepIds.has(docSnap.id)) {
+        batch.delete(docSnap.ref);
+      }
+    });
+    reporters.forEach((rep, idx) => {
       const docRef = doc(db, REPORTERS_COLLECTION, rep.id);
-      batch.set(docRef, rep, { merge: true });
-    }
+      batch.set(docRef, cleanForFirestore({ ...rep, sortOrder: idx }));
+    });
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, REPORTERS_COLLECTION);
@@ -429,7 +502,7 @@ export function subscribeSystemConfig(
 export async function saveSystemConfigOnline(config: SystemConfig): Promise<void> {
   const docRef = doc(db, CONFIG_COLLECTION, CONFIG_DOC_ID);
   try {
-    await setDoc(docRef, config, { merge: true });
+    await setDoc(docRef, cleanForFirestore(config), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${CONFIG_COLLECTION}/${CONFIG_DOC_ID}`);
   }

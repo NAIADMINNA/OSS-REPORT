@@ -1,21 +1,23 @@
 import React, { useState } from 'react';
-import { DOEReport, QueueMetricCategory } from '../types/doe';
+import { DOEReport, QueueMetricCategory, ReportCategory } from '../types/doe';
 import { generateLineSummaryText } from '../utils/thaiDate';
 import { X, Copy, Check, MessageCircle, Share2 } from 'lucide-react';
 
 interface ExportLineModalProps {
   report: DOEReport;
+  categories?: ReportCategory[];
   queueMetrics?: QueueMetricCategory[];
   onClose: () => void;
 }
 
 export const ExportLineModal: React.FC<ExportLineModalProps> = ({
   report,
+  categories,
   queueMetrics,
   onClose,
 }) => {
   const [copied, setCopied] = useState(false);
-  const textContent = generateLineSummaryText(report, queueMetrics);
+  const textContent = generateLineSummaryText(report, queueMetrics, categories);
 
   const handleCopy = async () => {
     try {

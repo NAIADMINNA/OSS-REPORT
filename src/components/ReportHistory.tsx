@@ -1,5 +1,5 @@
 import React, { useState, useId, useMemo } from 'react';
-import { DOEReport, ReportCategory } from '../types/doe';
+import { DOEReport, EmploymentOffice, ReportCategory } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { formatNumber, formatThaiDateShort, formatThaiDateFull } from '../utils/thaiDate';
 import { REGION_ORDER, sortOfficesByRegion } from '../utils/officeUtils';
@@ -37,6 +37,7 @@ import {
 
 interface ReportHistoryProps {
   reports: DOEReport[];
+  offices?: EmploymentOffice[];
   categories?: ReportCategory[];
   deletedReports?: DOEReport[];
   adminPin?: string;
@@ -62,6 +63,7 @@ interface DailyReportFolder {
 
 export const ReportHistory: React.FC<ReportHistoryProps> = ({
   reports,
+  offices,
   categories,
   deletedReports = [],
   adminPin = '0841543524',
@@ -76,6 +78,10 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 }) => {
   const searchInputId = useId();
   const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
+
+  const officeList = useMemo(() => {
+    return offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES;
+  }, [offices]);
 
   // Active categories list
   const activeCategories = useMemo(() => {
@@ -255,7 +261,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
   // 2. Compute Pending Offices (ยังไม่รายงาน ตามรอบวันที่ตรวจสอบ)
   const pendingOfficesList = useMemo(() => {
-    const list = EMPLOYMENT_OFFICES.filter((office) => {
+    const list = officeList.filter((office) => {
       // Check if office has a report for the selected pendingCheckDate
       const hasReport = reports.some(
         (r) =>
@@ -279,18 +285,18 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
     });
 
     return sortOfficesByRegion(list);
-  }, [reports, pendingCheckDate, selectedRegion, searchTerm]);
+  }, [officeList, reports, pendingCheckDate, selectedRegion, searchTerm]);
 
   // Total pending count across all regions for badge
   const totalPendingInCycle = useMemo(() => {
-    return EMPLOYMENT_OFFICES.filter((office) => {
+    return officeList.filter((office) => {
       return !reports.some(
         (r) =>
           r.officeId === office.id &&
           (pendingCheckDate === 'all' ? true : r.reportDate === pendingCheckDate)
       );
     }).length;
-  }, [reports, pendingCheckDate]);
+  }, [officeList, reports, pendingCheckDate]);
 
   // Export to CSV (Reported reports - all or specific folder)
   const handleExportCSV = (targetList: DOEReport[] = filteredReported, fileSuffix?: string) => {

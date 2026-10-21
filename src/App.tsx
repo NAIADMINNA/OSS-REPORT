@@ -163,6 +163,10 @@ export default function App() {
   const [offices, setOffices] = useState<EmploymentOffice[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_OFFICES);
+      const savedDeletedRaw = localStorage.getItem(STORAGE_KEY_DELETED_OFFICES);
+      const deletedIdSet = new Set<string>(
+        savedDeletedRaw ? (JSON.parse(savedDeletedRaw) || []).map((d: EmploymentOffice) => d.id) : []
+      );
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -170,9 +174,10 @@ export default function App() {
             o.region === 'ส่วนกลาง' ? { ...o, region: 'เฉพาะกิจ' as const } : o
           );
           for (const defaultOffice of EMPLOYMENT_OFFICES) {
+            if (deletedIdSet.has(defaultOffice.id)) continue;
             const idx = updated.findIndex((o: EmploymentOffice) => o.id === defaultOffice.id);
             if (idx >= 0) {
-              updated[idx] = { ...updated[idx], ...defaultOffice };
+              updated[idx] = { ...defaultOffice, ...updated[idx] };
             } else {
               updated.push(defaultOffice);
             }
@@ -584,8 +589,54 @@ export default function App() {
       setDeletedOffices((prev) => [...removed, ...prev.filter((d) => !removed.some((r) => r.id === d.id))]);
       removed.forEach((o) => deleteOfficeOnline(o).catch(console.warn));
     }
-    updatedOffices.forEach((o) => saveOfficeOnline(o).catch(console.warn));
+
+    // Only write newly added or modified offices to Firestore
+    const addedOffices = updatedOffices.filter((u) => !offices.some((o) => o.id === u.id));
+    const changedOrAdded = updatedOffices.filter((u) => {
+      const prev = offices.find((o) => o.id === u.id);
+      return !prev || JSON.stringify(prev) !== JSON.stringify(u);
+    });
+    changedOrAdded.forEach((o) => saveOfficeOnline(o).catch(console.warn));
     setOffices(updatedOffices);
+
+    // Sync currentReport & livePreviewReport if a new office was added or current office was edited
+    if (addedOffices.length === 1 && !isEditingExistingReport) {
+      const newOff = addedOffices[0];
+      setCurrentReport((prev) => ({
+        ...prev,
+        officeId: newOff.id,
+        officeName: newOff.name,
+        officeNameEn: newOff.nameEn || newOff.name,
+        centerName: newOff.centerName,
+        region: newOff.region,
+      }));
+      setLivePreviewReport((prev) => ({
+        ...prev,
+        officeId: newOff.id,
+        officeName: newOff.name,
+        officeNameEn: newOff.nameEn || newOff.name,
+        centerName: newOff.centerName,
+        region: newOff.region,
+      }));
+    } else {
+      const matchedCurrent = updatedOffices.find((u) => u.id === currentReport.officeId);
+      if (matchedCurrent) {
+        setCurrentReport((prev) => ({
+          ...prev,
+          officeName: matchedCurrent.name,
+          officeNameEn: matchedCurrent.nameEn || matchedCurrent.name,
+          centerName: matchedCurrent.centerName,
+          region: matchedCurrent.region,
+        }));
+        setLivePreviewReport((prev) => ({
+          ...prev,
+          officeName: matchedCurrent.name,
+          officeNameEn: matchedCurrent.nameEn || matchedCurrent.name,
+          centerName: matchedCurrent.centerName,
+          region: matchedCurrent.region,
+        }));
+      }
+    }
   };
 
   // RESTORE OFFICE HANDLERS
@@ -1202,6 +1253,10 @@ export default function App() {
                     if (subTab) setAdminInitialSubTab(subTab as AdminSubTab);
                     setActiveTab('admin');
                   }}
+                  onUpdateOffices={handleUpdateOffices}
+                  onUpdateCategories={handleUpdateCategories}
+                  onUpdateQueueMetrics={handleUpdateQueueMetrics}
+                  onNotify={showToast}
                 />
               </div>
 
@@ -1250,6 +1305,7 @@ export default function App() {
         {activeTab === 'history' && (
           <ReportHistory
             reports={reports}
+            offices={offices}
             categories={categories}
             deletedReports={deletedReports}
             adminPin={systemConfig.adminPin || '0841543524'}

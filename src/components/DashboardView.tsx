@@ -299,6 +299,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     let secModify = 0;
     let secSub = 0;
     const customSums: Record<string, number> = {};
+    const customQueueSums: Record<string, number> = {};
 
     let secMOU = 0;
     reportedList.forEach((report) => {
@@ -324,6 +325,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           if (k !== 'mouGroup') {
             customSums[k] = (customSums[k] || 0) + (Number(v) || 0);
           }
+        });
+      }
+      if (report.customQueueValues) {
+        Object.entries(report.customQueueValues).forEach(([k, v]) => {
+          customQueueSums[k] = (customQueueSums[k] || 0) + (Number(v) || 0);
         });
       }
     });
@@ -366,9 +372,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         secModify,
         secSub,
         customSums,
+        customQueueSums,
       },
     };
-  }, [reportedList, selectedRegion]);
+  }, [reportedList, selectedRegion, offices, categories]);
 
   // 3. Compute Displayed Statistics (Shows single province if selected, or aggregate otherwise)
   const displayedStats = useMemo(() => {
@@ -388,6 +395,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       let secModify = 0;
       let secSub = 0;
       const customSums: Record<string, number> = {};
+      const customQueueSums: Record<string, number> = {};
 
       let secMOU = 0;
       selectedOfficeReports.forEach((r) => {
@@ -411,6 +419,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             if (k !== 'mouGroup') {
               customSums[k] = (customSums[k] || 0) + (Number(v) || 0);
             }
+          });
+        }
+        if (r.customQueueValues) {
+          Object.entries(r.customQueueValues).forEach(([k, v]) => {
+            customQueueSums[k] = (customQueueSums[k] || 0) + (Number(v) || 0);
           });
         }
       });
@@ -454,6 +467,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         secModify,
         secSub,
         customSums,
+        customQueueSums,
       };
     }
 
@@ -488,8 +502,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       secModify: nationalStats.secModify,
       secSub: nationalStats.secSub,
       customSums: nationalStats.customSums,
+      customQueueSums: nationalStats.customQueueSums,
     };
-  }, [selectedOfficeReports, nationalStats, selectedRegion, activePeriodLabel]);
+  }, [selectedOfficeReports, nationalStats, selectedRegion, activePeriodLabel, categories]);
 
   // Helper to build a DOEReport object for the infographic poster reflecting the active period / cycle
   const buildPosterReport = (
@@ -537,6 +552,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     let secSub = 0;
 
     const posterCustomSums: Record<string, number> = {};
+    const posterCustomQueueSums: Record<string, number> = {};
 
     targetReports.forEach((r) => {
       totalQueue += r.queueAppointment || 0;
@@ -562,6 +578,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           if (k !== 'mouGroup') {
             posterCustomSums[k] = (posterCustomSums[k] || 0) + (Number(v) || 0);
           }
+        });
+      }
+      if (r.customQueueValues) {
+        Object.entries(r.customQueueValues).forEach(([k, v]) => {
+          posterCustomQueueSums[k] = (posterCustomQueueSums[k] || 0) + (Number(v) || 0);
         });
       }
     });
@@ -616,6 +637,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       modifyDetails: secModify,
       substituteCard: secSub,
       customCategoryValues: posterCustomSums,
+      customQueueValues: posterCustomQueueSums,
       queueAppointment: totalQueue,
       cardsIssued: totalIssued,
       identityVerified: totalVerified,
@@ -1128,6 +1150,50 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
           </div>
         </div>
+
+        {/* Custom Queue Metric Cards added by Admin */}
+        {(queueMetrics || [])
+          .filter(
+            (m) =>
+              m.isActive &&
+              ![
+                'queueAppointment',
+                'cardsIssued',
+                'identityVerified',
+                'cardsNotIssued',
+                'missedAppointment',
+                'wrongAppointmentDate',
+              ].includes(m.id)
+          )
+          .map((cm) => {
+            const val = displayedStats.customQueueSums?.[cm.id] || 0;
+            return (
+              <div
+                key={cm.id}
+                className="bg-gradient-to-b from-indigo-50/75 via-white to-white rounded-2xl p-4.5 border border-indigo-200 shadow-xs hover:shadow-md transition-all ring-1 ring-indigo-100/80 flex flex-col justify-between"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-base sm:text-lg font-bold text-indigo-950 tracking-tight font-['Prompt']">
+                    {cm.title}
+                  </span>
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-xs flex items-center justify-center">
+                    <TrendingUp className="w-5 h-5" />
+                  </div>
+                </div>
+                <div className="text-3xl sm:text-4xl font-black my-2.5 text-indigo-900 font-['Prompt'] tracking-tight flex items-baseline">
+                  {formatNumber(val)}
+                  <span className="text-sm sm:text-base font-semibold ml-1.5 text-indigo-700">
+                    {cm.unit || 'คน'}
+                  </span>
+                </div>
+                <div>
+                  <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold px-3 py-1 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200/90 shadow-2xs">
+                    <span>{cm.subLabel || 'ข้อมูลบริการเพิ่มเติม'}</span>
+                  </span>
+                </div>
+              </div>
+            );
+          })}
       </div>
 
       {/* 4. SECTIONS DISTRIBUTION BREAKDOWN (จำแนกตามกลุ่มมาตรา) */}

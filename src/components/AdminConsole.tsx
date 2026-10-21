@@ -127,6 +127,10 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   useEffect(() => {
     if (initialSubTab) {
       setActiveSubTab(initialSubTab);
+      if (initialSubTab === 'sections') setIsAddingCategory(true);
+      else if (initialSubTab === 'queue_metrics') setIsAddingQueueMetric(true);
+      else if (initialSubTab === 'offices') setIsAddingOffice(true);
+      else if (initialSubTab === 'reporters') setIsAddingReporter(true);
     }
   }, [initialSubTab]);
 
@@ -284,15 +288,16 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   };
 
   const handleAddCategory = () => {
-    if (!newCategory.title?.trim() || !newCategory.code?.trim()) {
-      onNotify('⚠️ กรุณาระบุชื่อหัวข้อและรหัสย่อให้ครบถ้วน');
+    const titleVal = newCategory.title?.trim() || newCategory.code?.trim() || '';
+    if (!titleVal) {
+      onNotify('⚠️ กรุณาระบุชื่อหัวข้อที่ต้องการเพิ่ม');
       return;
     }
     const id = `cat_${Date.now()}`;
     const item: ReportCategory = {
       id,
-      code: newCategory.code.trim(),
-      title: newCategory.title.trim(),
+      code: newCategory.code?.trim() || '',
+      title: titleVal,
       subLabel: newCategory.subLabel?.trim() || '',
       color: newCategory.color || 'from-blue-600 to-indigo-600',
       isActive: true,
@@ -423,22 +428,26 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     const updated = offices.map((o) => (o.id === office.id ? office : o));
     onUpdateOffices(updated);
     setEditingOffice(null);
-    onNotify(`บันทึกข้อมูลศูนย์ "${office.name}" สำเร็จ`);
+    onNotify(`บันทึกข้อมูลศูนย์ "${office.name} (${office.centerName})" สำเร็จ`);
   };
 
   const handleAddOffice = () => {
-    if (!newOffice.name?.trim() || !newOffice.centerName?.trim()) {
-      onNotify('⚠️ กรุณากรอกชื่อสำนักงานและชื่อศูนย์บริการให้ครบถ้วน');
+    const rawName = newOffice.name?.trim() || '';
+    const rawCenter = newOffice.centerName?.trim() || '';
+    if (!rawName && !rawCenter) {
+      onNotify('⚠️ กรุณากรอกชื่อสำนักงานจัดหางาน หรือ ชื่อศูนย์บริการ');
       return;
     }
+    const finalName = rawName || rawCenter;
+    const finalCenter = rawCenter || `ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว (${finalName})`;
     const id =
       newOffice.id ||
       `office_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const officeItem: EmploymentOffice = {
       id,
-      name: newOffice.name.trim(),
-      nameEn: newOffice.nameEn?.trim() || newOffice.name.trim(),
-      centerName: newOffice.centerName.trim(),
+      name: finalName,
+      nameEn: newOffice.nameEn?.trim() || finalName,
+      centerName: finalCenter,
       region: (newOffice.region as any) || 'ภาคกลางและตะวันตก',
       defaultPhone: newOffice.defaultPhone?.trim() || '',
       defaultLine: newOffice.defaultLine?.trim() || '',
@@ -446,7 +455,9 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     onUpdateOffices([...offices, officeItem]);
     setIsAddingOffice(false);
     setNewOffice({ region: 'ภาคกลางและตะวันตก' });
-    onNotify(`เพิ่มศูนย์บริการ "${officeItem.name}" เรียบร้อยแล้ว`);
+    setOfficeSearch('');
+    setOfficeRegionFilter('ทั้งหมด');
+    onNotify(`เพิ่มศูนย์บริการ "${officeItem.centerName}" (${officeItem.name}) เรียบร้อยแล้ว`);
   };
 
   const handleDeleteOffice = (officeId: string) => {
@@ -527,14 +538,14 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   };
 
   const handleAddReporter = () => {
-    if (!newReporter.name?.trim() || !newReporter.position?.trim()) {
-      onNotify('⚠️ กรุณากรอกชื่อ-นามสกุลและตำแหน่งผู้รายงาน');
+    if (!newReporter.name?.trim()) {
+      onNotify('⚠️ กรุณากรอกชื่อ-นามสกุลผู้รายงาน');
       return;
     }
     const item: ReporterProfile = {
       id: `rep_${Date.now()}`,
       name: newReporter.name.trim(),
-      position: newReporter.position.trim(),
+      position: newReporter.position?.trim() || 'เจ้าหน้าที่ผู้รายงาน',
       phoneNumber: newReporter.phoneNumber?.trim() || '',
       lineId: newReporter.lineId?.trim() || '',
       officeId: newReporter.officeId || '',
@@ -971,32 +982,17 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      รหัสย่อหัวข้อ (เช่น MOU, ครม.พิเศษ, ม.64/1)
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      ชื่อหัวข้อเต็ม (Title) <span className="text-rose-500">*</span>
                     </label>
                     <input
                       type="text"
-                      placeholder="เช่น MOU"
-                      value={newCategory.code || ''}
-                      onChange={(e) =>
-                        setNewCategory({ ...newCategory, code: e.target.value })
-                      }
-                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      ชื่อหัวข้อเต็ม (Title)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="เช่น กลุ่มแรงงานนำเข้า MOU"
+                      placeholder="เช่น กลุ่มแรงงานนำเข้า MOU หรือ อื่นๆ"
                       value={newCategory.title || ''}
                       onChange={(e) =>
                         setNewCategory({ ...newCategory, title: e.target.value })
                       }
-                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
+                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500"
                     />
                   </div>
 
@@ -1011,7 +1007,22 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                       onChange={(e) =>
                         setNewCategory({ ...newCategory, subLabel: e.target.value })
                       }
-                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
+                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      รหัสย่อหัวข้อ (ไม่บังคับ)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="เช่น MOU, อื่นๆ (เว้นว่างได้)"
+                      value={newCategory.code || ''}
+                      onChange={(e) =>
+                        setNewCategory({ ...newCategory, code: e.target.value })
+                      }
+                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500"
                     />
                   </div>
                 </div>
@@ -1020,14 +1031,14 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsAddingCategory(false)}
-                    className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg"
+                    className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
                   >
                     ยกเลิก
                   </button>
                   <button
                     type="button"
                     onClick={handleAddCategory}
-                    className="text-xs font-bold px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs"
+                    className="text-xs font-bold px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs cursor-pointer"
                   >
                     บันทึกหัวข้อใหม่
                   </button>
@@ -1878,34 +1889,81 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
           {/* Form: Add New Office Modal / Inline */}
           {isAddingOffice && (
-            <div className="bg-slate-50 p-4 rounded-xl border border-emerald-300 space-y-3">
+            <div className="bg-emerald-50/60 p-4 rounded-xl border border-emerald-300 space-y-3">
               <div className="font-bold text-xs text-emerald-900 flex items-center gap-1.5">
                 <Plus className="w-4 h-4 text-emerald-600" />
-                <span>เพิ่มสำนักงานจัดหางาน / ศูนย์บริการใหม่</span>
+                <span>เพิ่มสำนักงานจัดหางาน / เพิ่มชื่อศูนย์บริการใหม่</span>
+              </div>
+              <div className="bg-white p-3 rounded-lg border border-emerald-200 space-y-1.5">
+                <label className="text-[11px] font-bold text-emerald-900 block">
+                  ตัวช่วยด่วน: เลือกสำนักงานจัดหางานต้นสังกัด (กรณีเพิ่มศูนย์บริการใหม่ในจังหวัดที่มีอยู่แล้ว)
+                </label>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const found = offices.find((o) => o.id === e.target.value);
+                    if (found) {
+                      setNewOffice({
+                        ...newOffice,
+                        name: found.name,
+                        nameEn: found.nameEn,
+                        region: found.region,
+                        defaultPhone: found.defaultPhone || '',
+                        defaultLine: found.defaultLine || '',
+                      });
+                    }
+                  }}
+                  className="w-full text-xs p-2 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-800"
+                >
+                  <option value="">-- คลิกเลือกจังหวัด/สำนักงานต้นสังกัดเพื่อดึงชื่อสำนักงานอัตโนมัติ (หรือพิมพ์ใหม่ด้านล่าง) --</option>
+                  {EMPLOYMENT_OFFICES.map((std) => (
+                    <option key={std.id} value={std.id}>
+                      {std.name} ({std.region})
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-600">ชื่อสำนักงานจัดหางาน</label>
+                <div className="sm:col-span-3">
+                  <label className="text-[11px] font-bold text-slate-800 block mb-1">
+                    ชื่อศูนย์บริการ (แสดงในแบบฟอร์มและโปสเตอร์) <span className="text-rose-500">*</span>
+                  </label>
                   <input
                     type="text"
-                    placeholder="เช่น สำนักงานจัดหางานจังหวัดบึงกาฬ"
+                    placeholder="เช่น ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ วัดป้อมวิเชียรฯ จ.สมุทรสาคร"
+                    value={newOffice.centerName || ''}
+                    onChange={(e) => setNewOffice({ ...newOffice, centerName: e.target.value })}
+                    className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                    ชื่อสำนักงานจัดหางานต้นสังกัด
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="เช่น สำนักงานจัดหางานจังหวัดสมุทรสาคร"
                     value={newOffice.name || ''}
                     onChange={(e) => setNewOffice({ ...newOffice, name: e.target.value })}
                     className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-600">ชื่อภาษาอังกฤษ</label>
+                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                    ชื่อภาษาอังกฤษ (ไม่บังคับ)
+                  </label>
                   <input
                     type="text"
-                    placeholder="e.g. Bueng Kan Provincial Employment Office"
+                    placeholder="e.g. Samut Sakhon Provincial Employment Office"
                     value={newOffice.nameEn || ''}
                     onChange={(e) => setNewOffice({ ...newOffice, nameEn: e.target.value })}
                     className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-600">ภูมิภาค</label>
+                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                    ภูมิภาค / ประเภทศูนย์
+                  </label>
                   <select
                     value={newOffice.region || 'ภาคกลางและตะวันตก'}
                     onChange={(e) => setNewOffice({ ...newOffice, region: e.target.value as any })}
@@ -1920,27 +1978,19 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     <option value="เฉพาะกิจ">เฉพาะกิจ</option>
                   </select>
                 </div>
-                <div className="sm:col-span-3">
-                  <label className="text-[11px] font-semibold text-slate-600">ชื่อศูนย์บริการ (แสดงในโปสเตอร์)</label>
-                  <input
-                    type="text"
-                    placeholder="เช่น ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดบึงกาฬ"
-                    value={newOffice.centerName || ''}
-                    onChange={(e) => setNewOffice({ ...newOffice, centerName: e.target.value })}
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg"
-                  />
-                </div>
               </div>
               <div className="flex items-center justify-end gap-2 pt-1">
                 <button
+                  type="button"
                   onClick={() => setIsAddingOffice(false)}
-                  className="text-xs px-3 py-1.5 bg-slate-200 text-slate-700 rounded-lg"
+                  className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
                 >
                   ยกเลิก
                 </button>
                 <button
+                  type="button"
                   onClick={handleAddOffice}
-                  className="text-xs font-bold px-4 py-1.5 bg-emerald-600 text-white rounded-lg shadow-xs"
+                  className="text-xs font-bold px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs cursor-pointer"
                 >
                   บันทึกศูนย์ใหม่
                 </button>

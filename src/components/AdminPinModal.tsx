@@ -23,8 +23,11 @@ export const AdminPinModal: React.FC<AdminPinModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (e?: React.FormEvent | React.MouseEvent | React.KeyboardEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     const correctPin = adminPin || '0841543524';
     if (pinInput.trim() === correctPin || pinInput.trim() === '0841543524') {
       try {
@@ -51,6 +54,10 @@ export const AdminPinModal: React.FC<AdminPinModalProps> = ({
       aria-modal="true"
       aria-labelledby="admin-pin-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+      onClick={(e) => {
+        e.stopPropagation();
+        handleModalClose();
+      }}
     >
       <div
         className="bg-white rounded-2xl max-w-md w-full border border-slate-200 shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-200"
@@ -99,7 +106,7 @@ export const AdminPinModal: React.FC<AdminPinModalProps> = ({
             'สิทธิ์เฉพาะผู้ดูแลระบบ เพื่อความปลอดภัยและการควบคุมข้อมูล รหัสผ่านจะแสดงผลเป็นเครื่องหมายดอกจัน (*) เสมอ'}
         </p>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
               <span>รหัสผ่านผู้ดูแลระบบ (Admin Password)</span>
@@ -116,6 +123,11 @@ export const AdminPinModal: React.FC<AdminPinModalProps> = ({
                 onChange={(e) => {
                   setPinInput(e.target.value);
                   setError(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleSubmit(e);
+                  }
                 }}
                 className={`w-full text-center text-lg tracking-widest px-9 py-2.5 bg-slate-50 border rounded-xl font-mono font-bold focus:bg-white focus:outline-hidden focus:ring-2 ${
                   error
@@ -143,14 +155,15 @@ export const AdminPinModal: React.FC<AdminPinModalProps> = ({
               ยกเลิก
             </button>
             <button
-              type="submit"
+              type="button"
+              onClick={handleSubmit}
               className="px-5 py-2 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>ยืนยันสิทธิ์ Admin</span>
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );

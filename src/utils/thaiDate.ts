@@ -1,4 +1,4 @@
-import { DOEReport } from '../types/doe';
+import { DOEReport, QueueMetricCategory, ReportCategory } from '../types/doe';
 
 const THAI_DAYS = [
   'วันอาทิตย์',
@@ -129,17 +129,39 @@ export function formatNumber(num: number | undefined | null): string {
  */
 export function generateLineSummaryText(
   report: DOEReport,
-  queueMetrics?: { id: string; title: string; unit: string }[]
+  queueMetrics?: QueueMetricCategory[],
+  categories?: ReportCategory[]
 ): string {
-  const totalSections =
-    (report.section59 || 0) +
-    (report.section62 || 0) +
-    (report.section63_1 || 0) +
-    (report.section63_2 || 0) +
-    (report.section64 || 0) +
-    (report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0) +
-    (report.modifyDetails || 0) +
-    (report.substituteCard || 0);
+  const activeCats =
+    categories && categories.length > 0
+      ? categories.filter((c) => c.isActive)
+      : [
+          { id: 'section59', title: 'กลุ่มมาตรา 59' },
+          { id: 'section62', title: 'กลุ่มมาตรา 62' },
+          { id: 'section63_1', title: 'กลุ่มมาตรา 63/1' },
+          { id: 'section63_2', title: 'กลุ่มมาตรา 63/2' },
+          { id: 'section64', title: 'กลุ่มมาตรา 64' },
+          { id: 'mouGroup', title: 'กลุ่มนำเข้าตาม MOU' },
+          { id: 'modifyDetails', title: 'เปลี่ยนแปลงรายการในใบอนุญาตทำงาน' },
+          { id: 'substituteCard', title: 'ใบแทนใบอนุญาตทำงาน' },
+        ];
+
+  const getCategoryValue = (catId: string): number => {
+    if (catId === 'section59') return report.section59 || 0;
+    if (catId === 'section62') return report.section62 || 0;
+    if (catId === 'section63_1') return report.section63_1 || 0;
+    if (catId === 'section63_2') return report.section63_2 || 0;
+    if (catId === 'section64') return report.section64 || 0;
+    if (catId === 'mouGroup') return report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0;
+    if (catId === 'modifyDetails') return report.modifyDetails || 0;
+    if (catId === 'substituteCard') return report.substituteCard || 0;
+    return report.customCategoryValues?.[catId] || 0;
+  };
+
+  const totalSections = activeCats.reduce((sum, c) => sum + getCategoryValue(c.id), 0);
+  const categoryLines = activeCats
+    .map((c, idx) => `  ${idx + 1}. ${c.title}: ${formatNumber(getCategoryValue(c.id))} คน`)
+    .join('\n');
 
   const getMetricLabel = (id: string, defaultTitle: string, defaultUnit: string) => {
     const found = queueMetrics?.find((m) => m.id === id);
@@ -161,6 +183,21 @@ export function generateLineSummaryText(
   const qNot = getMetricLabel('cardsNotIssued', 'บัตรเสีย', 'ใบ');
   const qMiss = getMetricLabel('missedAppointment', 'ไม่มาตามนัด', 'คน');
   const qWrong = getMetricLabel('wrongAppointmentDate', 'ไม่ตรงวันนัด', 'คน');
+
+  const defaultQueueIds = new Set([
+    'queueAppointment',
+    'cardsIssued',
+    'identityVerified',
+    'cardsNotIssued',
+    'missedAppointment',
+    'wrongAppointmentDate',
+  ]);
+  const customQueueLines = (queueMetrics || [])
+    .filter((m) => m.isActive && !defaultQueueIds.has(m.id))
+    .map(
+      (m) =>
+        `  • ${m.title}: ${formatNumber(report.customQueueValues?.[m.id] || 0)} ${m.unit || 'คน'}`
+    );
 
   const dateLabel = report.reportDateThaiStr || formatThaiDateFull(report.reportDate);
   const isCycle =
@@ -187,14 +224,7 @@ export function generateLineSummaryText(
 📌 รายงานผลการปฏิบัติงาน ${dateLabel}
 
 🔹 การออกบัตรใบอนุญาตทำงาน (รวม ${formatNumber(totalSections)} คน):
-  1. กลุ่มมาตรา 59: ${formatNumber(report.section59)} คน
-  2. กลุ่มมาตรา 62: ${formatNumber(report.section62)} คน
-  3. กลุ่มมาตรา 63/1: ${formatNumber(report.section63_1)} คน
-  4. กลุ่มมาตรา 63/2: ${formatNumber(report.section63_2)} คน
-  5. กลุ่มมาตรา 64: ${formatNumber(report.section64)} คน
-  6. กลุ่มนำเข้าตาม MOU: ${formatNumber(report.mouGroup || report.customCategoryValues?.['mouGroup'] || 0)} คน
-  7. เปลี่ยนแปลงรายการในใบอนุญาตทำงาน: ${formatNumber(report.modifyDetails)} คน
-  8. ใบแทนใบอนุญาตทำงาน: ${formatNumber(report.substituteCard)} คน
+${categoryLines}
 
 🔹 สถานะการให้บริการประจำวัน:
   • ${qApp.title}: ${formatNumber(report.queueAppointment)} ${qApp.unit}
@@ -202,7 +232,9 @@ export function generateLineSummaryText(
   • ${qVer.title}: ${formatNumber(report.identityVerified)} ${qVer.unit}
   • ${qNot.title}: ${formatNumber(report.cardsNotIssued)} ${qNot.unit}
   • ${qMiss.title}: ${formatNumber(report.missedAppointment)} ${qMiss.unit}
-  • ${qWrong.title}: ${formatNumber(report.wrongAppointmentDate)} ${qWrong.unit}
+  • ${qWrong.title}: ${formatNumber(report.wrongAppointmentDate)} ${qWrong.unit}${
+    customQueueLines.length > 0 ? '\n' + customQueueLines.join('\n') : ''
+  }
 
 ══════════════════════════
 จึงเรียนมาเพื่อโปรดทราบ
