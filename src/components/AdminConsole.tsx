@@ -54,7 +54,10 @@ import {
   Clock,
   Check,
   RefreshCw,
+  BookOpen,
 } from 'lucide-react';
+import { ActiveTab } from './DOEHeader';
+import { SystemManualView } from './SystemManualView';
 
 interface AdminConsoleProps {
   offices: EmploymentOffice[];
@@ -88,11 +91,12 @@ interface AdminConsoleProps {
   onSyncAllReportsToOnline?: () => void;
   onNotify: (msg: string) => void;
   initialSubTab?: AdminSubTab;
+  onNavigateTab?: (tab: ActiveTab) => void;
   onAdminAuthenticated?: () => void;
   onAdminLoggedOut?: () => void;
 }
 
-export type AdminSubTab = 'sections' | 'queue_metrics' | 'offices' | 'branding' | 'reporters' | 'issues' | 'database';
+export type AdminSubTab = 'sections' | 'queue_metrics' | 'offices' | 'branding' | 'reporters' | 'issues' | 'database' | 'manual';
 
 export const AdminConsole: React.FC<AdminConsoleProps> = ({
   offices,
@@ -104,6 +108,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   deletedOffices = [],
   deletedReports = [],
   initialSubTab,
+  onNavigateTab,
   onUpdateOffices,
   onUpdateCategories,
   onUpdateQueueMetrics,
@@ -868,6 +873,18 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         >
           <Database className="w-4 h-4 text-emerald-500" />
           <span>7. การเก็บข้อมูลลงฐานข้อมูล</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('manual')}
+          className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 cursor-pointer ${
+            activeSubTab === 'manual'
+              ? 'bg-indigo-700 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <BookOpen className="w-4 h-4 text-amber-500" />
+          <span>8. คู่มือการใช้งานระบบ & แอดมิน</span>
         </button>
       </div>
 
@@ -3071,6 +3088,24 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* SUB-TAB 8: คู่มือการใช้งานระบบ & แอดมิน */}
+      {activeSubTab === 'manual' && (
+        <SystemManualView
+          onNavigateTab={(tab) => {
+            if (onNavigateTab) {
+              onNavigateTab(tab);
+            }
+          }}
+          onNavigateAdminSubTab={(subTab) => {
+            setActiveSubTab(subTab);
+          }}
+          isAdmin={true}
+          adminPin={systemConfig.adminPin || '0841543524'}
+          systemTitle={systemConfig.reportTitle}
+          officeCount={offices.length}
+        />
       )}
 
       {/* Confirmation Dialog Modal (Replaces blocked window.confirm) */}

@@ -31,6 +31,7 @@ import { ExportLineModal } from './components/ExportLineModal';
 import { AdminConsole, AdminSubTab } from './components/AdminConsole';
 import { ConfirmDialogModal } from './components/ConfirmDialogModal';
 import { DOEAssistantMascot } from './components/DOEAssistantMascot';
+import { SystemManualView } from './components/SystemManualView';
 import { formatThaiDateFull, getTodayIsoDate } from './utils/thaiDate';
 import { sanitizeReportList } from './utils/doeUtils';
 import {
@@ -1395,6 +1396,7 @@ export default function App() {
             deletedOffices={deletedOffices}
             deletedReports={deletedReports}
             initialSubTab={adminInitialSubTab}
+            onNavigateTab={handleTabChange}
             onUpdateOffices={handleUpdateOffices}
             onUpdateCategories={handleUpdateCategories}
             onUpdateQueueMetrics={handleUpdateQueueMetrics}
@@ -1417,7 +1419,7 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="mt-auto bg-white/80 backdrop-blur-xs border-t border-slate-200/80 py-4 px-6 text-xs text-slate-500 shadow-2xs">
+      <footer className="mt-auto bg-white/80 backdrop-blur-xs border-t border-slate-200/80 py-4 px-6 text-xs text-slate-500 shadow-2xs no-print">
         <div className="w-full max-w-[1780px] 2xl:max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />

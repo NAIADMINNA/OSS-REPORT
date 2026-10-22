@@ -27,7 +27,7 @@ interface DOEAssistantMascotProps {
   offices?: EmploymentOffice[];
   currentOfficeName?: string;
   isFirestoreOnline?: boolean;
-  onNavigateTab?: (tab: 'dashboard' | 'form' | 'history' | 'notes' | 'admin') => void;
+  onNavigateTab?: (tab: 'dashboard' | 'form' | 'history' | 'notes' | 'admin' | 'manual') => void;
 }
 
 const STORAGE_KEY_ISSUES = 'doe_assistant_reported_issues_v1';

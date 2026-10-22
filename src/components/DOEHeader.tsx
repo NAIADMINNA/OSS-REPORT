@@ -1,8 +1,8 @@
 import React from 'react';
 import { DOELogo } from './DOELogo';
-import { LayoutDashboard, FileEdit, FolderClock, ShieldCheck, FileText } from 'lucide-react';
+import { LayoutDashboard, FileEdit, FolderClock, ShieldCheck, FileText, BookOpen } from 'lucide-react';
 
-export type ActiveTab = 'dashboard' | 'form' | 'history' | 'notes' | 'admin';
+export type ActiveTab = 'dashboard' | 'form' | 'history' | 'notes' | 'admin' | 'manual';
 
 interface DOEHeaderProps {
   activeTab: ActiveTab;
@@ -38,7 +38,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
   };
 
   return (
-    <header className="bg-gradient-to-r from-blue-700 via-indigo-700 to-sky-700 text-white shadow-md sticky top-0 z-30 border-b border-sky-400/30">
+    <header className="bg-gradient-to-r from-blue-700 via-indigo-700 to-sky-700 text-white shadow-md sticky top-0 z-30 border-b border-sky-400/30 no-print">
       <div className="w-full max-w-[1780px] 2xl:max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 py-2.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Brand & Emblem */}
@@ -89,10 +89,10 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
           </div>
 
           {/* Navigation Tabs */}
-          <nav className="flex items-center gap-1.5 bg-white/15 backdrop-blur-md p-1.5 rounded-2xl border border-white/25 shadow-xs text-sm">
+          <nav className="flex flex-wrap items-center gap-1.5 bg-white/15 backdrop-blur-md p-1.5 rounded-2xl border border-white/25 shadow-xs text-sm">
             <button
               onClick={() => onTabChange('dashboard')}
-              className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'dashboard'
                   ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
                   : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
@@ -104,7 +104,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
 
             <button
               onClick={() => onTabChange('form')}
-              className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'form'
                   ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
                   : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
@@ -116,7 +116,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
 
             <button
               onClick={() => onTabChange('history')}
-              className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'history'
                   ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
                   : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
@@ -133,7 +133,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
 
             <button
               onClick={() => onTabChange('notes')}
-              className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'notes'
                   ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
                   : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
@@ -156,7 +156,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
 
             <button
               onClick={() => onTabChange('admin')}
-              className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === 'admin'
                   ? 'bg-amber-400 text-slate-950 shadow-sm ring-1 ring-amber-300 font-extrabold text-sm'
                   : isAdmin
