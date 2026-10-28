@@ -69,7 +69,9 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
   const [issueTitle, setIssueTitle] = useState('');
   const [issueDescription, setIssueDescription] = useState('');
   const [issueOffice, setIssueOffice] = useState(currentOfficeName);
-  const [issueContact, setIssueContact] = useState('');
+  const [issueReporterName, setIssueReporterName] = useState('');
+  const [issueReporterPhone, setIssueReporterPhone] = useState('');
+  const [contactError, setContactError] = useState('');
   const [isSubmittingIssue, setIsSubmittingIssue] = useState(false);
   const [issueSubmittedSuccess, setIssueSubmittedSuccess] = useState<SystemIssueReport | null>(null);
 
@@ -172,10 +174,31 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
     return () => clearTimeout(timer);
   }, []);
 
+  const isContactComplete = useMemo(() => {
+    const hasName = issueReporterName.trim().length > 0;
+    const digitsOnly = issueReporterPhone.replace(/\D/g, '');
+    const hasPhone = digitsOnly.length >= 9;
+    return hasName && hasPhone;
+  }, [issueReporterName, issueReporterPhone]);
+
   const handleSubmitIssue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!issueTitle.trim() || !issueDescription.trim()) return;
 
+    const trimmedName = issueReporterName.trim();
+    const trimmedPhone = issueReporterPhone.trim();
+    const digitsOnly = trimmedPhone.replace(/\D/g, '');
+
+    if (!trimmedName || !trimmedPhone) {
+      setContactError('กรุณากรอกทั้งชื่อผู้แจ้งและเบอร์โทรศัพท์ให้ครบถ้วนก่อนบันทึกแจ้งข้อขัดข้อง');
+      return;
+    }
+    if (digitsOnly.length < 9) {
+      setContactError('กรุณากรอกหมายเลขโทรศัพท์ให้ครบถ้วน (อย่างน้อย 9 หลัก)');
+      return;
+    }
+
+    setContactError('');
     setIsSubmittingIssue(true);
 
     const newIssue: SystemIssueReport = {
@@ -184,7 +207,7 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
       title: issueTitle.trim(),
       description: issueDescription.trim(),
       officeName: issueOffice || currentOfficeName,
-      reporterContact: issueContact.trim() || 'ไม่ได้ระบุ',
+      reporterContact: `${trimmedName} โทร. ${trimmedPhone}`,
       status: 'pending',
       createdAt: new Date().toISOString(),
       clientInfo: `${navigator.userAgent.slice(0, 50)} | Online: ${navigator.onLine}`,
@@ -200,7 +223,8 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
     // Reset form fields
     setIssueTitle('');
     setIssueDescription('');
-    setIssueContact('');
+    setIssueReporterName('');
+    setIssueReporterPhone('');
   };
 
   const pendingCount = myIssues.filter((i) => i.status === 'pending').length;
@@ -545,29 +569,87 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
                 />
               </div>
 
-              {/* 4. ข้อมูลติดต่อกลับ */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                  <Phone className="w-3.5 h-3.5 text-slate-400" />
-                  <span>ชื่อหรือเบอร์ติดต่อผู้แจ้ง (สำหรับประสานงาน)</span>
+              {/* 4. ข้อมูลติดต่อกลับ (บังคับกรอกทั้งชื่อและเบอร์โทรศัพท์) */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-700 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 text-rose-500" />
+                    <span>
+                      ชื่อและเบอร์โทรศัพท์ผู้แจ้ง <span className="text-rose-500">*</span>
+                    </span>
+                  </span>
+                  <span className="text-[10.5px] text-rose-600 font-semibold">
+                    (บังคับกรอกให้ครบทั้ง 2 ช่อง)
+                  </span>
                 </label>
-                <input
-                  type="text"
-                  value={issueContact}
-                  onChange={(e) => setIssueContact(e.target.value)}
-                  placeholder="เช่น คุณสมศักดิ์ 081-xxx-xxxx"
-                  className="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 font-medium"
-                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={issueReporterName}
+                    onChange={(e) => {
+                      setIssueReporterName(e.target.value);
+                      if (contactError) setContactError('');
+                    }}
+                    placeholder="ชื่อ-นามสกุลผู้แจ้ง *"
+                    className={`w-full text-xs px-3 py-2 bg-slate-50 border rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 font-medium ${
+                      contactError && !issueReporterName.trim()
+                        ? 'border-rose-400 focus:ring-rose-500 bg-rose-50/40'
+                        : 'border-slate-200 focus:ring-rose-500'
+                    }`}
+                  />
+                  <input
+                    type="tel"
+                    required
+                    value={issueReporterPhone}
+                    onChange={(e) => {
+                      setIssueReporterPhone(e.target.value);
+                      if (contactError) setContactError('');
+                    }}
+                    placeholder="เบอร์โทรศัพท์ (เช่น 081-xxx-xxxx) *"
+                    className={`w-full text-xs px-3 py-2 bg-slate-50 border rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 font-medium ${
+                      contactError && issueReporterPhone.replace(/\D/g, '').length < 9
+                        ? 'border-rose-400 focus:ring-rose-500 bg-rose-50/40'
+                        : 'border-slate-200 focus:ring-rose-500'
+                    }`}
+                  />
+                </div>
+
+                {contactError ? (
+                  <p className="text-[11px] font-bold text-rose-600 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{contactError}</span>
+                  </p>
+                ) : (
+                  !isContactComplete &&
+                  (issueReporterName.trim().length > 0 || issueReporterPhone.trim().length > 0) && (
+                    <p className="text-[10.5px] text-amber-700 font-semibold">
+                      * กรุณาระบุให้ครบทั้งชื่อผู้แจ้งและเบอร์โทรศัพท์ (อย่างน้อย 9 หลัก) จึงจะสามารถกดส่งเรื่องได้
+                    </p>
+                  )
+                )}
               </div>
 
               {/* Submit Button */}
               <button
                 type="submit"
-                disabled={isSubmittingIssue || !issueTitle.trim() || !issueDescription.trim()}
-                className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                disabled={
+                  isSubmittingIssue ||
+                  !issueTitle.trim() ||
+                  !issueDescription.trim() ||
+                  !isContactComplete
+                }
+                className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>{isSubmittingIssue ? 'กำลังส่งข้อมูล...' : 'ส่งเรื่องแจ้งข้อขัดข้องทันที'}</span>
+                <span>
+                  {isSubmittingIssue
+                    ? 'กำลังส่งข้อมูล...'
+                    : !isContactComplete
+                    ? 'กรุณากรอกชื่อและเบอร์โทรให้ครบก่อนส่งแจ้ง'
+                    : 'ส่งเรื่องแจ้งข้อขัดข้องทันที'}
+                </span>
               </button>
             </form>
 
