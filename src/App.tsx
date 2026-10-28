@@ -350,6 +350,51 @@ export default function App() {
     return [];
   });
 
+  const deletedOfficeIdsRef = useRef<Set<string>>(
+    new Set(deletedOffices.map((o) => o.id))
+  );
+
+  const mergeOfficesWithDefaults = (
+    onlineList: EmploymentOffice[],
+    deletedIds: Set<string>
+  ): EmploymentOffice[] => {
+    const cleanOnline = (onlineList || [])
+      .filter((o) => o && o.id && o.name && !deletedIds.has(o.id))
+      .map((o) =>
+        (o.region as string) === 'ส่วนกลาง'
+          ? { ...o, region: 'เฉพาะกิจ' as const }
+          : o
+      );
+
+    const onlineMap = new Map<string, EmploymentOffice>();
+    cleanOnline.forEach((o) => onlineMap.set(o.id, o));
+
+    const result: EmploymentOffice[] = [];
+    const seenIds = new Set<string>();
+
+    // 1. All standard offices (with online edits/additionalCenters merged in)
+    for (const std of EMPLOYMENT_OFFICES) {
+      if (deletedIds.has(std.id)) continue;
+      const onlineMatch = onlineMap.get(std.id);
+      if (onlineMatch) {
+        result.push({ ...std, ...onlineMatch });
+      } else {
+        result.push(std);
+      }
+      seenIds.add(std.id);
+    }
+
+    // 2. Any newly added custom offices from Admin
+    for (const custom of cleanOnline) {
+      if (!seenIds.has(custom.id) && !deletedIds.has(custom.id)) {
+        result.push(custom);
+        seenIds.add(custom.id);
+      }
+    }
+
+    return result;
+  };
+
   const [deletedReports, setDeletedReports] = useState<DOEReport[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_DELETED_REPORTS);
@@ -439,10 +484,90 @@ export default function App() {
         });
         unsubs.push(unsubReports);
 
-        // 3. Subscribe to online offices
+        // 3. Subscribe to deleted offices (trash) first so deletedOfficeIdsRef is up to date
+        const unsubDelOffices = subscribeDeletedOffices((onlineDelOffices) => {
+          if (Array.isArray(onlineDelOffices)) {
+            const delSet = new Set(onlineDelOffices.map((o) => o.id));
+            deletedOfficeIdsRef.current = delSet;
+            setDeletedOffices(onlineDelOffices);
+            if (delSet.size > 0) {
+              setOffices((prev) => prev.filter((o) => !delSet.has(o.id)));
+            }
+          }
+        });
+        unsubs.push(unsubDelOffices);
+
+        // 3.1 Subscribe to online offices (real-time merge of base offices + admin edits & additions)
         const unsubOffices = subscribeOffices((onlineOffices) => {
-          if (onlineOffices && onlineOffices.length > 0) {
-            setOffices(onlineOffices);
+          if (Array.isArray(onlineOffices)) {
+            const merged = mergeOfficesWithDefaults(
+              onlineOffices,
+              deletedOfficeIdsRef.current
+            );
+            setOffices(merged);
+
+            // Also keep currentReport & livePreviewReport synced if the active office's name/center was updated
+            setCurrentReport((prev) => {
+              const matched = merged.find((o) => o.id === prev.officeId);
+              if (!matched) return prev;
+              const isMob =
+                prev.centerName?.includes('Mobile Unit') ||
+                prev.centerName?.includes('เคลื่อนที่');
+              const validCenters = [
+                matched.centerName,
+                ...(matched.additionalCenters || []),
+              ].filter(Boolean);
+              const nextCenter = isMob
+                ? prev.centerName
+                : validCenters.includes(prev.centerName)
+                ? prev.centerName
+                : matched.centerName;
+              if (
+                prev.officeName === matched.name &&
+                prev.region === matched.region &&
+                prev.centerName === nextCenter
+              ) {
+                return prev;
+              }
+              return {
+                ...prev,
+                officeName: matched.name,
+                officeNameEn: matched.nameEn || matched.name,
+                region: matched.region,
+                centerName: nextCenter,
+              };
+            });
+
+            setLivePreviewReport((prev) => {
+              const matched = merged.find((o) => o.id === prev.officeId);
+              if (!matched) return prev;
+              const isMob =
+                prev.centerName?.includes('Mobile Unit') ||
+                prev.centerName?.includes('เคลื่อนที่');
+              const validCenters = [
+                matched.centerName,
+                ...(matched.additionalCenters || []),
+              ].filter(Boolean);
+              const nextCenter = isMob
+                ? prev.centerName
+                : validCenters.includes(prev.centerName)
+                ? prev.centerName
+                : matched.centerName;
+              if (
+                prev.officeName === matched.name &&
+                prev.region === matched.region &&
+                prev.centerName === nextCenter
+              ) {
+                return prev;
+              }
+              return {
+                ...prev,
+                officeName: matched.name,
+                officeNameEn: matched.nameEn || matched.name,
+                region: matched.region,
+                centerName: nextCenter,
+              };
+            });
           }
         });
         unsubs.push(unsubOffices);
@@ -482,14 +607,6 @@ export default function App() {
           }
         });
         unsubs.push(unsubConfig);
-
-        // 7. Subscribe to deleted offices (trash)
-        const unsubDelOffices = subscribeDeletedOffices((onlineDelOffices) => {
-          if (Array.isArray(onlineDelOffices)) {
-            setDeletedOffices(onlineDelOffices);
-          }
-        });
-        unsubs.push(unsubDelOffices);
 
         // Run connection verification & initial seed check in parallel without blocking UI stream
         const [isConnected] = await Promise.all([
@@ -604,6 +721,7 @@ export default function App() {
     // Detect newly removed offices and add to deletedOffices
     const removed = offices.filter((o) => !updatedOffices.some((u) => u.id === o.id));
     if (removed.length > 0) {
+      removed.forEach((r) => deletedOfficeIdsRef.current.add(r.id));
       setDeletedOffices((prev) => [...removed, ...prev.filter((d) => !removed.some((r) => r.id === d.id))]);
       removed.forEach((o) => deleteOfficeOnline(o).catch(console.warn));
     }
@@ -614,7 +732,10 @@ export default function App() {
       const prev = offices.find((o) => o.id === u.id);
       return !prev || JSON.stringify(prev) !== JSON.stringify(u);
     });
-    changedOrAdded.forEach((o) => saveOfficeOnline(o).catch(console.warn));
+    changedOrAdded.forEach((o) => {
+      deletedOfficeIdsRef.current.delete(o.id);
+      saveOfficeOnline(o).catch(console.warn);
+    });
     setOffices(updatedOffices);
 
     // Sync currentReport & livePreviewReport if a new office was added or current office was edited

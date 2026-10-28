@@ -605,7 +605,7 @@ export async function initializeFirestoreIfEmpty(): Promise<{
 export async function reportSystemIssueOnline(issue: SystemIssueReport): Promise<void> {
   const docRef = doc(db, ISSUES_COLLECTION, issue.id);
   try {
-    await setDoc(docRef, issue);
+    await setDoc(docRef, cleanForFirestore(issue), { merge: true });
   } catch (error) {
     console.warn('Could not save issue online, saved locally:', error);
   }
@@ -643,9 +643,12 @@ export function subscribeSystemIssues(
     (snapshot) => {
       const list: SystemIssueReport[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as SystemIssueReport);
+        const data = docSnap.data() as SystemIssueReport;
+        if (data && (data.id || docSnap.id)) {
+          list.push({ ...data, id: data.id || docSnap.id });
+        }
       });
-      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       onData(list);
     },
     (error) => {

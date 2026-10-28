@@ -152,19 +152,19 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [issueFilterStatus, setIssueFilterStatus] = useState<'all' | 'pending' | 'resolved'>('all');
   const [issueSearchQuery, setIssueSearchQuery] = useState('');
 
-  // Subscribe to live issues
+  // Subscribe to live issues (authoritative from Cloud Firestore so resolutions & deletions sync across all clients)
   useEffect(() => {
     const unsub = subscribeSystemIssues((onlineIssues) => {
-      if (onlineIssues && onlineIssues.length > 0) {
-        setReportedIssues((prev) => {
-          const combined = [...onlineIssues];
-          for (const p of prev) {
-            if (!combined.some((c) => c.id === p.id)) {
-              combined.push(p);
-            }
-          }
-          return combined;
-        });
+      if (Array.isArray(onlineIssues)) {
+        setReportedIssues(onlineIssues);
+        try {
+          localStorage.setItem(
+            'doe_assistant_reported_issues_v1',
+            JSON.stringify(onlineIssues)
+          );
+        } catch {
+          // ignore
+        }
       }
     });
     return () => unsub();
@@ -445,6 +445,28 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     }
     const finalName = rawName || rawCenter;
     const finalCenter = rawCenter || `ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว (${finalName})`;
+
+    // If adding a 2nd center to an existing office with the same name
+    const existingOffice = offices.find((o) => o.name === finalName);
+    if (existingOffice && (existingOffice.additionalCenters || []).length < 1 && existingOffice.centerName !== finalCenter) {
+      const nextAdditional = [
+        ...(existingOffice.additionalCenters || []),
+        finalCenter,
+      ].slice(0, 1);
+      const updatedOffices = offices.map((o) =>
+        o.id === existingOffice.id
+          ? { ...o, additionalCenters: nextAdditional }
+          : o
+      );
+      onUpdateOffices(updatedOffices);
+      setIsAddingOffice(false);
+      setNewOffice({ region: 'ภาคกลางและตะวันตก' });
+      setOfficeSearch('');
+      setOfficeRegionFilter('ทั้งหมด');
+      onNotify(`เพิ่มศูนย์บริการแห่งที่ 2 "${finalCenter}" ของ ${existingOffice.name} และซิงก์ไปยังทุกเครื่องเรียบร้อยแล้ว`);
+      return;
+    }
+
     const id =
       newOffice.id ||
       `office_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -462,7 +484,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     setNewOffice({ region: 'ภาคกลางและตะวันตก' });
     setOfficeSearch('');
     setOfficeRegionFilter('ทั้งหมด');
-    onNotify(`เพิ่มศูนย์บริการ "${officeItem.centerName}" (${officeItem.name}) เรียบร้อยแล้ว`);
+    onNotify(`เพิ่มศูนย์บริการ "${officeItem.centerName}" (${officeItem.name}) และซิงก์ไปยังทุกเครื่องเรียบร้อยแล้ว`);
   };
 
   const handleDeleteOffice = (officeId: string) => {
@@ -2071,18 +2093,41 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                             className="w-full text-[11px] p-1 bg-white border rounded text-slate-500"
                           />
                         </td>
-                        <td className="p-2">
-                          <input
-                            type="text"
-                            value={editingOffice.centerName}
-                            onChange={(e) =>
-                              setEditingOffice({
-                                ...editingOffice,
-                                centerName: e.target.value,
-                              })
-                            }
-                            className="w-full text-xs p-1 bg-white border rounded"
-                          />
+                        <td className="p-2 space-y-1.5">
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                              ศูนย์บริการประจำสำนักงาน (แห่งที่ 1):
+                            </span>
+                            <input
+                              type="text"
+                              value={editingOffice.centerName}
+                              onChange={(e) =>
+                                setEditingOffice({
+                                  ...editingOffice,
+                                  centerName: e.target.value,
+                                })
+                              }
+                              className="w-full text-xs p-1 bg-white border rounded"
+                            />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                              ศูนย์บริการประจำสำนักงาน (แห่งที่ 2 - ถ้ามี):
+                            </span>
+                            <input
+                              type="text"
+                              placeholder="เว้นว่างไว้หากมีเพียง 1 ศูนย์"
+                              value={editingOffice.additionalCenters?.[0] || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setEditingOffice({
+                                  ...editingOffice,
+                                  additionalCenters: val.trim() ? [val] : [],
+                                });
+                              }}
+                              className="w-full text-xs p-1 bg-white border rounded"
+                            />
+                          </div>
                         </td>
                         <td className="p-2 text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -2128,8 +2173,18 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                           {office.nameEn}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3 text-slate-700 max-w-[280px] truncate">
-                        {office.centerName}
+                      <td className="py-2.5 px-3 text-slate-700 max-w-[320px]">
+                        <div className="truncate" title={office.centerName}>
+                          {office.centerName}
+                        </div>
+                        {office.additionalCenters && office.additionalCenters.length > 0 && (
+                          <div
+                            className="text-[11px] text-sky-700 font-semibold truncate mt-0.5"
+                            title={office.additionalCenters[0]}
+                          >
+                            + แห่งที่ 2: {office.additionalCenters[0]}
+                          </div>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
@@ -2550,12 +2605,25 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 {reportedIssues.length > 0 && (
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (window.confirm('คุณต้องการล้างประวัติข้อขัดข้องทั้งหมดหรือไม่?')) {
-                        await clearAllSystemIssuesOnline();
-                        setReportedIssues([]);
-                        onNotify('ล้างประวัติข้อขัดข้องทั้งหมดเรียบร้อยแล้ว');
-                      }
+                    onClick={() => {
+                      setConfirmModal({
+                        isOpen: true,
+                        title: 'ยืนยันการล้างประวัติข้อขัดข้องทั้งหมด',
+                        message:
+                          'คุณแน่ใจหรือไม่ว่าต้องการล้างรายการแจ้งข้อขัดข้องทั้งหมดออกจากระบบ? การลบนี้จะซิงก์ไปยังทุกเครื่องทันที',
+                        confirmText: 'ยืนยันล้างทั้งหมด',
+                        cancelText: 'ยกเลิก',
+                        isDanger: true,
+                        iconType: 'trash',
+                        onConfirm: async () => {
+                          await clearAllSystemIssuesOnline();
+                          setReportedIssues([]);
+                          try {
+                            localStorage.removeItem('doe_assistant_reported_issues_v1');
+                          } catch {}
+                          onNotify('ล้างประวัติข้อขัดข้องทั้งหมดเรียบร้อยแล้ว');
+                        },
+                      });
                     }}
                     className="px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl font-bold border border-rose-200 flex items-center gap-1 cursor-pointer transition-colors"
                     title="ล้างรายการข้อขัดข้องทั้งหมด"
@@ -2683,13 +2751,20 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                           onClick={async () => {
                             const nextStatus = issue.status === 'resolved' ? 'pending' : 'resolved';
                             const updated: SystemIssueReport = { ...issue, status: nextStatus };
+                            setReportedIssues((prev) => {
+                              const next = prev.map((i) => (i.id === issue.id ? updated : i));
+                              try {
+                                localStorage.setItem(
+                                  'doe_assistant_reported_issues_v1',
+                                  JSON.stringify(next)
+                                );
+                              } catch {}
+                              return next;
+                            });
                             await reportSystemIssueOnline(updated);
-                            setReportedIssues((prev) =>
-                              prev.map((i) => (i.id === issue.id ? updated : i))
-                            );
                             onNotify(
                               nextStatus === 'resolved'
-                                ? `อัปเดต "${issue.title}" เป็นแก้ไขแล้ว`
+                                ? `อัปเดต "${issue.title}" เป็นแก้ไขแล้ว (ซิงก์เรียลไทม์)`
                                 : `เปลี่ยนสถานะเป็นรอดำเนินการ`
                             );
                           }}
@@ -2705,12 +2780,30 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
                         <button
                           type="button"
-                          onClick={async () => {
-                            if (window.confirm(`คุณต้องการลบข้อขัดข้อง "${issue.title}" หรือไม่?`)) {
-                              await deleteSystemIssueOnline(issue.id);
-                              setReportedIssues((prev) => prev.filter((i) => i.id !== issue.id));
-                              onNotify(`ลบข้อขัดข้อง "${issue.title}" เรียบร้อยแล้ว`);
-                            }
+                          onClick={() => {
+                            setConfirmModal({
+                              isOpen: true,
+                              title: 'ยืนยันการลบรายการข้อขัดข้อง',
+                              message: `คุณต้องการลบข้อขัดข้อง "${issue.title}" ออกจากระบบหรือไม่?`,
+                              confirmText: 'ยืนยันลบรายการนี้',
+                              cancelText: 'ยกเลิก',
+                              isDanger: true,
+                              iconType: 'trash',
+                              onConfirm: async () => {
+                                await deleteSystemIssueOnline(issue.id);
+                                setReportedIssues((prev) => {
+                                  const next = prev.filter((i) => i.id !== issue.id);
+                                  try {
+                                    localStorage.setItem(
+                                      'doe_assistant_reported_issues_v1',
+                                      JSON.stringify(next)
+                                    );
+                                  } catch {}
+                                  return next;
+                                });
+                                onNotify(`ลบข้อขัดข้อง "${issue.title}" เรียบร้อยแล้ว`);
+                              },
+                            });
                           }}
                           className="text-xs font-bold p-1.5 px-2 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
                           title="ลบข้อขัดข้องนี้"

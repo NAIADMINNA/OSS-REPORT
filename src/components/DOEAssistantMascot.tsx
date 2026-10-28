@@ -114,21 +114,20 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
     }
   }, [currentOfficeName]);
 
-  // Subscribe to issues from Firestore if online
+  // Subscribe to issues from Firestore in real time so Admin resolutions/deletions update immediately
   useEffect(() => {
-    if (isFirestoreOnline) {
-      const unsub = subscribeSystemIssues((onlineIssues) => {
-        const issues = onlineIssues || [];
-        setMyIssues(issues);
+    const unsub = subscribeSystemIssues((onlineIssues) => {
+      if (Array.isArray(onlineIssues)) {
+        setMyIssues(onlineIssues);
         try {
-          localStorage.setItem(STORAGE_KEY_ISSUES, JSON.stringify(issues));
+          localStorage.setItem(STORAGE_KEY_ISSUES, JSON.stringify(onlineIssues));
         } catch {
           // ignore
         }
-      });
-      return () => unsub();
-    }
-  }, [isFirestoreOnline]);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   const handleDeleteSingleIssue = async (issueId: string) => {
     try {
