@@ -79,18 +79,20 @@ const STORAGE_KEY_CONFIG = 'doe_work_permit_config_v1';
 const STORAGE_KEY_DELETED_OFFICES = 'doe_work_permit_deleted_offices_v1';
 const STORAGE_KEY_DELETED_REPORTS = 'doe_work_permit_deleted_reports_v1';
 
+export const MIN_REPORT_ISO_DATE = '2026-10-01';
+
 export const createEmptyReportTemplate = (targetOffice?: EmploymentOffice): DOEReport => {
-  const office = targetOffice || EMPLOYMENT_OFFICES[0];
-  const today = getTodayIsoDate();
+  const rawToday = getTodayIsoDate();
+  const today = rawToday < MIN_REPORT_ISO_DATE ? MIN_REPORT_ISO_DATE : rawToday;
   return {
     id: `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     reportDate: today,
     reportDateThaiStr: formatThaiDateFull(today),
-    officeId: office.id,
-    officeName: office.name,
-    officeNameEn: office.nameEn,
-    centerName: office.centerName,
-    region: office.region,
+    officeId: targetOffice?.id || '',
+    officeName: targetOffice?.name || '',
+    officeNameEn: targetOffice?.nameEn || '',
+    centerName: targetOffice?.centerName || '',
+    region: (targetOffice?.region || '') as EmploymentOffice['region'],
     reporterName: '',
     reporterPosition: '',
     phoneNumber: '',
@@ -315,17 +317,17 @@ export default function App() {
   };
 
   const [currentReport, setCurrentReport] = useState<DOEReport>(() =>
-    createEmptyReportTemplate(EMPLOYMENT_OFFICES[0])
+    createEmptyReportTemplate()
   );
   const [livePreviewReport, setLivePreviewReport] = useState<DOEReport>(() =>
-    createEmptyReportTemplate(EMPLOYMENT_OFFICES[0])
+    createEmptyReportTemplate()
   );
 
   // Modals
   const [isPosterModalOpen, setIsPosterModalOpen] = useState(false);
   const [isLineModalOpen, setIsLineModalOpen] = useState(false);
   const [modalTargetReport, setModalTargetReport] = useState<DOEReport>(() =>
-    reports[0] || createEmptyReportTemplate(EMPLOYMENT_OFFICES[0])
+    reports[0] || createEmptyReportTemplate()
   );
   const [reportToDelete, setReportToDelete] = useState<DOEReport | null>(null);
 
@@ -933,7 +935,7 @@ export default function App() {
     saveAllReportersOnline(DEFAULT_REPORTERS).catch(console.warn);
     saveSystemConfigOnline(DEFAULT_SYSTEM_CONFIG).catch(console.warn);
 
-    const emptyReport = createEmptyReportTemplate(EMPLOYMENT_OFFICES[0]);
+    const emptyReport = createEmptyReportTemplate();
     setCurrentReport(emptyReport);
     setLivePreviewReport(emptyReport);
     showToast('รีเซ็ตระบบและฐานข้อมูลเป็นค่าเริ่มต้นทางการของ DOE เรียบร้อย');
@@ -963,7 +965,7 @@ export default function App() {
       localStorage.setItem(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify([]));
       await clearAllReportsOnline();
 
-      const emptyReport = createEmptyReportTemplate(EMPLOYMENT_OFFICES[0]);
+      const emptyReport = createEmptyReportTemplate();
       setCurrentReport(emptyReport);
       setLivePreviewReport(emptyReport);
 
@@ -1204,7 +1206,7 @@ export default function App() {
       setIsLineModalOpen(false);
     }
     if (currentReport.id === target.id || livePreviewReport.id === target.id) {
-      const blankReport = createEmptyReportTemplate(offices[0]);
+      const blankReport = createEmptyReportTemplate();
       setCurrentReport(blankReport);
       setLivePreviewReport(blankReport);
       setIsEditingExistingReport(false);
@@ -1214,11 +1216,13 @@ export default function App() {
 
   // Duplicate report
   const handleDuplicateReport = (report: DOEReport) => {
+    const rawToday = getTodayIsoDate();
+    const todayIso = rawToday < MIN_REPORT_ISO_DATE ? MIN_REPORT_ISO_DATE : rawToday;
     const cloned: DOEReport = {
       ...report,
       id: `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-      reportDate: new Date().toISOString().slice(0, 10),
-      reportDateThaiStr: formatThaiDateFull(new Date()),
+      reportDate: todayIso,
+      reportDateThaiStr: formatThaiDateFull(todayIso),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1253,10 +1257,9 @@ export default function App() {
   // New report (supports preselectedOfficeId from dashboard table!)
   const handleNewReport = (preselectedOfficeId?: string) => {
     setIsEditingExistingReport(false);
-    const targetOffice =
-      offices.find(
-        (o) => o.id === (preselectedOfficeId || currentReport.officeId)
-      ) || offices[0];
+    const targetOffice = preselectedOfficeId
+      ? offices.find((o) => o.id === preselectedOfficeId)
+      : undefined;
 
     const newReportTemplate = createEmptyReportTemplate(targetOffice);
     setCurrentReport(newReportTemplate);
@@ -1267,9 +1270,7 @@ export default function App() {
   // Handle clearing current report form
   const handleClearCurrentReport = () => {
     setIsEditingExistingReport(false);
-    const targetOffice =
-      offices.find((o) => o.id === currentReport.officeId) || offices[0];
-    const blank = createEmptyReportTemplate(targetOffice);
+    const blank = createEmptyReportTemplate();
     setCurrentReport(blank);
     setLivePreviewReport(blank);
     showToast('ล้างข้อมูลในแบบฟอร์มเรียบร้อยแล้ว');
@@ -1281,9 +1282,7 @@ export default function App() {
   const handleTabChange = (tab: ActiveTab) => {
     if (tab === 'form' && activeTab !== 'form') {
       if (!isEditingExistingReport) {
-        const blank = createEmptyReportTemplate(
-          offices.find((o) => o.id === currentReport.officeId) || offices[0]
-        );
+        const blank = createEmptyReportTemplate();
         setCurrentReport(blank);
         setLivePreviewReport(blank);
       }

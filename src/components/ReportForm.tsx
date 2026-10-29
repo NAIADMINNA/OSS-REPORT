@@ -39,6 +39,8 @@ import { calculateReportTotalSections } from '../utils/doeUtils';
 export const MOBILE_UNIT_CENTER_NAME =
   'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit)';
 
+export const MIN_REPORT_ISO_DATE = '2026-10-01'; // 1 ตุลาคม 2569
+
 interface ReportFormProps {
   initialReport?: DOEReport | null;
   reports?: DOEReport[];
@@ -85,7 +87,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   const searchInputId = useId();
   const [officeSearch, setOfficeSearch] = useState('');
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>(
-    initialReport?.officeId || EMPLOYMENT_OFFICES[0]?.id || 'bkk_1'
+    initialReport?.officeId || ''
   );
 
   // Inline Admin Quick-Add / Edit Panels
@@ -139,23 +141,30 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     return DEFAULT_QUEUE_METRICS;
   }, [queueMetrics]);
 
-  const todayIso = getTodayIsoDate();
-  const initialDefaultOffice = EMPLOYMENT_OFFICES[0];
+  const rawTodayIso = getTodayIsoDate();
+  const todayIso = rawTodayIso < MIN_REPORT_ISO_DATE ? MIN_REPORT_ISO_DATE : rawTodayIso;
+
+  const normalizeReportIsoDate = (dateStr?: string) => {
+    if (!dateStr) return todayIso;
+    if (dateStr < MIN_REPORT_ISO_DATE) return MIN_REPORT_ISO_DATE;
+    if (dateStr > todayIso) return todayIso;
+    return dateStr;
+  };
 
   const initialCalculatedTotal = useMemo(() => {
     return calculateReportTotalSections(initialReport || {}, activeCategories);
   }, [initialReport, activeCategories]);
 
+  const initialEffectiveDate = normalizeReportIsoDate(initialReport?.reportDate);
+
   const [formData, setFormData] = useState<Omit<DOEReport, 'id' | 'createdAt' | 'updatedAt'>>({
-    reportDate: initialReport?.reportDate || todayIso,
-    reportDateThaiStr: initialReport?.reportDateThaiStr || formatThaiDateFull(todayIso),
-    officeId: initialReport?.officeId || initialDefaultOffice.id,
-    officeName: initialReport?.officeName || initialDefaultOffice.name,
-    officeNameEn: initialReport?.officeNameEn || initialDefaultOffice.nameEn,
-    centerName:
-      initialReport?.centerName ||
-      initialDefaultOffice.centerName,
-    region: initialReport?.region || initialDefaultOffice.region,
+    reportDate: initialEffectiveDate,
+    reportDateThaiStr: formatThaiDateFull(initialEffectiveDate),
+    officeId: initialReport?.officeId || '',
+    officeName: initialReport?.officeName || '',
+    officeNameEn: initialReport?.officeNameEn || '',
+    centerName: initialReport?.centerName || '',
+    region: (initialReport?.region || '') as EmploymentOffice['region'],
     reporterName: initialReport?.reporterName || '',
     reporterPosition: initialReport?.reporterPosition || '',
     phoneNumber: initialReport?.phoneNumber || '',
@@ -186,21 +195,19 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   useEffect(() => {
     if (initialReport && initialReport.id !== lastReportIdRef.current) {
       lastReportIdRef.current = initialReport.id;
-      setSelectedOfficeId(initialReport.officeId || initialDefaultOffice.id);
+      setSelectedOfficeId(initialReport.officeId || '');
       const computedTotal = calculateReportTotalSections(initialReport, activeCategories);
+      const effectiveDate = isEditingExistingReport
+        ? initialReport.reportDate || todayIso
+        : normalizeReportIsoDate(initialReport.reportDate);
       setFormData({
-        reportDate: initialReport.reportDate || todayIso,
-        reportDateThaiStr:
-          initialReport.reportDateThaiStr ||
-          formatThaiDateFull(initialReport.reportDate || todayIso),
-        officeId: initialReport.officeId || initialDefaultOffice.id,
-        officeName: initialReport.officeName || initialDefaultOffice.name,
-        officeNameEn:
-          initialReport.officeNameEn || initialDefaultOffice.nameEn,
-        centerName:
-          initialReport.centerName ||
-          initialDefaultOffice.centerName,
-        region: initialReport.region || initialDefaultOffice.region,
+        reportDate: effectiveDate,
+        reportDateThaiStr: formatThaiDateFull(effectiveDate),
+        officeId: initialReport.officeId || '',
+        officeName: initialReport.officeName || '',
+        officeNameEn: initialReport.officeNameEn || '',
+        centerName: initialReport.centerName || '',
+        region: (initialReport.region || '') as EmploymentOffice['region'],
         reporterName: initialReport.reporterName || '',
         reporterPosition: initialReport.reporterPosition || '',
         phoneNumber: initialReport.phoneNumber || '',
@@ -226,11 +233,12 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         notes: initialReport.notes || '',
       });
     }
-  }, [initialReport?.id, todayIso, initialDefaultOffice, activeCategories]);
+  }, [initialReport?.id, todayIso, activeCategories, isEditingExistingReport]);
 
-  // Current selected office object and its default standard center name
+  // Current selected office object (undefined when no office is selected yet)
   const currentSelectedOffice = useMemo(() => {
-    return officeList.find((o) => o.id === selectedOfficeId) || officeList[0];
+    if (!selectedOfficeId) return undefined;
+    return officeList.find((o) => o.id === selectedOfficeId);
   }, [officeList, selectedOfficeId]);
 
   const checkIsMobileUnitName = (name?: string) => {
@@ -291,11 +299,15 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     const officeId = currentSelectedOffice?.id || formData.officeId;
     const officeName = currentSelectedOffice?.name || formData.officeName;
 
-    const sameDayOfficeReports = reports.filter(
-      (r) =>
-        r.reportDate === targetDate &&
-        (r.officeId === officeId || r.officeName === officeName)
-    );
+    const sameDayOfficeReports =
+      officeId || officeName
+        ? reports.filter(
+            (r) =>
+              r.reportDate === targetDate &&
+              ((officeId && r.officeId === officeId) ||
+                (officeName && r.officeName === officeName))
+          )
+        : [];
 
     const standardSlots = officeStandardCenters.map((centerName, idx) => {
       const matchedReport = sameDayOfficeReports.find((r) => {
@@ -678,12 +690,24 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
   // Handle Office Selection
   const handleOfficeChange = (officeId: string, clearSearch = false) => {
-    if (!officeId) return;
+    if (!officeId) {
+      setSelectedOfficeId('');
+      const updated = {
+        ...formData,
+        officeId: '',
+        officeName: '',
+        officeNameEn: '',
+        centerName: '',
+        region: '' as EmploymentOffice['region'],
+      };
+      setFormData(updated);
+      triggerPreview(updated);
+      return;
+    }
     setSelectedOfficeId(officeId);
+    setOfficeSelectError(false);
     const office = officeList.find((o) => o.id === officeId);
     if (office) {
-      // Check if a registered reporter belongs to this office
-      const matchingReporter = reporters?.find((r) => r.officeId === office.id);
       const targetCenterName = !isEditingExistingReport
         ? pickAvailableCenterForOfficeAndDate(office, formData.reportDate)
         : isMobileCenter
@@ -697,10 +721,6 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         officeNameEn: office.nameEn,
         centerName: targetCenterName,
         region: office.region,
-        phoneNumber: matchingReporter?.phoneNumber || formData.phoneNumber || '',
-        lineId: matchingReporter?.lineId || formData.lineId || '',
-        reporterName: matchingReporter?.name || formData.reporterName || '',
-        reporterPosition: matchingReporter?.position || formData.reporterPosition || '',
       };
       setFormData(updated);
       triggerPreview(updated);
@@ -771,20 +791,30 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     handleCustomQueueChange(metricId, Math.max(0, current + delta));
   };
 
-  // Handle Date Change
+  // Handle Date Change (restricted between 1 October 2569 [2026-10-01] and today)
   const handleDateChange = (isoDate: string) => {
-    const thaiStr = formatThaiDateFull(isoDate);
+    if (!isoDate) return;
+    let clampedDate = isoDate;
+    if (isoDate < MIN_REPORT_ISO_DATE) {
+      clampedDate = MIN_REPORT_ISO_DATE;
+      onNotify?.('⚠️ สามารถเลือกวันที่ย้อนหลังได้ตั้งแต่วันที่ 1 ตุลาคม 2569 เป็นต้นไปเท่านั้น');
+    } else if (isoDate > todayIso) {
+      clampedDate = todayIso;
+      onNotify?.('⚠️ ไม่สามารถเลือกวันที่รายงานผลล่วงหน้าเกินวันปัจจุบันได้');
+    }
+
+    const thaiStr = formatThaiDateFull(clampedDate);
     const nextCenterName =
       !isEditingExistingReport && currentSelectedOffice
         ? pickAvailableCenterForOfficeAndDate(
             currentSelectedOffice,
-            isoDate,
+            clampedDate,
             formData.centerName
           )
         : formData.centerName;
     const updated = {
       ...formData,
-      reportDate: isoDate,
+      reportDate: clampedDate,
       reportDateThaiStr: thaiStr,
       centerName: nextCenterName,
     };
@@ -822,10 +852,12 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   };
 
   const [justSaved, setJustSaved] = useState(false);
+  const [officeSelectError, setOfficeSelectError] = useState(false);
   const [reporterNameError, setReporterNameError] = useState(false);
   const [reporterPositionError, setReporterPositionError] = useState(false);
   const [phoneNumberError, setPhoneNumberError] = useState(false);
   const [queueAppointmentError, setQueueAppointmentError] = useState(false);
+  const officeSelectRef = useRef<HTMLSelectElement | null>(null);
   const reporterNameInputRef = useRef<HTMLInputElement | null>(null);
   const reporterPositionInputRef = useRef<HTMLInputElement | null>(null);
   const phoneNumberInputRef = useRef<HTMLInputElement | null>(null);
@@ -835,6 +867,15 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     timeStr: string;
     totalCards: number;
   } | null>(null);
+
+  useEffect(() => {
+    if (selectedOfficeId && formData.officeId) {
+      setOfficeSelectError(false);
+      if (officeSelectRef.current) {
+        officeSelectRef.current.setCustomValidity('');
+      }
+    }
+  }, [selectedOfficeId, formData.officeId]);
 
   useEffect(() => {
     if (formData.reporterName && formData.reporterName.trim().length > 0) {
@@ -877,31 +918,29 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Enforce per-day per-office reporting quota:
-    // 1 or 2 times according to standard centers owned by the office, and/or 1 time for Mobile Unit
-    if (dailyQuotaInfo.isCurrentSlotBlocked) {
-      const blockedSlotLabel = dailyQuotaInfo.activeSlot?.centerName || formData.centerName;
-      onNotify?.(
-        `⚠️ "${formData.officeName}" ได้ส่งรายงานของ "${blockedSlotLabel}" ในวันที่ ${formData.reportDateThaiStr} ครบโควตา (1/1 ครั้ง) แล้ว กรุณาเลือกศูนย์อื่นที่ยังว่าง หรือคลิกแก้ไขรายงานเดิม`
-      );
-      if (centerSelectorRef.current) {
-        centerSelectorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-      return;
-    }
-
+    const isOfficeMissing =
+      !selectedOfficeId || !formData.officeId || !formData.officeName.trim();
     const isNameMissing = !formData.reporterName || !formData.reporterName.trim();
     const isPositionMissing = !formData.reporterPosition || !formData.reporterPosition.trim();
     const isPhoneMissing = !formData.phoneNumber || !formData.phoneNumber.trim();
     const isQueueMissing = !formData.queueAppointment || formData.queueAppointment <= 0;
 
-    if (isNameMissing || isPositionMissing || isPhoneMissing || isQueueMissing) {
+    if (
+      isOfficeMissing ||
+      isNameMissing ||
+      isPositionMissing ||
+      isPhoneMissing ||
+      isQueueMissing
+    ) {
+      if (isOfficeMissing) setOfficeSelectError(true);
       if (isNameMissing) setReporterNameError(true);
       if (isPositionMissing) setReporterPositionError(true);
       if (isPhoneMissing) setPhoneNumberError(true);
       if (isQueueMissing) setQueueAppointmentError(true);
 
-      const firstInvalidRef = isNameMissing
+      const firstInvalidRef = isOfficeMissing
+        ? officeSelectRef.current
+        : isNameMissing
         ? reporterNameInputRef.current
         : isPositionMissing
         ? reporterPositionInputRef.current
@@ -916,6 +955,20 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       return;
     }
 
+    // Enforce per-day per-office reporting quota:
+    // 1 or 2 times according to standard centers owned by the office, and/or 1 time for Mobile Unit
+    if (dailyQuotaInfo.isCurrentSlotBlocked) {
+      const blockedSlotLabel = dailyQuotaInfo.activeSlot?.centerName || formData.centerName;
+      onNotify?.(
+        `⚠️ "${formData.officeName}" ได้ส่งรายงานของ "${blockedSlotLabel}" ในวันที่ ${formData.reportDateThaiStr} ครบโควตา (1/1 ครั้ง) แล้ว กรุณาเลือกศูนย์อื่นที่ยังว่าง หรือคลิกแก้ไขรายงานเดิม`
+      );
+      if (centerSelectorRef.current) {
+        centerSelectorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
+
+    setOfficeSelectError(false);
     setReporterNameError(false);
     setReporterPositionError(false);
     setPhoneNumberError(false);
@@ -943,26 +996,29 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   };
 
   const handleClearForm = () => {
+    setOfficeSelectError(false);
     setReporterNameError(false);
     setReporterPositionError(false);
     setPhoneNumberError(false);
     setQueueAppointmentError(false);
+    if (officeSelectRef.current) officeSelectRef.current.setCustomValidity('');
     if (reporterNameInputRef.current) reporterNameInputRef.current.setCustomValidity('');
     if (reporterPositionInputRef.current) reporterPositionInputRef.current.setCustomValidity('');
     if (phoneNumberInputRef.current) phoneNumberInputRef.current.setCustomValidity('');
     if (queueInputRef.current) {
       queueInputRef.current.setCustomValidity('');
     }
-    const targetOffice =
-      officeList.find((o) => o.id === selectedOfficeId) || officeList[0];
+    setSelectedOfficeId('');
+    setOfficeSearch('');
+    setSelectedRegionFilter('ทั้งหมด');
     const resetData: Omit<DOEReport, 'id' | 'createdAt' | 'updatedAt'> = {
-      reportDate: formData.reportDate,
-      reportDateThaiStr: formData.reportDateThaiStr,
-      officeId: targetOffice.id,
-      officeName: targetOffice.name,
-      officeNameEn: targetOffice.nameEn,
-      centerName: targetOffice.centerName,
-      region: targetOffice.region,
+      reportDate: todayIso,
+      reportDateThaiStr: formatThaiDateFull(todayIso),
+      officeId: '',
+      officeName: '',
+      officeNameEn: '',
+      centerName: '',
+      region: '' as EmploymentOffice['region'],
       reporterName: '',
       reporterPosition: '',
       phoneNumber: '',
@@ -1170,16 +1226,21 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
               {/* Select Dropdown */}
               <select
+                ref={officeSelectRef}
                 value={isSelectedInFiltered ? selectedOfficeId : ''}
                 onChange={(e) => handleOfficeChange(e.target.value)}
                 aria-label="เลือกสำนักงานจัดหางานและศูนย์บริการ"
-                className="w-full min-w-0 text-sm sm:text-base px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-semibold text-slate-900 shadow-2xs"
+                className={`w-full min-w-0 text-sm sm:text-base px-3.5 py-2.5 bg-white rounded-lg focus:outline-hidden focus:ring-2 font-semibold shadow-2xs transition-all ${
+                  officeSelectError
+                    ? 'border-2 border-rose-500 ring-2 ring-rose-500/20 focus:ring-rose-500 bg-rose-50/40 text-slate-900'
+                    : !selectedOfficeId
+                    ? 'border-2 border-amber-400 focus:ring-amber-500 bg-amber-50/20 text-slate-600'
+                    : 'border-2 border-teal-500 focus:ring-teal-500 text-slate-900'
+                }`}
               >
-                {!isSelectedInFiltered && (
-                  <option value="" disabled>
-                    -- กรุณาคลิกเลือกสำนักงาน / ศูนย์บริการที่ค้นพบ ({filteredOffices.length} แห่ง) --
-                  </option>
-                )}
+                <option value="">
+                  -- กรุณาคลิกเลือกสำนักงานจัดหางาน / ศูนย์บริการ ({filteredOffices.length} แห่ง) --
+                </option>
                 {groupedFilteredOffices.map((group) => (
                   <optgroup key={group.region} label={group.regionLabel}>
                     {group.offices.map((office) => (
@@ -1190,17 +1251,30 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                   </optgroup>
                 ))}
               </select>
+              {officeSelectError && (
+                <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-rose-600">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>กรุณาเลือกสำนักงานจัดหางานและศูนย์บริการก่อนบันทึกรายงาน (ห้ามเว้นว่าง)</span>
+                </p>
+              )}
             </div>
           </div>
 
           {/* วันที่รายงาน */}
           <div>
-            <label className="block text-sm font-bold text-slate-800 mb-1">
-              วันที่รายงานผล <span className="text-rose-500">*</span>
+            <label className="block text-sm font-bold text-slate-800 mb-1 flex items-center justify-between gap-2">
+              <span>
+                วันที่รายงานผล <span className="text-rose-500">*</span>
+              </span>
+              <span className="text-[10.5px] font-semibold text-slate-500">
+                ย้อนหลังได้ตั้งแต่ 1 ต.ค. 2569 ถึงปัจจุบัน
+              </span>
             </label>
             <div className="relative">
               <input
                 type="date"
+                min={MIN_REPORT_ISO_DATE}
+                max={todayIso}
                 value={formData.reportDate}
                 onChange={(e) => handleDateChange(e.target.value)}
                 className="w-full min-w-0 text-sm px-3.5 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
@@ -1220,12 +1294,19 @@ export const ReportForm: React.FC<ReportFormProps> = ({
               </span>
               <span
                 className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1 border ${
-                  isMobileCenter
+                  !selectedOfficeId
+                    ? 'text-amber-800 bg-amber-50 border-amber-200'
+                    : isMobileCenter
                     ? 'text-amber-900 bg-amber-50 border-amber-300'
                     : 'text-emerald-800 bg-emerald-50 border-emerald-200'
                 }`}
               >
-                {isMobileCenter ? (
+                {!selectedOfficeId ? (
+                  <>
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                    <span>รอการเลือกสำนักงานจัดหางาน</span>
+                  </>
+                ) : isMobileCenter ? (
                   <>
                     <Truck className="w-3.5 h-3.5 text-amber-600" />
                     <span>โหมดหน่วยบริการเคลื่อนที่ (Mobile Unit)</span>
@@ -1250,14 +1331,21 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                     <span className="text-[10.5px] text-slate-500 font-semibold block">
                       สำนักงานจัดหางานผู้รายงาน:
                     </span>
-                    <span className="font-extrabold text-slate-900 text-xs sm:text-sm truncate block" title={formData.officeName}>
-                      {formData.officeName || 'สำนักงานจัดหางาน'}
+                    <span
+                      className={`font-extrabold text-xs sm:text-sm truncate block ${
+                        formData.officeName ? 'text-slate-900' : 'text-amber-700 italic'
+                      }`}
+                      title={formData.officeName || 'กรุณาเลือกสำนักงานจัดหางานด้านบน'}
+                    >
+                      {formData.officeName || '-- ยังไม่ได้เลือกสำนักงานจัดหางาน --'}
                     </span>
                   </div>
                 </div>
-                <span className="text-[11px] text-slate-700 bg-white border border-slate-200 px-2.5 py-1 rounded-md font-semibold shrink-0">
-                  {formData.region}
-                </span>
+                {formData.region && (
+                  <span className="text-[11px] text-slate-700 bg-white border border-slate-200 px-2.5 py-1 rounded-md font-semibold shrink-0">
+                    {formData.region}
+                  </span>
+                )}
               </div>
 
               {/* ตัวเลือกประเภทศูนย์บริการและโควตาการส่งรายงานต่อวัน (1-2 ครั้งตามชื่อศูนย์ที่มี และ/หรือ 1 ครั้งสำหรับ Mobile Unit) */}
@@ -1551,8 +1639,13 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                     <span className="text-[10.5px] text-slate-500 font-semibold block">
                       ชื่อศูนย์บริการที่แสดงในหัวเรื่องรายงานและโปสเตอร์:
                     </span>
-                    <span className="font-extrabold text-blue-900 text-xs sm:text-sm truncate block font-['Prompt']" title={formData.centerName}>
-                      {formData.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'}
+                    <span
+                      className={`font-extrabold text-xs sm:text-sm truncate block font-['Prompt'] ${
+                        formData.centerName ? 'text-blue-900' : 'text-amber-700 italic'
+                      }`}
+                      title={formData.centerName || 'กรุณาเลือกสำนักงานจัดหางานด้านบน'}
+                    >
+                      {formData.centerName || '-- ยังไม่ได้เลือกศูนย์บริการ --'}
                     </span>
                   </div>
                 </div>

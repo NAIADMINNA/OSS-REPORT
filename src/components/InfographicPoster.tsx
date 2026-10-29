@@ -365,16 +365,16 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                 <h1
                   style={{ fontSize: `${officeNameFontSize}px`, lineHeight: 1.3 }}
                   className="font-black tracking-normal mt-1 text-[#1e3a8a] font-['Prompt'] break-words"
-                  title={report.officeName}
+                  title={report.officeName || 'สำนักงานจัดหางาน'}
                 >
-                  {report.officeName}
+                  {report.officeName || 'กรุณาเลือกสำนักงานจัดหางาน'}
                 </h1>
                 <p
                   style={{ fontSize: `${officeNameEnFontSize}px`, lineHeight: 1.3 }}
                   className="font-medium tracking-normal text-slate-500 truncate mt-0.5"
                   title={report.officeNameEn}
                 >
-                  {report.officeNameEn}
+                  {report.officeNameEn || 'Provincial / Area Employment Office'}
                 </p>
               </div>
             </div>
