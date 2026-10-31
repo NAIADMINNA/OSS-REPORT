@@ -437,54 +437,73 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   };
 
   const handleAddOffice = () => {
-    const rawName = newOffice.name?.trim() || '';
     const rawCenter = newOffice.centerName?.trim() || '';
-    if (!rawName && !rawCenter) {
-      onNotify('⚠️ กรุณากรอกชื่อสำนักงานจัดหางาน หรือ ชื่อศูนย์บริการ');
+    const rawName = newOffice.name?.trim() || '';
+    if (!rawCenter) {
+      onNotify('⚠️ กรุณากรอกชื่อศูนย์บริการใหม่ หรือ ชื่อศูนย์เฉพาะกิจที่ต้องการเพิ่ม');
       return;
     }
-    const finalName = rawName || rawCenter;
-    const finalCenter = rawCenter || `ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว (${finalName})`;
 
-    // If adding a 2nd center to an existing office with the same name
-    const existingOffice = offices.find((o) => o.name === finalName);
-    if (existingOffice && (existingOffice.additionalCenters || []).length < 1 && existingOffice.centerName !== finalCenter) {
-      const nextAdditional = [
-        ...(existingOffice.additionalCenters || []),
-        finalCenter,
-      ].slice(0, 1);
+    // Find parent EmploymentOffice (by selected id, office name, or province match in centerName)
+    let targetOffice = offices.find(
+      (o) => o.id === newOffice.id || o.name === rawName
+    );
+    if (!targetOffice) {
+      targetOffice = offices.find((o) => {
+        const shortProv = o.name
+          .replace('สำนักงานจัดหางานจังหวัด', '')
+          .replace('สำนักงานจัดหางาน', '')
+          .trim();
+        return (
+          shortProv.length >= 2 &&
+          (rawCenter.includes(shortProv) || rawName.includes(shortProv))
+        );
+      });
+    }
+    if (!targetOffice) {
+      targetOffice =
+        offices.find((o) => o.id === 'central_foreign_workers') || offices[0];
+    }
+
+    if (targetOffice) {
+      const existingAdd = targetOffice.additionalCenters || [];
+      const nextAdditional =
+        targetOffice.centerName.trim() === rawCenter ||
+        existingAdd.some((c) => c.trim() === rawCenter)
+          ? existingAdd
+          : [...existingAdd, rawCenter];
+
       const updatedOffices = offices.map((o) =>
-        o.id === existingOffice.id
+        o.id === targetOffice!.id
           ? { ...o, additionalCenters: nextAdditional }
           : o
       );
       onUpdateOffices(updatedOffices);
       setIsAddingOffice(false);
-      setNewOffice({ region: 'ภาคกลางและตะวันตก' });
+      setNewOffice({ region: 'เฉพาะกิจ', id: 'central_foreign_workers' });
       setOfficeSearch('');
       setOfficeRegionFilter('ทั้งหมด');
-      onNotify(`เพิ่มศูนย์บริการแห่งที่ 2 "${finalCenter}" ของ ${existingOffice.name} และซิงก์ไปยังทุกเครื่องเรียบร้อยแล้ว`);
-      return;
+      onNotify(
+        `เพิ่มชื่อศูนย์บริการ "${rawCenter}" ในส่วนของชื่อศูนย์บริการ (${targetOffice.name}) และซิงก์ไปยังทุกเครื่องเรียบร้อยแล้ว`
+      );
     }
+  };
 
-    const id =
-      newOffice.id ||
-      `office_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const officeItem: EmploymentOffice = {
-      id,
-      name: finalName,
-      nameEn: newOffice.nameEn?.trim() || finalName,
-      centerName: finalCenter,
-      region: (newOffice.region as any) || 'ภาคกลางและตะวันตก',
-      defaultPhone: newOffice.defaultPhone?.trim() || '',
-      defaultLine: newOffice.defaultLine?.trim() || '',
-    };
-    onUpdateOffices([...offices, officeItem]);
-    setIsAddingOffice(false);
-    setNewOffice({ region: 'ภาคกลางและตะวันตก' });
-    setOfficeSearch('');
-    setOfficeRegionFilter('ทั้งหมด');
-    onNotify(`เพิ่มศูนย์บริการ "${officeItem.centerName}" (${officeItem.name}) และซิงก์ไปยังทุกเครื่องเรียบร้อยแล้ว`);
+  const handleRemoveAdditionalCenter = (officeId: string, centerToRemove: string) => {
+    const target = offices.find((o) => o.id === officeId);
+    if (!target) return;
+    const updatedOffices = offices.map((o) =>
+      o.id === officeId
+        ? {
+            ...o,
+            additionalCenters: (o.additionalCenters || []).filter(
+              (c) => c !== centerToRemove
+            ),
+          }
+        : o
+    );
+    onUpdateOffices(updatedOffices);
+    onNotify(`ลบชื่อศูนย์บริการ "${centerToRemove}" ออกจาก ${target.name} เรียบร้อยแล้ว`);
   };
 
   const handleDeleteOffice = (officeId: string) => {
@@ -1931,41 +1950,52 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
             <div className="bg-emerald-50/60 p-4 rounded-xl border border-emerald-300 space-y-3">
               <div className="font-bold text-xs text-emerald-900 flex items-center gap-1.5">
                 <Plus className="w-4 h-4 text-emerald-600" />
-                <span>เพิ่มสำนักงานจัดหางาน / เพิ่มชื่อศูนย์บริการใหม่</span>
+                <span>เพิ่มชื่อศูนย์บริการใหม่ / ศูนย์บริการเฉพาะกิจ (เข้าในส่วนของ &ldquo;ชื่อศูนย์บริการ&rdquo;)</span>
               </div>
-              <div className="bg-white p-3 rounded-lg border border-emerald-200 space-y-1.5">
-                <label className="text-[11px] font-bold text-emerald-900 block">
-                  ตัวช่วยด่วน: เลือกสำนักงานจัดหางานต้นสังกัด (กรณีเพิ่มศูนย์บริการใหม่ในจังหวัดที่มีอยู่แล้ว)
-                </label>
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const found = offices.find((o) => o.id === e.target.value);
-                    if (found) {
-                      setNewOffice({
-                        ...newOffice,
-                        name: found.name,
-                        nameEn: found.nameEn,
-                        region: found.region,
-                        defaultPhone: found.defaultPhone || '',
-                        defaultLine: found.defaultLine || '',
-                      });
-                    }
-                  }}
-                  className="w-full text-xs p-2 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-800"
-                >
-                  <option value="">-- คลิกเลือกจังหวัด/สำนักงานต้นสังกัดเพื่อดึงชื่อสำนักงานอัตโนมัติ (หรือพิมพ์ใหม่ด้านล่าง) --</option>
-                  {EMPLOYMENT_OFFICES.map((std) => (
-                    <option key={std.id} value={std.id}>
-                      {std.name} ({std.region})
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="text-[11px] font-bold text-emerald-950 block mb-1">
+                    1. เลือกสำนักงานจัดหางานต้นสังกัด (ชื่อสำนักงานจะคงเดิม ไม่ถูกเปลี่ยนเป็นชื่อศูนย์) <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={newOffice.id || 'central_foreign_workers'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const found = offices.find((o) => o.id === val);
+                      if (found) {
+                        setNewOffice({
+                          ...newOffice,
+                          id: found.id,
+                          name: found.name,
+                          nameEn: found.nameEn,
+                          region: found.region,
+                          defaultPhone: found.defaultPhone || '',
+                          defaultLine: found.defaultLine || '',
+                        });
+                      } else {
+                        setNewOffice({
+                          ...newOffice,
+                          id: 'central_foreign_workers',
+                          name: 'สำนักบริหารแรงงานต่างด้าว กรมการจัดหางาน',
+                          region: 'เฉพาะกิจ',
+                        });
+                      }
+                    }}
+                    className="w-full text-xs p-2.5 bg-white border border-emerald-300 rounded-lg font-semibold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="central_foreign_workers">
+                      🚚 ศูนย์เฉพาะกิจส่วนกลาง / ใช้ร่วมกันทุกสำนักงาน (สำนักบริหารแรงงานต่างด้าว)
                     </option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div className="sm:col-span-3">
+                    {EMPLOYMENT_OFFICES.map((std) => (
+                      <option key={std.id} value={std.id}>
+                        {std.name} ({std.region})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
                   <label className="text-[11px] font-bold text-slate-800 block mb-1">
-                    ชื่อศูนย์บริการ (แสดงในแบบฟอร์มและโปสเตอร์) <span className="text-rose-500">*</span>
+                    2. ชื่อศูนย์บริการใหม่ / ศูนย์เฉพาะกิจ (จะถูกเพิ่มในช่อง &ldquo;ชื่อศูนย์บริการ&rdquo; เท่านั้น) <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -1974,48 +2004,6 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     onChange={(e) => setNewOffice({ ...newOffice, centerName: e.target.value })}
                     className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 font-medium"
                   />
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                    ชื่อสำนักงานจัดหางานต้นสังกัด
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="เช่น สำนักงานจัดหางานจังหวัดสมุทรสาคร"
-                    value={newOffice.name || ''}
-                    onChange={(e) => setNewOffice({ ...newOffice, name: e.target.value })}
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                    ชื่อภาษาอังกฤษ (ไม่บังคับ)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Samut Sakhon Provincial Employment Office"
-                    value={newOffice.nameEn || ''}
-                    onChange={(e) => setNewOffice({ ...newOffice, nameEn: e.target.value })}
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                    ภูมิภาค / ประเภทศูนย์
-                  </label>
-                  <select
-                    value={newOffice.region || 'ภาคกลางและตะวันตก'}
-                    onChange={(e) => setNewOffice({ ...newOffice, region: e.target.value as any })}
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg"
-                  >
-                    <option value="ภาคเหนือ">ภาคเหนือ</option>
-                    <option value="กรุงเทพมหานคร">กรุงเทพมหานคร</option>
-                    <option value="ภาคกลางและตะวันตก">ภาคกลางและตะวันตก</option>
-                    <option value="ภาคตะวันออก">ภาคตะวันออก</option>
-                    <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ</option>
-                    <option value="ภาคใต้">ภาคใต้</option>
-                    <option value="เฉพาะกิจ">เฉพาะกิจ</option>
-                  </select>
                 </div>
               </div>
               <div className="flex items-center justify-end gap-2 pt-1">
@@ -2031,7 +2019,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   onClick={handleAddOffice}
                   className="text-xs font-bold px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs cursor-pointer"
                 >
-                  บันทึกศูนย์ใหม่
+                  บันทึกชื่อศูนย์บริการใหม่
                 </button>
               </div>
             </div>
@@ -2110,24 +2098,31 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                               className="w-full text-xs p-1 bg-white border rounded"
                             />
                           </div>
-                          <div>
-                            <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
-                              ศูนย์บริการประจำสำนักงาน (แห่งที่ 2 - ถ้ามี):
-                            </span>
-                            <input
-                              type="text"
-                              placeholder="เว้นว่างไว้หากมีเพียง 1 ศูนย์"
-                              value={editingOffice.additionalCenters?.[0] || ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setEditingOffice({
-                                  ...editingOffice,
-                                  additionalCenters: val.trim() ? [val] : [],
-                                });
-                              }}
-                              className="w-full text-xs p-1 bg-white border rounded"
-                            />
-                          </div>
+                          {(editingOffice.additionalCenters && editingOffice.additionalCenters.length > 0
+                            ? editingOffice.additionalCenters
+                            : ['']
+                          ).map((addC, idx) => (
+                            <div key={idx}>
+                              <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                ศูนย์บริการเพิ่มเติม / ศูนย์เฉพาะกิจ (แห่งที่ {idx + 2}):
+                              </span>
+                              <input
+                                type="text"
+                                placeholder="เว้นว่างไว้หากไม่มีศูนย์เพิ่มเติม"
+                                value={addC}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const list = [...(editingOffice.additionalCenters || [''])];
+                                  list[idx] = val;
+                                  setEditingOffice({
+                                    ...editingOffice,
+                                    additionalCenters: list.filter((x) => x.trim().length > 0),
+                                  });
+                                }}
+                                className="w-full text-xs p-1 bg-white border rounded"
+                              />
+                            </div>
+                          ))}
                         </td>
                         <td className="p-2 text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -2173,18 +2168,30 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                           {office.nameEn}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3 text-slate-700 max-w-[320px]">
-                        <div className="truncate" title={office.centerName}>
+                      <td className="py-2.5 px-3 text-slate-700 max-w-[360px] space-y-1">
+                        <div className="truncate font-medium" title={office.centerName}>
                           {office.centerName}
                         </div>
-                        {office.additionalCenters && office.additionalCenters.length > 0 && (
-                          <div
-                            className="text-[11px] text-sky-700 font-semibold truncate mt-0.5"
-                            title={office.additionalCenters[0]}
-                          >
-                            + แห่งที่ 2: {office.additionalCenters[0]}
-                          </div>
-                        )}
+                        {office.additionalCenters &&
+                          office.additionalCenters.map((addCenter, idx) => (
+                            <div
+                              key={`${office.id}_add_${idx}`}
+                              className="flex items-center justify-between gap-2 text-[11px] bg-sky-50 text-sky-900 border border-sky-200 px-2 py-0.5 rounded-md font-semibold"
+                              title={addCenter}
+                            >
+                              <span className="truncate">
+                                + {addCenter.includes('เฉพาะกิจ') ? 'ศูนย์เฉพาะกิจ' : `แห่งที่ ${idx + 2}`}: {addCenter}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAdditionalCenter(office.id, addCenter)}
+                                className="text-rose-500 hover:text-rose-700 font-bold px-1 shrink-0 cursor-pointer"
+                                title="ลบชื่อศูนย์บริการเพิ่มเติมนี้"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
                       </td>
                       <td className="py-2.5 px-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">

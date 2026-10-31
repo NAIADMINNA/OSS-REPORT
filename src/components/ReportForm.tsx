@@ -250,9 +250,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     );
   };
 
-  // Helper to get the 1 or 2 standard center names belonging to a given office
+  // Helper to get the standard & special center names belonging to a given office
   const getStandardCentersForOffice = (office?: EmploymentOffice): string[] => {
-    if (!office) return ['ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว'];
     const centers: string[] = [];
     const addUnique = (c?: string) => {
       const trimmed = c?.trim();
@@ -260,24 +259,32 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         centers.push(trimmed);
       }
     };
-    addUnique(office.centerName);
-    if (Array.isArray(office.additionalCenters)) {
-      office.additionalCenters.forEach(addUnique);
-    }
-    // Also check if officeList has another entry with the exact same office name
-    officeList.forEach((o) => {
-      if (o.name === office.name) {
-        addUnique(o.centerName);
-        if (Array.isArray(o.additionalCenters)) {
-          o.additionalCenters.forEach(addUnique);
-        }
+    if (office) {
+      addUnique(office.centerName);
+      if (Array.isArray(office.additionalCenters)) {
+        office.additionalCenters.forEach(addUnique);
       }
-    });
+      // Also check if officeList has another entry with the exact same office name
+      officeList.forEach((o) => {
+        if (o.name === office.name) {
+          addUnique(o.centerName);
+          if (Array.isArray(o.additionalCenters)) {
+            o.additionalCenters.forEach(addUnique);
+          }
+        }
+      });
+    }
+    // Also include any general ศูนย์เฉพาะกิจ attached to central_foreign_workers
+    const centralOffice = officeList.find((o) => o.id === 'central_foreign_workers');
+    if (centralOffice && Array.isArray(centralOffice.additionalCenters)) {
+      centralOffice.additionalCenters.forEach((c) => {
+        addUnique(c);
+      });
+    }
     if (centers.length === 0) {
       centers.push('ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว');
     }
-    // Limit to 1 or 2 standard centers per office as specified
-    return centers.slice(0, 2);
+    return centers;
   };
 
   const officeStandardCenters = useMemo(() => {
@@ -321,15 +328,17 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         Boolean(isEditingExistingReport) &&
         Boolean(initialReport?.id) &&
         matchedReport?.id === initialReport?.id;
+      const isSpecialCenter = centerName.includes('เฉพาะกิจ');
 
       return {
         key: `standard_${idx}`,
         type: 'standard' as const,
         index: idx,
-        label:
-          officeStandardCenters.length > 1
-            ? `ศูนย์บริการประจำสำนักงาน (แห่งที่ ${idx + 1})`
-            : 'ศูนย์บริการประจำสำนักงาน',
+        label: isSpecialCenter
+          ? 'ศูนย์บริการเฉพาะกิจ'
+          : officeStandardCenters.length > 1
+          ? `ศูนย์บริการประจำสำนักงาน (แห่งที่ ${idx + 1})`
+          : 'ศูนย์บริการประจำสำนักงาน',
         centerName,
         existingReport: matchedReport || null,
         isSubmitted: Boolean(matchedReport) && !isEditingThis,
@@ -512,8 +521,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
           setNewCenterOfficeNameInput(currentSelectedOffice?.name || formData.officeName || '');
         } else {
           setNewCenterNameInput('');
-          setNewCenterOfficeNameInput(currentSelectedOffice?.name || formData.officeName || '');
-          setNewCenterRegionInput(currentSelectedOffice?.region || formData.region || 'ภาคกลางและตะวันตก');
+          setNewCenterOfficeNameInput(currentSelectedOffice?.id || '');
+          setNewCenterRegionInput(currentSelectedOffice?.region || formData.region || 'เฉพาะกิจ');
         }
         setShowAdminCenterPanel(true);
       }
@@ -531,7 +540,6 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       if (currentSelectedOffice && onUpdateOffices) {
         const updatedOffices = officeList.map((o) => {
           if (o.id !== currentSelectedOffice.id) return o;
-          // If editing the second standard center in additionalCenters
           if (
             Array.isArray(o.additionalCenters) &&
             o.additionalCenters.includes(formData.centerName) &&
@@ -560,76 +568,70 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       onNotify?.(`บันทึกการแก้ไขชื่อศูนย์ "${trimmedCenter}" เรียบร้อยแล้ว`);
     } else {
       const rawCenter = newCenterNameInput.trim();
-      const rawOffice = newCenterOfficeNameInput.trim();
-      if (!rawCenter && !rawOffice) {
-        onNotify?.('⚠️ กรุณาระบุชื่อศูนย์บริการใหม่ หรือ ชื่อสำนักงานจัดหางาน');
+      if (!rawCenter) {
+        onNotify?.('⚠️ กรุณาระบุชื่อศูนย์บริการใหม่ หรือ ชื่อศูนย์เฉพาะกิจ');
         return;
       }
-      const finalOfficeName = rawOffice || rawCenter;
-      const finalCenterName =
-        rawCenter || `ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว (${finalOfficeName})`;
-      const finalRegion = (newCenterRegionInput || currentSelectedOffice?.region || 'ภาคกลางและตะวันตก') as EmploymentOffice['region'];
 
-      // Check if adding a 2nd standard center to an existing office
-      const matchingOffice = officeList.find((o) => o.name === finalOfficeName);
-      if (matchingOffice && getStandardCentersForOffice(matchingOffice).length < 2) {
-        const existingAdditional = matchingOffice.additionalCenters || [];
-        const nextAdditional = existingAdditional.includes(finalCenterName)
-          ? existingAdditional
-          : [...existingAdditional, finalCenterName].slice(0, 1);
-        if (onUpdateOffices) {
-          const updatedOffices = officeList.map((o) =>
-            o.id === matchingOffice.id
-              ? { ...o, additionalCenters: nextAdditional }
-              : o
-          );
-          onUpdateOffices(updatedOffices);
-        }
-        setSelectedOfficeId(matchingOffice.id);
+      // Find the parent EmploymentOffice by selected ID, currentSelectedOffice, or province name match
+      let targetOffice =
+        officeList.find((o) => o.id === newCenterOfficeNameInput || o.name === newCenterOfficeNameInput) ||
+        currentSelectedOffice;
+
+      if (!targetOffice) {
+        // Check if rawCenter mentions any province
+        targetOffice = officeList.find((o) => {
+          const shortProv = o.name
+            .replace('สำนักงานจัดหางานจังหวัด', '')
+            .replace('สำนักงานจัดหางาน', '')
+            .trim();
+          return shortProv.length >= 2 && rawCenter.includes(shortProv);
+        });
+      }
+      if (!targetOffice) {
+        targetOffice =
+          officeList.find((o) => o.id === 'central_foreign_workers') || officeList[0];
+      }
+
+      if (targetOffice && onUpdateOffices) {
+        const existingAdditional = targetOffice.additionalCenters || [];
+        const nextAdditional =
+          targetOffice.centerName.trim() === rawCenter ||
+          existingAdditional.some((c) => c.trim() === rawCenter)
+            ? existingAdditional
+            : [...existingAdditional, rawCenter];
+
+        const updatedOffices = officeList.map((o) =>
+          o.id === targetOffice!.id
+            ? { ...o, additionalCenters: nextAdditional }
+            : o
+        );
+        onUpdateOffices(updatedOffices);
+      }
+
+      // If user already had an office selected, keep their selected office; otherwise select targetOffice
+      const activeOffice = currentSelectedOffice || targetOffice;
+      if (activeOffice) {
+        setSelectedOfficeId(activeOffice.id);
+        setOfficeSelectError(false);
         const updatedForm = {
           ...formData,
-          officeId: matchingOffice.id,
-          officeName: matchingOffice.name,
-          officeNameEn: matchingOffice.nameEn,
-          centerName: finalCenterName,
-          region: matchingOffice.region,
+          officeId: activeOffice.id,
+          officeName: activeOffice.name,
+          officeNameEn: activeOffice.nameEn,
+          centerName: rawCenter,
+          region: activeOffice.region,
         };
         setFormData(updatedForm);
         triggerPreview(updatedForm);
-        setShowAdminCenterPanel(false);
-        setNewCenterNameInput('');
-        onNotify?.(`เพิ่มศูนย์บริการแห่งที่ 2 "${finalCenterName}" ของ ${matchingOffice.name} เรียบร้อยแล้ว`);
-        return;
       }
-
-      const newOfficeItem: EmploymentOffice = {
-        id: `office_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        name: finalOfficeName,
-        nameEn: finalOfficeName,
-        centerName: finalCenterName,
-        region: finalRegion,
-        defaultPhone: currentSelectedOffice?.defaultPhone || formData.phoneNumber || '',
-        defaultLine: currentSelectedOffice?.defaultLine || formData.lineId || '',
-      };
-      if (onUpdateOffices) {
-        onUpdateOffices([...officeList, newOfficeItem]);
-      }
-      setOfficeSearch('');
-      setSelectedRegionFilter('ทั้งหมด');
-      setSelectedOfficeId(newOfficeItem.id);
-      const updatedForm = {
-        ...formData,
-        officeId: newOfficeItem.id,
-        officeName: newOfficeItem.name,
-        officeNameEn: newOfficeItem.nameEn,
-        centerName: newOfficeItem.centerName,
-        region: newOfficeItem.region,
-      };
-      setFormData(updatedForm);
-      triggerPreview(updatedForm);
       setShowAdminCenterPanel(false);
       setNewCenterNameInput('');
-      onNotify?.(`เพิ่มศูนย์บริการใหม่ "${newOfficeItem.centerName}" และเลือกใช้งานทันทีเรียบร้อยแล้ว`);
+      onNotify?.(
+        `เพิ่มชื่อศูนย์บริการ "${rawCenter}" ในส่วนของชื่อศูนย์บริการ (${
+          (currentSelectedOffice || targetOffice)?.name || ''
+        }) และซิงก์ทุกเครื่องเรียบร้อยแล้ว`
+      );
     }
   };
 
@@ -1708,45 +1710,38 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                       <div className="sm:col-span-3">
                         <label className="block text-[11px] font-bold text-slate-800 mb-1">
-                          ชื่อศูนย์บริการใหม่ (แสดงในรายงานและโปสเตอร์) <span className="text-rose-500">*</span>
+                          1. เลือกสำนักงานจัดหางานต้นสังกัด (เพื่อผูกชื่อศูนย์บริการ / ศูนย์เฉพาะกิจ) <span className="text-rose-500">*</span>
+                        </label>
+                        <select
+                          value={newCenterOfficeNameInput || currentSelectedOffice?.id || 'central_foreign_workers'}
+                          onChange={(e) => setNewCenterOfficeNameInput(e.target.value)}
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-900"
+                        >
+                          <option value="central_foreign_workers">
+                            🚚 ศูนย์เฉพาะกิจส่วนกลาง / ใช้ร่วมกันทุกสำนักงาน (สำนักบริหารแรงงานต่างด้าว)
+                          </option>
+                          {groupAndSortOfficesByRegion(officeList).map((group) => (
+                            <optgroup key={group.region} label={group.regionLabel}>
+                              {group.offices.map((o) => (
+                                <option key={o.id} value={o.id}>
+                                  {o.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="sm:col-span-3">
+                        <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                          2. ชื่อศูนย์บริการใหม่ / ศูนย์เฉพาะกิจ (จะถูกเพิ่มในส่วนของ &ldquo;ชื่อศูนย์บริการ&rdquo; เท่านั้น) <span className="text-rose-500">*</span>
                         </label>
                         <input
                           type="text"
                           value={newCenterNameInput}
                           onChange={(e) => setNewCenterNameInput(e.target.value)}
-                          placeholder="เช่น ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว (ขาเข้า) จังหวัดสมุทรสาคร"
+                          placeholder="เช่น ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ จังหวัดสมุทรสาคร"
                           className="w-full text-xs px-3 py-2 bg-white border border-emerald-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
                         />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          ชื่อสำนักงานจัดหางานต้นสังกัด
-                        </label>
-                        <input
-                          type="text"
-                          value={newCenterOfficeNameInput}
-                          onChange={(e) => setNewCenterOfficeNameInput(e.target.value)}
-                          placeholder="เช่น สำนักงานจัดหางานจังหวัดสมุทรสาคร"
-                          className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          ภูมิภาค / ประเภทศูนย์
-                        </label>
-                        <select
-                          value={newCenterRegionInput || 'ภาคกลางและตะวันตก'}
-                          onChange={(e) => setNewCenterRegionInput(e.target.value)}
-                          className="w-full text-xs px-2.5 py-2 bg-white border border-slate-300 rounded-lg font-medium"
-                        >
-                          <option value="กรุงเทพมหานคร">กรุงเทพมหานคร</option>
-                          <option value="ภาคกลางและตะวันตก">ภาคกลางและตะวันตก</option>
-                          <option value="ภาคตะวันออก">ภาคตะวันออก</option>
-                          <option value="ภาคตะวันออกเฉียงเหนือ">ภาคตะวันออกเฉียงเหนือ</option>
-                          <option value="ภาคเหนือ">ภาคเหนือ</option>
-                          <option value="ภาคใต้">ภาคใต้</option>
-                          <option value="เฉพาะกิจ">เฉพาะกิจ</option>
-                        </select>
                       </div>
                     </div>
                   ) : (

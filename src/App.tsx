@@ -162,6 +162,113 @@ export default function App() {
     return [];
   });
 
+  // Helper to ensure center names (เช่น "ศูนย์เฉพาะกิจ...") are always stored in centerName/additionalCenters,
+  // never as the EmploymentOffice name (สำนักงานจัดหางาน)
+  const normalizeOfficesAndCenters = (
+    inputList: EmploymentOffice[],
+    deletedIds: Set<string>
+  ): {
+    merged: EmploymentOffice[];
+    bogusDocsToDelete: EmploymentOffice[];
+    updatedStdToSave: EmploymentOffice[];
+  } => {
+    const cleanInput = (inputList || [])
+      .filter((o) => o && o.id && o.name && !deletedIds.has(o.id))
+      .map((o) =>
+        (o.region as string) === 'ส่วนกลาง'
+          ? { ...o, region: 'เฉพาะกิจ' as const }
+          : o
+      );
+
+    const inputMap = new Map<string, EmploymentOffice>();
+    cleanInput.forEach((o) => inputMap.set(o.id, o));
+
+    const result: EmploymentOffice[] = [];
+    const seenIds = new Set<string>();
+    const bogusDocsToDelete: EmploymentOffice[] = [];
+    const updatedStdIds = new Set<string>();
+
+    const isCenterLikeName = (str?: string) => {
+      const s = (str || '').trim();
+      return (
+        s.startsWith('ศูนย์') ||
+        s.startsWith('หน่วยบริการ') ||
+        s.includes('ศูนย์เฉพาะกิจ') ||
+        s.includes('Mobile Unit')
+      );
+    };
+
+    // 1. All standard 87 offices
+    for (const std of EMPLOYMENT_OFFICES) {
+      if (deletedIds.has(std.id)) continue;
+      const match = inputMap.get(std.id);
+      if (match) {
+        const mergedAdd = Array.from(
+          new Set([...(std.additionalCenters || []), ...(match.additionalCenters || [])].map((c) => c.trim()).filter(Boolean))
+        );
+        // Protect std.name if someone accidentally put a center name into match.name
+        const safeName = isCenterLikeName(match.name) ? std.name : match.name || std.name;
+        if (isCenterLikeName(match.name) && match.name.trim() !== std.centerName && !mergedAdd.includes(match.name.trim())) {
+          mergedAdd.push(match.name.trim());
+          updatedStdIds.add(std.id);
+        }
+        result.push({
+          ...std,
+          ...match,
+          name: safeName,
+          centerName: match.centerName || std.centerName,
+          additionalCenters: mergedAdd,
+        });
+      } else {
+        result.push({ ...std, additionalCenters: [...(std.additionalCenters || [])] });
+      }
+      seenIds.add(std.id);
+    }
+
+    // 2. Any custom entry that was added by Admin: attach its centerName to the appropriate EmploymentOffice
+    for (const custom of cleanInput) {
+      if (seenIds.has(custom.id) || deletedIds.has(custom.id)) continue;
+
+      const cName = (custom.centerName || custom.name || '').trim();
+      const rawOfficeName = (custom.name || '').trim();
+
+      // Find matching parent EmploymentOffice
+      let parentOffice = result.find((o) => o.name === rawOfficeName);
+      if (!parentOffice) {
+        parentOffice = result.find((o) => {
+          const shortProv = o.name
+            .replace('สำนักงานจัดหางานจังหวัด', '')
+            .replace('สำนักงานจัดหางาน', '')
+            .trim();
+          return (
+            shortProv.length >= 2 &&
+            (cName.includes(shortProv) || rawOfficeName.includes(shortProv))
+          );
+        });
+      }
+      if (!parentOffice) {
+        parentOffice =
+          result.find((o) => o.id === 'central_foreign_workers') || result[0];
+      }
+
+      if (parentOffice && cName) {
+        const existingAdd = parentOffice.additionalCenters || [];
+        if (
+          parentOffice.centerName.trim() !== cName &&
+          !existingAdd.some((c) => c.trim() === cName)
+        ) {
+          parentOffice.additionalCenters = [...existingAdd, cName];
+          updatedStdIds.add(parentOffice.id);
+        }
+        bogusDocsToDelete.push(custom);
+      }
+      seenIds.add(custom.id);
+    }
+
+    const updatedStdToSave = result.filter((o) => updatedStdIds.has(o.id));
+    return { merged: result, bogusDocsToDelete, updatedStdToSave };
+  };
+
   // 2. Offices Database
   const [offices, setOffices] = useState<EmploymentOffice[]>(() => {
     try {
@@ -173,19 +280,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const updated = [...parsed].map((o: EmploymentOffice) =>
-            o.region === 'ส่วนกลาง' ? { ...o, region: 'เฉพาะกิจ' as const } : o
-          );
-          for (const defaultOffice of EMPLOYMENT_OFFICES) {
-            if (deletedIdSet.has(defaultOffice.id)) continue;
-            const idx = updated.findIndex((o: EmploymentOffice) => o.id === defaultOffice.id);
-            if (idx >= 0) {
-              updated[idx] = { ...defaultOffice, ...updated[idx] };
-            } else {
-              updated.push(defaultOffice);
-            }
-          }
-          return updated;
+          return normalizeOfficesAndCenters(parsed, deletedIdSet).merged;
         }
       }
     } catch (e) {
@@ -356,47 +451,6 @@ export default function App() {
     new Set(deletedOffices.map((o) => o.id))
   );
 
-  const mergeOfficesWithDefaults = (
-    onlineList: EmploymentOffice[],
-    deletedIds: Set<string>
-  ): EmploymentOffice[] => {
-    const cleanOnline = (onlineList || [])
-      .filter((o) => o && o.id && o.name && !deletedIds.has(o.id))
-      .map((o) =>
-        (o.region as string) === 'ส่วนกลาง'
-          ? { ...o, region: 'เฉพาะกิจ' as const }
-          : o
-      );
-
-    const onlineMap = new Map<string, EmploymentOffice>();
-    cleanOnline.forEach((o) => onlineMap.set(o.id, o));
-
-    const result: EmploymentOffice[] = [];
-    const seenIds = new Set<string>();
-
-    // 1. All standard offices (with online edits/additionalCenters merged in)
-    for (const std of EMPLOYMENT_OFFICES) {
-      if (deletedIds.has(std.id)) continue;
-      const onlineMatch = onlineMap.get(std.id);
-      if (onlineMatch) {
-        result.push({ ...std, ...onlineMatch });
-      } else {
-        result.push(std);
-      }
-      seenIds.add(std.id);
-    }
-
-    // 2. Any newly added custom offices from Admin
-    for (const custom of cleanOnline) {
-      if (!seenIds.has(custom.id) && !deletedIds.has(custom.id)) {
-        result.push(custom);
-        seenIds.add(custom.id);
-      }
-    }
-
-    return result;
-  };
-
   const [deletedReports, setDeletedReports] = useState<DOEReport[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_DELETED_REPORTS);
@@ -502,11 +556,17 @@ export default function App() {
         // 3.1 Subscribe to online offices (real-time merge of base offices + admin edits & additions)
         const unsubOffices = subscribeOffices((onlineOffices) => {
           if (Array.isArray(onlineOffices)) {
-            const merged = mergeOfficesWithDefaults(
-              onlineOffices,
-              deletedOfficeIdsRef.current
-            );
+            const { merged, bogusDocsToDelete, updatedStdToSave } =
+              normalizeOfficesAndCenters(onlineOffices, deletedOfficeIdsRef.current);
             setOffices(merged);
+
+            // Clean up any center that was mistakenly saved as a standalone office document in Firestore
+            if (bogusDocsToDelete.length > 0) {
+              bogusDocsToDelete.forEach((b) => deleteOfficeOnline(b).catch(console.warn));
+            }
+            if (updatedStdToSave.length > 0) {
+              updatedStdToSave.forEach((u) => saveOfficeOnline(u).catch(console.warn));
+            }
 
             // Also keep currentReport & livePreviewReport synced if the active office's name/center was updated
             setCurrentReport((prev) => {
