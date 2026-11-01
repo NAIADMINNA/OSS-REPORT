@@ -854,6 +854,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   };
 
   const [justSaved, setJustSaved] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [officeSelectError, setOfficeSelectError] = useState(false);
   const [reporterNameError, setReporterNameError] = useState(false);
   const [reporterPositionError, setReporterPositionError] = useState(false);
@@ -917,6 +918,55 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
   const centerSelectorRef = useRef<HTMLDivElement | null>(null);
 
+  const getCategoryValue = (catId: string): number => {
+    if (catId === 'section59') return formData.section59;
+    if (catId === 'section62') return formData.section62;
+    if (catId === 'section63_1') return formData.section63_1;
+    if (catId === 'section63_2') return formData.section63_2;
+    if (catId === 'section64') return formData.section64;
+    if (catId === 'mouGroup') return formData.mouGroup || 0;
+    if (catId === 'modifyDetails') return formData.modifyDetails;
+    if (catId === 'substituteCard') return formData.substituteCard;
+    return (formData.customCategoryValues && formData.customCategoryValues[catId]) || 0;
+  };
+
+  const getQueueMetricValue = (metricId: string): number => {
+    if (metricId === 'queueAppointment') return formData.queueAppointment;
+    if (metricId === 'cardsIssued') return formData.cardsIssued;
+    if (metricId === 'identityVerified') return formData.identityVerified;
+    if (metricId === 'cardsNotIssued') return formData.cardsNotIssued;
+    if (metricId === 'missedAppointment') return formData.missedAppointment;
+    if (metricId === 'wrongAppointmentDate') return formData.wrongAppointmentDate;
+    return (formData.customQueueValues && formData.customQueueValues[metricId]) || 0;
+  };
+
+  // Pre-submission data sanity warnings to help users catch potential typos
+  const reviewWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    if (formData.cardsIssued === 0) {
+      warnings.push('ยอดออกบัตรแล้วเป็น 0 ใบ (โปรดตรวจสอบว่ากรอกจำนวนคนต่างด้าวในส่วนที่ 2 ครบถ้วนหรือไม่)');
+    }
+    if (formData.cardsIssued > formData.queueAppointment && formData.queueAppointment > 0) {
+      warnings.push(
+        `ยอดออกบัตรแล้ว (${formatNumber(formData.cardsIssued)} ใบ) มากกว่าจำนวนคิวนัดหมาย (${formatNumber(formData.queueAppointment)} คน)`
+      );
+    }
+    if (
+      formData.identityVerified > 0 &&
+      formData.cardsIssued + formData.cardsNotIssued !== formData.identityVerified
+    ) {
+      warnings.push(
+        `ยอดยืนยันตัวตนแล้ว (${formatNumber(formData.identityVerified)} คน) ไม่เท่ากับผลรวมของ ออกบัตรแล้ว (${formatNumber(formData.cardsIssued)}) + ยังไม่ออกบัตร (${formatNumber(formData.cardsNotIssued)})`
+      );
+    }
+    return warnings;
+  }, [
+    formData.cardsIssued,
+    formData.queueAppointment,
+    formData.identityVerified,
+    formData.cardsNotIssued,
+  ]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -975,6 +1025,12 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     setReporterPositionError(false);
     setPhoneNumberError(false);
     setQueueAppointmentError(false);
+
+    // Open review & confirmation modal before saving
+    setShowConfirmModal(true);
+  };
+
+  const handleConfirmSave = () => {
     const now = new Date();
     const finalReport: DOEReport = {
       ...formData,
@@ -985,6 +1041,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       createdAt: initialReport?.createdAt || now.toISOString(),
       updatedAt: now.toISOString(),
     };
+    setShowConfirmModal(false);
     onSave(finalReport);
     setJustSaved(true);
     setLastSavedMeta({
@@ -2458,6 +2515,262 @@ export const ReportForm: React.FC<ReportFormProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Pre-Submission Review & Confirmation Modal */}
+      {showConfirmModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/65 backdrop-blur-xs animate-in fade-in duration-150"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-report-modal-title"
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-5 py-4 sm:py-5 bg-gradient-to-r from-blue-950 via-blue-900 to-indigo-950 text-white border-b-4 border-amber-400 shrink-0">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-400 text-blue-950 shadow-lg ring-4 ring-amber-300/30 flex items-center justify-center shrink-0 mt-0.5">
+                    <ShieldCheck className="w-7 h-7 stroke-[2.5]" />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-400 text-blue-950 text-[11px] font-black tracking-wide uppercase shadow-2xs">
+                      <AlertCircle className="w-3.5 h-3.5 stroke-[2.5]" />
+                      <span>ขั้นตอนสำคัญก่อนบันทึกข้อมูล</span>
+                    </div>
+                    <h3
+                      id="confirm-report-modal-title"
+                      className="text-lg sm:text-2xl font-black tracking-tight text-amber-300 drop-shadow-xs leading-snug"
+                    >
+                      ตรวจสอบความถูกต้องก่อนบันทึกรายงานผลการปฏิบัติงาน
+                    </h3>
+                    <div className="p-2.5 sm:px-3.5 sm:py-2.5 rounded-xl bg-amber-400/15 border-2 border-amber-300/70 text-white text-xs sm:text-sm font-bold leading-relaxed shadow-inner">
+                      กรุณาตรวจสอบ{' '}
+                      <span className="underline decoration-amber-300 decoration-2 underline-offset-4 text-amber-200 font-extrabold">
+                        ข้อมูลผู้รายงาน
+                      </span>{' '}
+                      <span className="underline decoration-amber-300 decoration-2 underline-offset-4 text-amber-200 font-extrabold">
+                        ชื่อศูนย์บริการ
+                      </span>{' '}
+                      และ{' '}
+                      <span className="underline decoration-amber-300 decoration-2 underline-offset-4 text-amber-200 font-extrabold">
+                        ยอดตัวเลขประจำวัน
+                      </span>{' '}
+                      อีกครั้งเพื่อป้องกันข้อมูลคลาดเคลื่อน
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmModal(false)}
+                  className="p-1.5 rounded-lg text-white/75 hover:text-white hover:bg-white/15 transition-colors cursor-pointer shrink-0"
+                  title="ปิดหน้าต่างตรวจสอบ"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body (Scrollable) */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4 bg-slate-50/70">
+              {/* Sanity Warnings if any */}
+              {reviewWarnings.length > 0 && (
+                <div className="p-3.5 rounded-xl bg-amber-50 border-2 border-amber-300 text-amber-950 space-y-1.5">
+                  <div className="flex items-center gap-2 font-bold text-xs sm:text-sm text-amber-900">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>ข้อสังเกตเพื่อตรวจสอบความถูกต้องของตัวเลข:</span>
+                  </div>
+                  <ul className="list-disc list-inside text-xs space-y-1 text-amber-900 font-medium pl-1">
+                    {reviewWarnings.map((warn, i) => (
+                      <li key={i}>{warn}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* 1. ข้อมูลหน่วยงานและผู้รายงาน */}
+              <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <span className="text-xs font-extrabold text-blue-900 flex items-center gap-1.5">
+                    <Building2 className="w-4 h-4 text-blue-600" />
+                    <span>1. ข้อมูลหน่วยงาน ศูนย์บริการ และผู้รายงาน</span>
+                  </span>
+                  <span className="text-xs font-bold text-sky-800 bg-sky-50 border border-sky-200 px-2.5 py-0.5 rounded-md">
+                    {formData.reportDateThaiStr}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80">
+                    <div className="text-slate-500 font-medium mb-0.5">สำนักงานจัดหางาน</div>
+                    <div className="font-bold text-slate-900 text-sm">{formData.officeName}</div>
+                    {formData.region && (
+                      <div className="text-[11px] text-slate-500 mt-0.5">ภูมิภาค: {formData.region}</div>
+                    )}
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-blue-50/60 border border-blue-200/80">
+                    <div className="text-blue-700 font-medium mb-0.5">ศูนย์บริการที่รายงานผล</div>
+                    <div className="font-bold text-blue-950 text-sm flex items-center gap-1.5 flex-wrap">
+                      {checkIsMobileUnitName(formData.centerName) && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-indigo-600 text-white px-2 py-0.5 rounded-md">
+                          <Truck className="w-3 h-3" /> หน่วยเคลื่อนที่
+                        </span>
+                      )}
+                      <span>{formData.centerName || '-'}</span>
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80">
+                    <div className="text-slate-500 font-medium mb-0.5">ชื่อ-นามสกุล และตำแหน่งผู้รายงาน</div>
+                    <div className="font-bold text-slate-900">
+                      {formData.reporterName} <span className="text-slate-600 font-semibold">({formData.reporterPosition})</span>
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80">
+                    <div className="text-slate-500 font-medium mb-0.5">เบอร์โทรศัพท์ติดต่อ</div>
+                    <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{formData.phoneNumber}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. สรุปจำนวนคนต่างด้าวแยกตามกลุ่ม/มาตรา */}
+              <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2 flex-wrap gap-2">
+                  <span className="text-xs font-extrabold text-sky-900 flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-sky-600" />
+                    <span>2. จำนวนคนต่างด้าวแยกตามกลุ่มเป้าหมาย / มาตรา</span>
+                  </span>
+                  <span className="text-xs font-extrabold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-md">
+                    รวมทั้งสิ้น {formatNumber(computeTotalFromData(formData))} คน
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {activeCategories.map((cat, idx) => {
+                    const val = getCategoryValue(cat.id);
+                    const hasValue = val > 0;
+                    return (
+                      <div
+                        key={cat.id}
+                        className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg border text-xs ${
+                          hasValue
+                            ? 'bg-sky-50/80 border-sky-300 text-slate-900 font-bold'
+                            : 'bg-slate-50/60 border-slate-200 text-slate-500'
+                        }`}
+                      >
+                        <div className="truncate pr-2">
+                          <span className="font-semibold">{idx + 1}. {cat.title}</span>
+                          {cat.subLabel && (
+                            <span className="block text-[10px] text-slate-500 font-normal truncate">
+                              {cat.subLabel}
+                            </span>
+                          )}
+                        </div>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-md text-sm font-extrabold shrink-0 ${
+                            hasValue
+                              ? 'bg-sky-700 text-white shadow-2xs'
+                              : 'bg-slate-200/70 text-slate-500'
+                          }`}
+                        >
+                          {formatNumber(val)} คน
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3. สรุปสถานะคิวและการให้บริการประจำวัน */}
+              <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <span className="text-xs font-extrabold text-teal-900 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-teal-600" />
+                    <span>3. สถานะคิวและการให้บริการประจำวัน</span>
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {activeQueueMetrics.map((metric) => {
+                    const val = getQueueMetricValue(metric.id);
+                    const isPrimary = metric.id === 'queueAppointment' || metric.id === 'cardsIssued';
+                    return (
+                      <div
+                        key={metric.id}
+                        className={`p-2.5 rounded-xl border ${
+                          isPrimary
+                            ? 'bg-teal-50/80 border-teal-300'
+                            : val > 0
+                            ? 'bg-white border-slate-300'
+                            : 'bg-slate-50 border-slate-200'
+                        }`}
+                      >
+                        <div className="text-[11px] font-bold text-slate-600 truncate">
+                          {metric.title}
+                        </div>
+                        <div className="mt-1 flex items-baseline justify-between gap-1">
+                          <span
+                            className={`text-lg font-extrabold ${
+                              isPrimary
+                                ? 'text-teal-900'
+                                : val > 0
+                                ? 'text-slate-900'
+                                : 'text-slate-400'
+                            }`}
+                          >
+                            {formatNumber(val)}
+                          </span>
+                          <span className="text-[11px] font-semibold text-slate-500">
+                            {metric.unit}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 4. หมายเหตุ / บันทึกเพิ่มเติม (ถ้ามี) */}
+              {formData.notes && formData.notes.trim().length > 0 && (
+                <div className="bg-white rounded-xl p-3.5 border border-slate-200 shadow-2xs space-y-1">
+                  <div className="text-xs font-extrabold text-blue-900">
+                    4. หมายเหตุ / บันทึกเพิ่มเติมประจำวัน
+                  </div>
+                  <p className="text-xs text-slate-700 whitespace-pre-line bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                    {formData.notes.trim()}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3.5 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <span className="text-xs text-slate-500 font-medium">
+                หากพบข้อมูลไม่ถูกต้อง สามารถกด <strong className="text-slate-700">"กลับไปแก้ไขข้อมูล"</strong> เพื่อปรับปรุงก่อนบันทึก
+              </span>
+              <div className="flex items-center gap-2.5 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmModal(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm transition-colors cursor-pointer"
+                >
+                  กลับไปแก้ไขข้อมูล
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmSave}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer active:scale-98"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>
+                    {isEditingExistingReport
+                      ? 'ยืนยันการแก้ไขและบันทึก'
+                      : 'ยืนยันข้อมูลถูกต้อง • บันทึกรายงาน'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Admin Authentication Modal */}
       <AdminPinModal
