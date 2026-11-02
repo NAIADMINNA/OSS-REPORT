@@ -38,7 +38,7 @@ const DELETED_REPORTS_COLLECTION = 'deleted_reports';
 const DELETED_OFFICES_COLLECTION = 'deleted_offices';
 const ISSUES_COLLECTION = 'system_issues';
 
-const CURRENT_MIGRATION_VERSION = 6;
+const CURRENT_MIGRATION_VERSION = 7;
 
 let hasLoggedQuotaNotice = false;
 
@@ -450,9 +450,18 @@ async function migrateLegacyCollectionsOnce(existingConfig: Partial<BundledMaste
     const discoveredOffices: EmploymentOffice[] = [];
     officesSnap.forEach((d) => {
       const data = d.data() as EmploymentOffice;
-      if (data && (data.id || d.id) && data.name) {
-        const officeObj = { ...data, id: data.id || d.id };
-        if (isOfficeCustomized(officeObj)) {
+      const docId = data?.id || d.id;
+      if (data && docId) {
+        const stdBase = stdOfficeMap.get(docId);
+        const officeObj: EmploymentOffice = {
+          ...(stdBase || {}),
+          ...data,
+          id: docId,
+          name: data.name || stdBase?.name || '',
+          centerName: data.centerName || stdBase?.centerName || '',
+          region: data.region || stdBase?.region || 'กรุงเทพมหานคร',
+        } as EmploymentOffice;
+        if (officeObj.name && isOfficeCustomized(officeObj)) {
           discoveredOffices.push(officeObj);
         }
       }
@@ -787,6 +796,16 @@ export async function saveOfficeOnline(office: EmploymentOffice): Promise<void> 
   await persistMasterConfigOnline({
     bundledOffices: nextOffices,
     bundledDeletedOffices: nextDelOffices,
+  });
+}
+
+export async function saveAllOfficesOnline(offices: EmploymentOffice[]): Promise<void> {
+  const customized = (offices || [])
+    .filter((o) => o && o.id && o.name && isOfficeCustomized(o))
+    .map((o) => cleanForFirestore(o));
+  const mergedBundled = mergeTwoOfficeLists(masterDocCache.bundledOffices || [], customized);
+  await persistMasterConfigOnline({
+    bundledOffices: mergedBundled,
   });
 }
 

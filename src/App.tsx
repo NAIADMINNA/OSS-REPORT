@@ -55,6 +55,7 @@ import {
   subscribeDeletedReports,
   subscribeOffices,
   saveOfficeOnline,
+  saveAllOfficesOnline,
   deleteOfficeOnline,
   restoreOfficeOnline,
   subscribeDeletedOffices,
@@ -138,6 +139,10 @@ export default function App() {
     })()
   );
   const pendingSaveReportIdsRef = useRef<Set<string>>(new Set());
+  const hasLoadedDeletedReportsRef = useRef<boolean>(false);
+  const hasReceivedOnlineReportsRef = useRef<boolean>(false);
+  const latestOnlineReportIdsRef = useRef<Set<string>>(new Set());
+  const uploadedLocalReportIdsRef = useRef<Set<string>>(new Set());
 
   // 1. Reports Database (merges active storage + rolling backup, excluding explicitly deleted IDs)
   const [reports, setReports] = useState<DOEReport[]>(() => {
@@ -576,13 +581,31 @@ export default function App() {
           const cleanDel = sanitizeReportList(onlineDel);
           const delIdSet = new Set(cleanDel.map((r) => r.id));
           deletedReportIdsRef.current = delIdSet;
+          hasLoadedDeletedReportsRef.current = true;
           setDeletedReports(cleanDel);
 
+          setReports((prev) => {
+            const filtered = delIdSet.size > 0 ? prev.filter((r) => !delIdSet.has(r.id)) : prev;
+            // If online reports already arrived before deleted reports, push any unsynced local reports to Firestore now
+            if (hasReceivedOnlineReportsRef.current) {
+              const onlineIds = latestOnlineReportIdsRef.current;
+              const toUpload = filtered.filter(
+                (r) =>
+                  !onlineIds.has(r.id) &&
+                  !delIdSet.has(r.id) &&
+                  !uploadedLocalReportIdsRef.current.has(r.id)
+              );
+              if (toUpload.length > 0) {
+                toUpload.forEach((r) => {
+                  uploadedLocalReportIdsRef.current.add(r.id);
+                  saveReportOnline(r).catch(console.warn);
+                });
+              }
+            }
+            return filtered.length === prev.length ? prev : filtered;
+          });
+
           if (delIdSet.size > 0) {
-            setReports((prev) => {
-              const filtered = prev.filter((r) => !delIdSet.has(r.id));
-              return filtered.length === prev.length ? prev : filtered;
-            });
             try {
               const backupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
               if (backupRaw) {
@@ -611,25 +634,33 @@ export default function App() {
             return true;
           });
 
+          const onlineIds = new Set(cleanOnline.map((r) => r.id));
+          latestOnlineReportIdsRef.current = onlineIds;
+          hasReceivedOnlineReportsRef.current = true;
+
           setReports((prevLocal) => {
             const cleanPrev = sanitizeReportList(prevLocal).filter((r) => !delIds.has(r.id));
-            const onlineIds = new Set(cleanOnline.map((r) => r.id));
 
             // Clear pending flag for any report that has now arrived on the server
             cleanOnline.forEach((r) => {
               pendingSaveReportIdsRef.current.delete(r.id);
             });
 
-            // Upload any pending local reports that haven't reached the server yet
+            // Upload any local reports that haven't reached the server yet (so deployed URLs always get 100% of reports)
             const pendingUnsynced = cleanPrev.filter(
               (r) =>
                 !onlineIds.has(r.id) &&
-                pendingSaveReportIdsRef.current.has(r.id) &&
-                !delIds.has(r.id)
+                !delIds.has(r.id) &&
+                (pendingSaveReportIdsRef.current.has(r.id) ||
+                  (hasLoadedDeletedReportsRef.current &&
+                    !uploadedLocalReportIdsRef.current.has(r.id)))
             );
 
             if (pendingUnsynced.length > 0) {
-              pendingUnsynced.forEach((r) => saveReportOnline(r).catch(console.warn));
+              pendingUnsynced.forEach((r) => {
+                uploadedLocalReportIdsRef.current.add(r.id);
+                saveReportOnline(r).catch(console.warn);
+              });
             }
 
             // Merge online reports with non-deleted local reports so partial/cached snapshots never drop reports
@@ -719,8 +750,31 @@ export default function App() {
               normalizeOfficesAndCenters(combinedInput, deletedOfficeIdsRef.current);
             setOffices(merged);
 
-            if (updatedStdToSave.length > 0) {
-              updatedStdToSave.forEach((u) => saveOfficeOnline(u).catch(console.warn));
+            // Check if any customized office or additionalCenters in merged is not yet saved in onlineOffices
+            const onlineMap = new Map(onlineOffices.map((o) => [o.id, o]));
+            const stdMap = new Map(EMPLOYMENT_OFFICES.map((o) => [o.id, o]));
+            const hasUnsyncedCustomOffices =
+              updatedStdToSave.length > 0 ||
+              merged.some((m) => {
+                const std = stdMap.get(m.id);
+                const isCustom =
+                  !std ||
+                  m.name !== std.name ||
+                  m.centerName !== std.centerName ||
+                  (m.additionalCenters && m.additionalCenters.length > 0);
+                if (!isCustom) return false;
+                const onl = onlineMap.get(m.id);
+                if (!onl) return true;
+                return (
+                  onl.name !== m.name ||
+                  onl.centerName !== m.centerName ||
+                  JSON.stringify(onl.additionalCenters || []) !==
+                    JSON.stringify(m.additionalCenters || [])
+                );
+              });
+
+            if (hasUnsyncedCustomOffices) {
+              saveAllOfficesOnline(merged).catch(console.warn);
             }
 
             // Also keep currentReport & livePreviewReport synced if the active office's name/center was updated
@@ -915,6 +969,9 @@ export default function App() {
             changed = true;
           }
         }
+      }
+      if (changed) {
+        saveAllOfficesOnline(nextOffices).catch(console.warn);
       }
       return changed ? nextOffices : prevOffices;
     });
