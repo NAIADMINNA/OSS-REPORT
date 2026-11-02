@@ -884,7 +884,9 @@ export default function App() {
           testConnection(),
           initializeFirestoreIfEmpty(),
         ]);
-        setIsFirestoreOnline(isConnected);
+        if (isConnected) {
+          setIsFirestoreOnline(true);
+        }
       } catch (err) {
         console.warn('Firestore initialization or connection status:', err);
       } finally {

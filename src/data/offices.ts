@@ -80,6 +80,10 @@ const RAW_EMPLOYMENT_OFFICES: EmploymentOffice[] = [
     name: 'สำนักงานจัดหางานจังหวัดตาก',
     nameEn: 'Tak Provincial Employment Office',
     centerName: 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดตาก',
+    additionalCenters: [
+      'ศูนย์แรกรับเข้าทํางานและสิ้นสุดการจ้างจังหวัดตาก - 565 หมู่ที่ 2 ต. ท่าสายลวด อำเภอแม่สอด',
+      'ศูนย์แรกรับเข้าทํางานและสิ้นสุดการจ้างจังหวัดตาก - 1119 หมู่ที่ 1 ตำบล แม่สอด อำเภอแม่สอด',
+    ],
     region: 'ภาคเหนือ',
     defaultPhone: '055-513106',
     defaultLine: '@doetak',
@@ -253,6 +257,9 @@ const RAW_EMPLOYMENT_OFFICES: EmploymentOffice[] = [
     name: 'ศูนย์บริการวีซ่าและใบอนุญาตทำงาน',
     nameEn: 'One Stop Service Center for Visa and Work Permit',
     centerName: 'ศูนย์บริการวีซ่าและใบอนุญาตทำงาน - อาคาร One Bangkok โซน Parade',
+    additionalCenters: [
+      'ศูนย์บริการวีซ่าและใบอนุญาตทำงาน',
+    ],
     region: 'กรุงเทพมหานคร',
     defaultPhone: '02-2091100',
     defaultLine: '@doe_ossc',
@@ -273,6 +280,9 @@ const RAW_EMPLOYMENT_OFFICES: EmploymentOffice[] = [
     name: 'สำนักงานจัดหางานจังหวัดสมุทรสาคร',
     nameEn: 'Samut Sakhon Provincial Employment Office',
     centerName: 'ศูนย์บริการจังหวัดสมุทรสาคร - Big C สาขามหาชัย 2 (ชั้น 2)',
+    additionalCenters: [
+      'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ- วัดป้อมวิเชียรโชติการาม ต.มหาชัย อ.เมือง จังหวัดสมุทรสาคร',
+    ],
     region: 'ภาคกลางและตะวันตก',
     defaultPhone: '034-836225-6',
     defaultLine: '@doeskh',
@@ -282,6 +292,9 @@ const RAW_EMPLOYMENT_OFFICES: EmploymentOffice[] = [
     name: 'สำนักงานจัดหางานจังหวัดนนทบุรี',
     nameEn: 'Nonthaburi Provincial Employment Office',
     centerName: 'ศูนย์บริการจังหวัดนนทบุรี - Big C สาขารัตนาธิเบศร์ 2 (ชั้น 1)',
+    additionalCenters: [
+      'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ- ราชพฤกษ์ จังหวัดนนทบุรี',
+    ],
     region: 'ภาคกลางและตะวันตก',
     defaultPhone: '02-5807662',
     defaultLine: '@doenbi',
@@ -419,6 +432,9 @@ const RAW_EMPLOYMENT_OFFICES: EmploymentOffice[] = [
     name: 'สำนักงานจัดหางานจังหวัดชลบุรี',
     nameEn: 'Chonburi Provincial Employment Office',
     centerName: 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดชลบุรี',
+    additionalCenters: [
+      'ศูนย์บริหารแรงงานภาคตะวันออก (ศูนย์ EEC) - ชั้น 1  บิ๊กซี ชลบุรี',
+    ],
     region: 'ภาคตะวันออก',
     defaultPhone: '038-398017-9',
     defaultLine: '@doecbi',
@@ -637,6 +653,9 @@ const RAW_EMPLOYMENT_OFFICES: EmploymentOffice[] = [
     name: 'สำนักงานจัดหางานจังหวัดหนองคาย',
     nameEn: 'Nong Khai Provincial Employment Office',
     centerName: 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดหนองคาย',
+    additionalCenters: [
+      'ศูนย์แรกรับเข้าทำงานและสิ้นสุดการจ้างจังหวัดหนองคาย - 189 ตำบลมีชัย อำเภอเมืองหนองคาย',
+    ],
     region: 'ภาคตะวันออกเฉียงเหนือ',
     defaultPhone: '042-412860',
     defaultLine: '@doenki',
@@ -747,6 +766,9 @@ const RAW_EMPLOYMENT_OFFICES: EmploymentOffice[] = [
     name: 'สำนักงานจัดหางานจังหวัดระนอง',
     nameEn: 'Ranong Provincial Employment Office',
     centerName: 'ศูนย์แรกรับจังหวัดระนอง - ตลาดภูมิชนก 999 ตำบลเขานิเวศน์ อำเภอเมืองระนอง',
+    additionalCenters: [
+      'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว จังหวัดระนอง',
+    ],
     region: 'ภาคใต้',
     defaultPhone: '077-825482',
     defaultLine: '@doerng',
