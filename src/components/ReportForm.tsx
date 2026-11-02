@@ -9,7 +9,11 @@ import {
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { DEFAULT_CATEGORIES, DEFAULT_QUEUE_METRICS } from '../data/initialAdminData';
 import { formatThaiDateFull, formatNumber, getTodayIsoDate } from '../utils/thaiDate';
-import { groupAndSortOfficesByRegion } from '../utils/officeUtils';
+import {
+  groupAndSortOfficesByRegion,
+  areSameCenterName,
+  deduplicateCenterList,
+} from '../utils/officeUtils';
 import { AdminPinModal } from './AdminPinModal';
 import {
   Save,
@@ -255,7 +259,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
     const centers: string[] = [];
     const addUnique = (c?: string) => {
       const trimmed = c?.trim();
-      if (trimmed && !checkIsMobileUnitName(trimmed) && !centers.includes(trimmed)) {
+      if (
+        trimmed &&
+        !checkIsMobileUnitName(trimmed) &&
+        !centers.some((existing) => areSameCenterName(existing, trimmed))
+      ) {
         centers.push(trimmed);
       }
     };
@@ -322,7 +330,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         if (officeStandardCenters.length === 1) {
           return true;
         }
-        return (r.centerName || '').trim() === centerName.trim();
+        return areSameCenterName(r.centerName, centerName);
       });
       const isEditingThis =
         Boolean(isEditingExistingReport) &&
@@ -372,7 +380,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
           ? isMobileCenter
           : !isMobileCenter &&
             (officeStandardCenters.length === 1 ||
-              s.centerName.trim() === (formData.centerName || '').trim())
+              areSameCenterName(s.centerName, formData.centerName))
       ) || standardSlots[0];
 
     const availableSlots = allSlots.filter((s) => !s.isSubmitted);
@@ -429,7 +437,7 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         if (isMob) return checkIsMobileUnitName(r.centerName);
         if (checkIsMobileUnitName(r.centerName)) return false;
         if (stdCenters.length === 1) return true;
-        return (r.centerName || '').trim() === cName.trim();
+        return areSameCenterName(r.centerName, cName);
       });
     };
 
@@ -542,14 +550,17 @@ export const ReportForm: React.FC<ReportFormProps> = ({
           if (o.id !== currentSelectedOffice.id) return o;
           if (
             Array.isArray(o.additionalCenters) &&
-            o.additionalCenters.includes(formData.centerName) &&
-            o.centerName !== formData.centerName
+            o.additionalCenters.some((c) => areSameCenterName(c, formData.centerName)) &&
+            !areSameCenterName(o.centerName, formData.centerName)
           ) {
             return {
               ...o,
               name: trimmedOffice,
-              additionalCenters: o.additionalCenters.map((c) =>
-                c === formData.centerName ? trimmedCenter : c
+              additionalCenters: deduplicateCenterList(
+                o.additionalCenters.map((c) =>
+                  areSameCenterName(c, formData.centerName) ? trimmedCenter : c
+                ),
+                o.centerName
               ),
             };
           }
@@ -579,6 +590,11 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         currentSelectedOffice;
 
       if (!targetOffice) {
+        if (rawCenter.includes('วัดป้อมวิเชียร') || rawCenter.includes('ป้อมวิเชียร')) {
+          targetOffice = officeList.find((o) => o.id === 'samutsakhon');
+        }
+      }
+      if (!targetOffice) {
         // Check if rawCenter mentions any province
         targetOffice = officeList.find((o) => {
           const shortProv = o.name
@@ -594,12 +610,10 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       }
 
       if (targetOffice && onUpdateOffices) {
-        const existingAdditional = targetOffice.additionalCenters || [];
-        const nextAdditional =
-          targetOffice.centerName.trim() === rawCenter ||
-          existingAdditional.some((c) => c.trim() === rawCenter)
-            ? existingAdditional
-            : [...existingAdditional, rawCenter];
+        const nextAdditional = deduplicateCenterList(
+          [...(targetOffice.additionalCenters || []), rawCenter],
+          targetOffice.centerName
+        );
 
         const updatedOffices = officeList.map((o) =>
           o.id === targetOffice!.id
@@ -1119,6 +1133,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         !q ||
         o.name.toLowerCase().includes(q) ||
         (o.centerName && o.centerName.toLowerCase().includes(q)) ||
+        (o.additionalCenters &&
+          o.additionalCenters.some((c) => c.toLowerCase().includes(q))) ||
         o.nameEn.toLowerCase().includes(q) ||
         o.region.toLowerCase().includes(q);
       return matchRegion && matchSearch;
@@ -1251,15 +1267,22 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                                 <Building2 className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-white' : 'text-sky-600'}`} />
                                 <span>{office.name}</span>
                               </div>
-                              {office.centerName && (
+                              {(office.centerName ||
+                                (office.additionalCenters && office.additionalCenters.length > 0)) && (
                                 <div
                                   className={`truncate text-[11px] mt-0.5 flex items-center gap-1 font-medium ${
                                     isSelected ? 'text-sky-100' : 'text-blue-700'
                                   }`}
-                                  title={office.centerName}
+                                  title={[office.centerName, ...(office.additionalCenters || [])]
+                                    .filter(Boolean)
+                                    .join(' / ')}
                                 >
                                   <MapPin className={`w-3 h-3 shrink-0 ${isSelected ? 'text-sky-200' : 'text-amber-600'}`} />
-                                  <span>{office.centerName}</span>
+                                  <span>
+                                    {[office.centerName, ...(office.additionalCenters || [])]
+                                      .filter(Boolean)
+                                      .join(' / ')}
+                                  </span>
                                 </div>
                               )}
                             </div>
@@ -1302,11 +1325,19 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 </option>
                 {groupedFilteredOffices.map((group) => (
                   <optgroup key={group.region} label={group.regionLabel}>
-                    {group.offices.map((office) => (
-                      <option key={office.id} value={office.id}>
-                        {office.name} {office.centerName ? `• ${office.centerName}` : ''}
-                      </option>
-                    ))}
+                    {group.offices.map((office) => {
+                      const allCentersLabel = [
+                        office.centerName,
+                        ...(office.additionalCenters || []),
+                      ]
+                        .filter(Boolean)
+                        .join(' / ');
+                      return (
+                        <option key={office.id} value={office.id}>
+                          {office.name} {allCentersLabel ? `• ${allCentersLabel}` : ''}
+                        </option>
+                      );
+                    })}
                   </optgroup>
                 ))}
               </select>

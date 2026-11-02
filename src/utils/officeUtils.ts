@@ -96,3 +96,68 @@ export function sortOfficesByRegion(offices: EmploymentOffice[]): EmploymentOffi
   const groups = groupAndSortOfficesByRegion(offices);
   return groups.flatMap((g) => g.offices);
 }
+
+/**
+ * สร้างคีย์มาตรฐานสำหรับเปรียบเทียบชื่อศูนย์บริการ เพื่อป้องกันชื่อศูนย์เดียวกันที่สะกดต่างกันเล็กน้อยแสดงซ้ำ 2 รายการ
+ * เช่น ศูนย์เฉพาะกิจวัดป้อมวิเชียรโชติการาม / วัดป้อมวิเชียรฯ จ.สมุทรสาคร
+ */
+export function getCanonicalCenterKey(name?: string): string {
+  const raw = (name || '').trim();
+  if (!raw) return '';
+
+  // กรณีศูนย์เฉพาะกิจวัดป้อมวิเชียรโชติการาม (ไม่ว่าจะสะกดแบบย่อหรือแบบเต็ม ให้ถือเป็นศูนย์เดียวกันเสมอ)
+  if (raw.includes('วัดป้อมวิเชียร') || raw.includes('ป้อมวิเชียร')) {
+    return 'special_center_wat_pom_wichian';
+  }
+
+  return raw
+    .toLowerCase()
+    .replace(/ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว\s*\(\s*เฉพาะกิจ\s*\)/g, 'ศูนย์เฉพาะกิจ')
+    .replace(/ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ/g, 'ศูนย์เฉพาะกิจ')
+    .replace(/ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว/g, 'ศูนย์บริการ')
+    .replace(/จังหวัด/g, '')
+    .replace(/จ\./g, '')
+    .replace(/[\s\-_().,'"“”‘’ฯ]/g, '');
+}
+
+/**
+ * ตรวจสอบว่าชื่อศูนย์ 2 ชื่อคือศูนย์บริการแห่งเดียวกันหรือไม่
+ */
+export function areSameCenterName(a?: string, b?: string): boolean {
+  const keyA = getCanonicalCenterKey(a);
+  const keyB = getCanonicalCenterKey(b);
+  if (!keyA || !keyB) return false;
+  return keyA === keyB;
+}
+
+/**
+ * รวมและคัดกรองรายชื่อศูนย์บริการเพิ่มเติมไม่ให้มีรายการซ้ำซ้อนกันเองหรือซ้ำกับศูนย์หลัก
+ */
+export function deduplicateCenterList(
+  centers: (string | undefined | null)[],
+  primaryCenter?: string
+): string[] {
+  const result: string[] = [];
+  for (const item of centers || []) {
+    const trimmed = (item || '').trim();
+    if (!trimmed) continue;
+    if (primaryCenter && areSameCenterName(trimmed, primaryCenter)) {
+      continue;
+    }
+    const existingIdx = result.findIndex((existing) => areSameCenterName(existing, trimmed));
+    if (existingIdx === -1) {
+      result.push(trimmed);
+    } else {
+      // หากรอบหลังเป็นชื่อที่สมบูรณ์กว่า (ไม่มี ฯ หรือยาวกว่า/ชัดเจนกว่า) ให้ใช้ชื่อที่สมบูรณ์กว่า
+      const existing = result[existingIdx];
+      if (
+        (existing.includes('ฯ') && !trimmed.includes('ฯ')) ||
+        (trimmed.length > existing.length && !trimmed.includes('ฯ'))
+      ) {
+        result[existingIdx] = trimmed;
+      }
+    }
+  }
+  return result;
+}
+

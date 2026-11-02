@@ -34,6 +34,7 @@ import { DOEAssistantMascot } from './components/DOEAssistantMascot';
 import { SystemManualView } from './components/SystemManualView';
 import { formatThaiDateFull, getTodayIsoDate } from './utils/thaiDate';
 import { sanitizeReportList } from './utils/doeUtils';
+import { areSameCenterName, deduplicateCenterList } from './utils/officeUtils';
 import {
   Eye,
   CheckCircle,
@@ -181,7 +182,7 @@ export default function App() {
     updatedStdToSave: EmploymentOffice[];
   } => {
     const cleanInput = (inputList || [])
-      .filter((o) => o && o.id && o.name && !deletedIds.has(o.id))
+      .filter((o) => o && o.id && o.name && (!deletedIds.has(o.id) || o.id.startsWith('office_')))
       .map((o) =>
         (o.region as string) === 'ส่วนกลาง'
           ? { ...o, region: 'เฉพาะกิจ' as const }
@@ -211,21 +212,50 @@ export default function App() {
       if (deletedIds.has(std.id)) continue;
       const match = inputMap.get(std.id);
       if (match) {
-        const mergedAdd = Array.from(
-          new Set([...(std.additionalCenters || []), ...(match.additionalCenters || [])].map((c) => c.trim()).filter(Boolean))
-        );
+        const mergedAdd = deduplicateCenterList([
+          ...(std.additionalCenters || []),
+          ...(match.additionalCenters || []),
+        ]);
         // Protect std.name if someone accidentally put a center name into match.name
         const safeName = isCenterLikeName(match.name) ? std.name : match.name || std.name;
-        if (isCenterLikeName(match.name) && match.name.trim() !== std.centerName && !mergedAdd.includes(match.name.trim())) {
+        if (
+          isCenterLikeName(match.name) &&
+          !areSameCenterName(match.name, std.centerName) &&
+          !mergedAdd.some((c) => areSameCenterName(c, match.name))
+        ) {
           mergedAdd.push(match.name.trim());
           updatedStdIds.add(std.id);
         }
+
+        // If match.centerName was overwritten with a "เฉพาะกิจ" center while std.centerName is a regular center,
+        // preserve both so the regular center isn't lost and the special center is also shown
+        let primaryCenter = (match.centerName || std.centerName).trim();
+        if (
+          primaryCenter !== std.centerName.trim() &&
+          primaryCenter.includes('เฉพาะกิจ') &&
+          !std.centerName.includes('เฉพาะกิจ')
+        ) {
+          if (!mergedAdd.some((c) => areSameCenterName(c, primaryCenter))) {
+            mergedAdd.push(primaryCenter);
+          }
+          primaryCenter = std.centerName.trim();
+          updatedStdIds.add(std.id);
+        }
+
+        const dedupedAdd = deduplicateCenterList(mergedAdd, primaryCenter);
+        if (
+          dedupedAdd.length !== (match.additionalCenters || []).length ||
+          dedupedAdd.some((c, i) => c !== (match.additionalCenters || [])[i])
+        ) {
+          updatedStdIds.add(std.id);
+        }
+
         result.push({
           ...std,
           ...match,
           name: safeName,
-          centerName: match.centerName || std.centerName,
-          additionalCenters: mergedAdd,
+          centerName: primaryCenter,
+          additionalCenters: dedupedAdd,
         });
       } else {
         result.push({ ...std, additionalCenters: [...(std.additionalCenters || [])] });
@@ -233,44 +263,99 @@ export default function App() {
       seenIds.add(std.id);
     }
 
+    // Helper to find provincial office for a center name (including Wat Pom Wichian -> Samut Sakhon)
+    const findProvincialOfficeForCenter = (centerText: string, officeText = '') => {
+      if (centerText.includes('วัดป้อมวิเชียร') || centerText.includes('ป้อมวิเชียร')) {
+        return result.find((o) => o.id === 'samutsakhon');
+      }
+      return result.find((o) => {
+        if (o.id === 'central_foreign_workers') return false;
+        const shortProv = o.name
+          .replace('สำนักงานจัดหางานจังหวัด', '')
+          .replace('สำนักงานจัดหางาน', '')
+          .trim();
+        return (
+          shortProv.length >= 2 &&
+          (centerText.includes(shortProv) || officeText.includes(shortProv))
+        );
+      });
+    };
+
     // 2. Any custom entry that was added by Admin: attach its centerName to the appropriate EmploymentOffice
     for (const custom of cleanInput) {
-      if (seenIds.has(custom.id) || deletedIds.has(custom.id)) continue;
+      if (seenIds.has(custom.id)) continue;
+      if (deletedIds.has(custom.id) && !custom.id.startsWith('office_')) continue;
 
       const cName = (custom.centerName || custom.name || '').trim();
       const rawOfficeName = (custom.name || '').trim();
 
       // Find matching parent EmploymentOffice
-      let parentOffice = result.find((o) => o.name === rawOfficeName);
-      if (!parentOffice) {
-        parentOffice = result.find((o) => {
-          const shortProv = o.name
-            .replace('สำนักงานจัดหางานจังหวัด', '')
-            .replace('สำนักงานจัดหางาน', '')
-            .trim();
-          return (
-            shortProv.length >= 2 &&
-            (cName.includes(shortProv) || rawOfficeName.includes(shortProv))
-          );
-        });
-      }
-      if (!parentOffice) {
-        parentOffice =
-          result.find((o) => o.id === 'central_foreign_workers') || result[0];
-      }
+      let parentOffice =
+        findProvincialOfficeForCenter(cName, rawOfficeName) ||
+        result.find((o) => o.name === rawOfficeName) ||
+        result.find((o) => o.id === 'central_foreign_workers') ||
+        result[0];
 
       if (parentOffice && cName) {
-        const existingAdd = parentOffice.additionalCenters || [];
+        const nextAdd = deduplicateCenterList(
+          [
+            ...(parentOffice.additionalCenters || []),
+            cName,
+            ...(custom.additionalCenters || []),
+          ],
+          parentOffice.centerName
+        );
         if (
-          parentOffice.centerName.trim() !== cName &&
-          !existingAdd.some((c) => c.trim() === cName)
+          nextAdd.length !== (parentOffice.additionalCenters || []).length ||
+          nextAdd.some((c, i) => c !== (parentOffice.additionalCenters || [])[i])
         ) {
-          parentOffice.additionalCenters = [...existingAdd, cName];
+          parentOffice.additionalCenters = nextAdd;
           updatedStdIds.add(parentOffice.id);
         }
         bogusDocsToDelete.push(custom);
       }
       seenIds.add(custom.id);
+    }
+
+    // 3. Cross-office deduplication: if a center in central_foreign_workers belongs to a province
+    // (like วัดป้อมวิเชียร -> สมุทรสาคร) or already exists in a provincial office, unify into 1 entry
+    const centralOffice = result.find((o) => o.id === 'central_foreign_workers');
+    if (centralOffice && centralOffice.additionalCenters && centralOffice.additionalCenters.length > 0) {
+      const remainingCentralCenters: string[] = [];
+      for (const cName of centralOffice.additionalCenters) {
+        const matchedProvOffice =
+          findProvincialOfficeForCenter(cName) ||
+          result.find(
+            (o) =>
+              o.id !== 'central_foreign_workers' &&
+              (areSameCenterName(o.centerName, cName) ||
+                (o.additionalCenters || []).some((ac) => areSameCenterName(ac, cName)))
+          );
+        if (matchedProvOffice) {
+          const mergedProvAdd = deduplicateCenterList(
+            [...(matchedProvOffice.additionalCenters || []), cName],
+            matchedProvOffice.centerName
+          );
+          if (
+            mergedProvAdd.length !== (matchedProvOffice.additionalCenters || []).length ||
+            mergedProvAdd.some((c, i) => c !== (matchedProvOffice.additionalCenters || [])[i])
+          ) {
+            matchedProvOffice.additionalCenters = mergedProvAdd;
+            updatedStdIds.add(matchedProvOffice.id);
+          }
+          updatedStdIds.add(centralOffice.id);
+        } else {
+          remainingCentralCenters.push(cName);
+        }
+      }
+      const dedupedCentral = deduplicateCenterList(
+        remainingCentralCenters,
+        centralOffice.centerName
+      );
+      if (dedupedCentral.length !== centralOffice.additionalCenters.length) {
+        centralOffice.additionalCenters = dedupedCentral;
+        updatedStdIds.add(centralOffice.id);
+      }
     }
 
     const updatedStdToSave = result.filter((o) => updatedStdIds.has(o.id));
@@ -282,14 +367,20 @@ export default function App() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_OFFICES);
       const savedDeletedRaw = localStorage.getItem(STORAGE_KEY_DELETED_OFFICES);
+      const parsedDeleted: EmploymentOffice[] = savedDeletedRaw
+        ? JSON.parse(savedDeletedRaw) || []
+        : [];
       const deletedIdSet = new Set<string>(
-        savedDeletedRaw ? (JSON.parse(savedDeletedRaw) || []).map((d: EmploymentOffice) => d.id) : []
+        parsedDeleted.filter((d) => d && d.id && !d.id.startsWith('office_')).map((d) => d.id)
       );
+      const rescuedCustom = parsedDeleted.filter((d) => d && d.id && d.id.startsWith('office_'));
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return normalizeOfficesAndCenters(parsed, deletedIdSet).merged;
+          return normalizeOfficesAndCenters([...parsed, ...rescuedCustom], deletedIdSet).merged;
         }
+      } else if (rescuedCustom.length > 0) {
+        return normalizeOfficesAndCenters([...EMPLOYMENT_OFFICES, ...rescuedCustom], deletedIdSet).merged;
       }
     } catch (e) {
       console.error('Failed to load offices from storage', e);
@@ -561,12 +652,22 @@ export default function App() {
         // 3. Subscribe to deleted offices (trash) first so deletedOfficeIdsRef is up to date
         const unsubDelOffices = subscribeDeletedOffices((onlineDelOffices) => {
           if (Array.isArray(onlineDelOffices)) {
-            const delSet = new Set(onlineDelOffices.map((o) => o.id));
+            const actualDel = onlineDelOffices.filter(
+              (o) => o && o.id && !o.id.startsWith('office_')
+            );
+            const rescuedCustom = onlineDelOffices.filter(
+              (o) => o && o.id && o.id.startsWith('office_')
+            );
+            const delSet = new Set(actualDel.map((o) => o.id));
             deletedOfficeIdsRef.current = delSet;
-            setDeletedOffices(onlineDelOffices);
-            if (delSet.size > 0) {
-              setOffices((prev) => prev.filter((o) => !delSet.has(o.id)));
-            }
+            setDeletedOffices(actualDel);
+            setOffices((prev) => {
+              const filtered = delSet.size > 0 ? prev.filter((o) => !delSet.has(o.id)) : prev;
+              if (rescuedCustom.length > 0) {
+                return normalizeOfficesAndCenters([...filtered, ...rescuedCustom], delSet).merged;
+              }
+              return filtered;
+            });
           }
         });
         unsubs.push(unsubDelOffices);
@@ -577,6 +678,12 @@ export default function App() {
             let combinedInput = onlineOffices;
             try {
               const savedLocalRaw = localStorage.getItem(STORAGE_KEY_OFFICES);
+              const savedDelRaw = localStorage.getItem(STORAGE_KEY_DELETED_OFFICES);
+              const rescuedLocal = savedDelRaw
+                ? (JSON.parse(savedDelRaw) || []).filter(
+                    (d: EmploymentOffice) => d && d.id && d.id.startsWith('office_')
+                  )
+                : [];
               if (savedLocalRaw) {
                 const parsedLocal = JSON.parse(savedLocalRaw);
                 if (Array.isArray(parsedLocal)) {
@@ -587,28 +694,31 @@ export default function App() {
                   onlineOffices.forEach((o: EmploymentOffice) => {
                     if (o && o.id) {
                       const prev = byId.get(o.id);
-                      const mergedAdd = Array.from(
-                        new Set([
+                      const mergedCenter = o.centerName || prev?.centerName || '';
+                      const mergedAdd = deduplicateCenterList(
+                        [
                           ...(prev?.additionalCenters || []),
                           ...(o.additionalCenters || []),
-                        ])
+                        ],
+                        mergedCenter
                       );
-                      byId.set(o.id, { ...prev, ...o, additionalCenters: mergedAdd });
+                      byId.set(o.id, { ...prev, ...o, centerName: mergedCenter, additionalCenters: mergedAdd });
                     }
+                  });
+                  rescuedLocal.forEach((o: EmploymentOffice) => {
+                    if (o && o.id && !byId.has(o.id)) byId.set(o.id, o);
                   });
                   combinedInput = Array.from(byId.values());
                 }
+              } else if (rescuedLocal.length > 0) {
+                combinedInput = [...onlineOffices, ...rescuedLocal];
               }
             } catch {}
 
-            const { merged, bogusDocsToDelete, updatedStdToSave } =
+            const { merged, updatedStdToSave } =
               normalizeOfficesAndCenters(combinedInput, deletedOfficeIdsRef.current);
             setOffices(merged);
 
-            // Clean up any center that was mistakenly saved as a standalone office document in Firestore
-            if (bogusDocsToDelete.length > 0) {
-              bogusDocsToDelete.forEach((b) => deleteOfficeOnline(b).catch(console.warn));
-            }
             if (updatedStdToSave.length > 0) {
               updatedStdToSave.forEach((u) => saveOfficeOnline(u).catch(console.warn));
             }
@@ -766,6 +876,48 @@ export default function App() {
     } catch (e) {
       console.error('Failed to persist reports', e);
     }
+  }, [reports]);
+
+  // Ensure any non-Mobile-Unit centerName used in existing reports is also included in its parent office's centers
+  useEffect(() => {
+    if (!reports || reports.length === 0) return;
+    setOffices((prevOffices) => {
+      let changed = false;
+      const nextOffices = prevOffices.map((o) => ({
+        ...o,
+        additionalCenters: [...(o.additionalCenters || [])],
+      }));
+
+      for (const r of reports) {
+        const cName = (r.centerName || '').trim();
+        if (
+          !cName ||
+          cName.includes('Mobile Unit') ||
+          cName.includes('หน่วยบริการเคลื่อนที่')
+        ) {
+          continue;
+        }
+        const target =
+          (cName.includes('วัดป้อมวิเชียร') || cName.includes('ป้อมวิเชียร')
+            ? nextOffices.find((o) => o.id === 'samutsakhon')
+            : undefined) ||
+          nextOffices.find((o) => o.id === r.officeId) ||
+          nextOffices.find((o) => o.name === r.officeName);
+        if (target) {
+          const allKnown = [target.centerName, ...(target.additionalCenters || [])].map((c) =>
+            (c || '').trim()
+          );
+          if (!allKnown.some((existing) => areSameCenterName(existing, cName))) {
+            target.additionalCenters = deduplicateCenterList(
+              [...(target.additionalCenters || []), cName],
+              target.centerName
+            );
+            changed = true;
+          }
+        }
+      }
+      return changed ? nextOffices : prevOffices;
+    });
   }, [reports]);
 
   useEffect(() => {

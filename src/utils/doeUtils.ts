@@ -17,20 +17,49 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
     return null;
   }
 
-  const matchedOffice = EMPLOYMENT_OFFICES.find((o) => o.id === officeId);
+  const rawOfficeName = typeof r.officeName === 'string' ? r.officeName.trim() : '';
+  const rawCenterName = typeof r.centerName === 'string' ? r.centerName.trim() : '';
 
-  const officeName =
-    typeof r.officeName === 'string' && r.officeName.trim()
-      ? r.officeName
-      : matchedOffice?.name || officeId;
+  let matchedOffice = EMPLOYMENT_OFFICES.find((o) => o.id === officeId);
+  if (!matchedOffice) {
+    if (
+      rawCenterName.includes('วัดป้อมวิเชียร') ||
+      rawCenterName.includes('ป้อมวิเชียร') ||
+      rawOfficeName.includes('วัดป้อมวิเชียร') ||
+      rawOfficeName.includes('ป้อมวิเชียร')
+    ) {
+      matchedOffice = EMPLOYMENT_OFFICES.find((o) => o.id === 'samutsakhon');
+    } else {
+      matchedOffice =
+        EMPLOYMENT_OFFICES.find((o) => o.name === rawOfficeName) ||
+        EMPLOYMENT_OFFICES.find((o) => {
+          if (o.id === 'central_foreign_workers') return false;
+          const shortProv = o.name
+            .replace('สำนักงานจัดหางานจังหวัด', '')
+            .replace('สำนักงานจัดหางาน', '')
+            .trim();
+          return (
+            shortProv.length >= 2 &&
+            (rawCenterName.includes(shortProv) || rawOfficeName.includes(shortProv))
+          );
+        });
+    }
+  }
+
+  const normalizedOfficeId = matchedOffice ? matchedOffice.id : officeId;
+
+  const officeName = matchedOffice
+    ? matchedOffice.name
+    : rawOfficeName || officeId;
 
   const centerName =
-    typeof r.centerName === 'string' && r.centerName.trim()
-      ? r.centerName
-      : matchedOffice?.centerName || '';
+    rawCenterName ||
+    (rawOfficeName.startsWith('ศูนย์') ? rawOfficeName : '') ||
+    matchedOffice?.centerName ||
+    '';
 
   const region =
-    typeof r.region === 'string' && r.region.trim()
+    typeof r.region === 'string' && r.region.trim() && (r.region as string) !== 'ส่วนกลาง'
       ? (r.region as DOEReport['region'])
       : matchedOffice?.region || 'กรุงเทพมหานคร';
 
@@ -41,7 +70,7 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
 
   return {
     id,
-    officeId,
+    officeId: normalizedOfficeId,
     officeName,
     centerName,
     region,

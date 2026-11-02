@@ -25,6 +25,7 @@ import {
   DEFAULT_SYSTEM_CONFIG,
 } from '../data/initialAdminData';
 import { sanitizeReport } from '../utils/doeUtils';
+import { deduplicateCenterList } from '../utils/officeUtils';
 
 const REPORTS_COLLECTION = 'reports';
 const OFFICES_COLLECTION = 'offices';
@@ -36,6 +37,8 @@ const CONFIG_DOC_ID = 'main_config';
 const DELETED_REPORTS_COLLECTION = 'deleted_reports';
 const DELETED_OFFICES_COLLECTION = 'deleted_offices';
 const ISSUES_COLLECTION = 'system_issues';
+
+const CURRENT_MIGRATION_VERSION = 6;
 
 let hasLoggedQuotaNotice = false;
 
@@ -69,9 +72,6 @@ function cleanForFirestore<T>(data: T): T {
 
 // ============================================================================
 // BUNDLED MASTER CONFIG DOCUMENT (system_config/main_config)
-// Consolidates 7 collections (offices, deleted_offices, categories,
-// queue_metrics, reporters, deleted_reports, system_issues, system_config)
-// into a SINGLE Firestore document listener (1 Read Unit per session!).
 // ============================================================================
 
 interface BundledMasterConfig extends SystemConfig {
@@ -101,6 +101,39 @@ function isOfficeCustomized(office: EmploymentOffice): boolean {
     (office.defaultPhone || '') !== (std.defaultPhone || '') ||
     (office.defaultLine || '') !== (std.defaultLine || '')
   );
+}
+
+function mergeTwoOfficeLists(
+  listA: EmploymentOffice[],
+  listB: EmploymentOffice[]
+): EmploymentOffice[] {
+  const map = new Map<string, EmploymentOffice>();
+  for (const item of [...(listA || []), ...(listB || [])]) {
+    if (!item || !item.id || !item.name) continue;
+    const prev = map.get(item.id);
+    if (!prev) {
+      map.set(item.id, {
+        ...item,
+        additionalCenters: deduplicateCenterList(
+          item.additionalCenters || [],
+          item.centerName
+        ),
+      });
+    } else {
+      const mergedCenter = item.centerName || prev.centerName;
+      const mergedAdd = deduplicateCenterList(
+        [...(prev.additionalCenters || []), ...(item.additionalCenters || [])],
+        mergedCenter
+      );
+      map.set(item.id, {
+        ...prev,
+        ...item,
+        centerName: mergedCenter,
+        additionalCenters: mergedAdd,
+      });
+    }
+  }
+  return Array.from(map.values());
 }
 
 function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
@@ -133,7 +166,14 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
     const rawDelOffices = localStorage.getItem('doe_ss_deleted_offices_v1');
     if (rawDelOffices) {
       const parsed = JSON.parse(rawDelOffices);
-      if (Array.isArray(parsed)) localDelOffices = parsed;
+      if (Array.isArray(parsed)) {
+        // Rescue any custom office_... center that was mistakenly placed in deleted_offices
+        const rescued = parsed.filter((o: EmploymentOffice) => o && o.id && o.id.startsWith('office_'));
+        if (rescued.length > 0) {
+          localOffices = mergeTwoOfficeLists(localOffices, rescued);
+        }
+        localDelOffices = parsed.filter((o: EmploymentOffice) => o && o.id && !o.id.startsWith('office_'));
+      }
     }
   } catch {}
 
@@ -201,7 +241,7 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
 
   return {
     ...localConfig,
-    migrationVersion: 2,
+    migrationVersion: 0,
     bundledOffices: localOffices,
     bundledDeletedOffices: localDelOffices,
     bundledCategories: localCats,
@@ -242,7 +282,6 @@ function getActiveMasterListenerCount(): number {
 }
 
 function broadcastMasterState(onlyConfigBranding = false) {
-  // Always broadcast System Config branding
   const sysConfig: SystemConfig = {
     reportTitle: masterDocCache.reportTitle || DEFAULT_SYSTEM_CONFIG.reportTitle,
     reportSubtitle: masterDocCache.reportSubtitle || DEFAULT_SYSTEM_CONFIG.reportSubtitle,
@@ -272,7 +311,7 @@ function broadcastMasterState(onlyConfigBranding = false) {
   // 2. Deleted Offices
   if (Array.isArray(masterDocCache.bundledDeletedOffices)) {
     const delOfficesList = [...masterDocCache.bundledDeletedOffices].filter(
-      (o) => o && o.id && o.name
+      (o) => o && o.id && o.name && !o.id.startsWith('office_')
     );
     delOfficesList.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
     deletedOfficesListeners.forEach((cb) => cb(delOfficesList));
@@ -346,7 +385,10 @@ function broadcastMasterState(onlyConfigBranding = false) {
   }
 }
 
-async function persistMasterConfigOnline(partialUpdate: Partial<BundledMasterConfig>): Promise<void> {
+async function persistMasterConfigOnline(
+  partialUpdate: Partial<BundledMasterConfig>,
+  markMigrated = false
+): Promise<void> {
   masterDocCache = {
     ...masterDocCache,
     ...partialUpdate,
@@ -362,11 +404,12 @@ async function persistMasterConfigOnline(partialUpdate: Partial<BundledMasterCon
       partialUpdate.adminPin ||
       masterDocCache.adminPin ||
       DEFAULT_SYSTEM_CONFIG.adminPin,
-    migrationVersion: 2,
+    migrationVersion: markMigrated
+      ? CURRENT_MIGRATION_VERSION
+      : masterDocCache.migrationVersion || 0,
     updatedAt: new Date().toISOString(),
   };
 
-  // Broadcast locally immediately for zero-latency UI
   broadcastMasterState(false);
 
   const docRef = doc(db, CONFIG_COLLECTION, CONFIG_DOC_ID);
@@ -381,7 +424,7 @@ async function persistMasterConfigOnline(partialUpdate: Partial<BundledMasterCon
   }
 }
 
-// One-time migration from legacy separate collections into system_config/main_config
+// One-time comprehensive migration from legacy collections (offices, deleted_offices, categories, etc.)
 async function migrateLegacyCollectionsOnce(existingConfig: Partial<BundledMasterConfig>) {
   if (isMigratingLegacyCollections) return;
   isMigratingLegacyCollections = true;
@@ -404,23 +447,36 @@ async function migrateLegacyCollectionsOnce(existingConfig: Partial<BundledMaste
       getDocs(collection(db, ISSUES_COLLECTION)),
     ]);
 
-    const customOfficesMap = new Map<string, EmploymentOffice>();
-    (masterDocCache.bundledOffices || []).forEach((o) => {
-      if (o && o.id && isOfficeCustomized(o)) customOfficesMap.set(o.id, o);
-    });
+    const discoveredOffices: EmploymentOffice[] = [];
     officesSnap.forEach((d) => {
       const data = d.data() as EmploymentOffice;
-      if (data && data.id && data.name && isOfficeCustomized(data)) {
-        customOfficesMap.set(data.id, data);
+      if (data && (data.id || d.id) && data.name) {
+        const officeObj = { ...data, id: data.id || d.id };
+        if (isOfficeCustomized(officeObj)) {
+          discoveredOffices.push(officeObj);
+        }
       }
     });
-    const customOffices = Array.from(customOfficesMap.values());
 
     const delOffices: EmploymentOffice[] = [];
     delOfficesSnap.forEach((d) => {
       const data = d.data() as EmploymentOffice;
-      if (data && data.id && data.name) delOffices.push(data);
+      if (data && (data.id || d.id) && data.name) {
+        const officeObj = { ...data, id: data.id || d.id };
+        // Rescue any custom office_... center that was put in deleted_offices by earlier migration
+        if (officeObj.id.startsWith('office_')) {
+          discoveredOffices.push(officeObj);
+          deleteDoc(d.ref).catch(() => {});
+        } else {
+          delOffices.push(officeObj);
+        }
+      }
     });
+
+    const mergedCustomOffices = mergeTwoOfficeLists(
+      mergeTwoOfficeLists(masterDocCache.bundledOffices || [], existingConfig.bundledOffices || []),
+      discoveredOffices
+    );
 
     const cats: (ReportCategory & { sortOrder?: number })[] = [];
     catsSnap.forEach((d) => {
@@ -454,36 +510,43 @@ async function migrateLegacyCollectionsOnce(existingConfig: Partial<BundledMaste
       }
     });
 
-    await persistMasterConfigOnline({
-      ...DEFAULT_SYSTEM_CONFIG,
-      ...existingConfig,
-      migrationVersion: 2,
-      bundledOffices:
-        customOffices.length > 0 ? customOffices : masterDocCache.bundledOffices || [],
-      bundledDeletedOffices:
-        delOffices.length > 0 ? delOffices : masterDocCache.bundledDeletedOffices || [],
-      bundledCategories:
-        cats.length > 0
-          ? cats
-          : masterDocCache.bundledCategories ||
-            DEFAULT_CATEGORIES.map((c, idx) => ({ ...c, sortOrder: idx })),
-      bundledQueueMetrics:
-        qms.length > 0
-          ? qms
-          : masterDocCache.bundledQueueMetrics ||
-            DEFAULT_QUEUE_METRICS.map((m, idx) => ({ ...m, sortOrder: idx })),
-      bundledReporters:
-        reps.length > 0
-          ? reps
-          : masterDocCache.bundledReporters ||
-            DEFAULT_REPORTERS.map((r, idx) => ({ ...r, sortOrder: idx })),
-      bundledDeletedReports:
-        delReports.length > 0
-          ? delReports.slice(0, 50)
-          : masterDocCache.bundledDeletedReports || [],
-      bundledIssues:
-        issues.length > 0 ? issues : masterDocCache.bundledIssues || [],
-    });
+    await persistMasterConfigOnline(
+      {
+        ...DEFAULT_SYSTEM_CONFIG,
+        ...existingConfig,
+        bundledOffices: mergedCustomOffices,
+        bundledDeletedOffices: delOffices,
+        bundledCategories:
+          cats.length > 0
+            ? cats
+            : existingConfig.bundledCategories ||
+              masterDocCache.bundledCategories ||
+              DEFAULT_CATEGORIES.map((c, idx) => ({ ...c, sortOrder: idx })),
+        bundledQueueMetrics:
+          qms.length > 0
+            ? qms
+            : existingConfig.bundledQueueMetrics ||
+              masterDocCache.bundledQueueMetrics ||
+              DEFAULT_QUEUE_METRICS.map((m, idx) => ({ ...m, sortOrder: idx })),
+        bundledReporters:
+          reps.length > 0
+            ? reps
+            : existingConfig.bundledReporters ||
+              masterDocCache.bundledReporters ||
+              DEFAULT_REPORTERS.map((r, idx) => ({ ...r, sortOrder: idx })),
+        bundledDeletedReports:
+          delReports.length > 0
+            ? delReports.slice(0, 50)
+            : existingConfig.bundledDeletedReports ||
+              masterDocCache.bundledDeletedReports ||
+              [],
+        bundledIssues:
+          issues.length > 0
+            ? issues
+            : existingConfig.bundledIssues || masterDocCache.bundledIssues || [],
+      },
+      true
+    );
   } catch (err) {
     logStreamStatus('legacy_migration', err);
   } finally {
@@ -503,15 +566,18 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
       hasReceivedFirstMasterSnapshot = true;
       if (snapshot.exists()) {
         const data = snapshot.data() as BundledMasterConfig;
-        const isBundledV2 = (data.migrationVersion || 0) >= 2;
-        if (isBundledV2) {
+        const isMigrated = (data.migrationVersion || 0) >= CURRENT_MIGRATION_VERSION;
+        if (isMigrated) {
           masterDocCache = {
             ...masterDocCache,
             ...data,
+            bundledOffices: mergeTwoOfficeLists(
+              masterDocCache.bundledOffices || [],
+              data.bundledOffices || []
+            ),
           };
           broadcastMasterState(false);
         } else {
-          // Only update branding until legacy collections migration finishes
           masterDocCache = {
             ...masterDocCache,
             reportTitle: data.reportTitle || masterDocCache.reportTitle,
@@ -546,7 +612,7 @@ function cleanupMasterSubscriptionIfIdle() {
 }
 
 // ============================================================================
-// 1. REPORTS (Individual Documents for Concurrent Multi-Province Submissions)
+// 1. REPORTS
 // ============================================================================
 export function subscribeReports(
   onData: (reports: DOEReport[]) => void,
@@ -556,7 +622,6 @@ export function subscribeReports(
   return onSnapshot(
     colRef,
     (snapshot) => {
-      // Never overwrite local reports with an empty unpopulated cache snapshot
       if (snapshot.metadata.fromCache && snapshot.empty) {
         return;
       }
@@ -686,7 +751,7 @@ export function subscribeDeletedReports(
 }
 
 // ============================================================================
-// 2. OFFICES (Multiplexed via Bundled Master Config)
+// 2. OFFICES
 // ============================================================================
 export function subscribeOffices(
   onData: (offices: EmploymentOffice[]) => void,
@@ -715,6 +780,10 @@ export async function saveOfficeOnline(office: EmploymentOffice): Promise<void> 
   const nextDelOffices = (masterDocCache.bundledDeletedOffices || []).filter(
     (o) => o.id !== office.id
   );
+  // Also update in offices collection if it exists there so legacy & bundled stay consistent
+  setDoc(doc(db, OFFICES_COLLECTION, office.id), cleanForFirestore(office), { merge: true }).catch(
+    () => {}
+  );
   await persistMasterConfigOnline({
     bundledOffices: nextOffices,
     bundledDeletedOffices: nextDelOffices,
@@ -730,6 +799,7 @@ export async function deleteOfficeOnline(office: EmploymentOffice): Promise<void
   );
   const isBogusCenterDoc = office.id.startsWith('office_');
   const nextDel = isBogusCenterDoc ? prevDel : [cleanForFirestore(office), ...prevDel];
+  deleteDoc(doc(db, OFFICES_COLLECTION, office.id)).catch(() => {});
   await persistMasterConfigOnline({
     bundledOffices: nextOffices,
     bundledDeletedOffices: nextDel,
@@ -760,7 +830,7 @@ export function subscribeDeletedOffices(
   ensureMasterSubscription(onError);
   if (hasReceivedFirstMasterSnapshot && Array.isArray(masterDocCache.bundledDeletedOffices)) {
     const list = [...masterDocCache.bundledDeletedOffices].filter(
-      (o) => o && o.id && o.name
+      (o) => o && o.id && o.name && !o.id.startsWith('office_')
     );
     list.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
     onData(list);
@@ -772,7 +842,7 @@ export function subscribeDeletedOffices(
 }
 
 // ============================================================================
-// 3. CATEGORIES (Multiplexed via Bundled Master Config)
+// 3. CATEGORIES
 // ============================================================================
 export function subscribeCategories(
   onData: (cats: ReportCategory[]) => void,
@@ -815,7 +885,7 @@ export async function saveAllCategoriesOnline(categories: ReportCategory[]): Pro
 }
 
 // ============================================================================
-// 3.1 QUEUE METRICS (Multiplexed via Bundled Master Config)
+// 3.1 QUEUE METRICS
 // ============================================================================
 export function subscribeQueueMetrics(
   onData: (metrics: QueueMetricCategory[]) => void,
@@ -868,7 +938,7 @@ export async function deleteQueueMetricOnline(metricId: string): Promise<void> {
 }
 
 // ============================================================================
-// 4. REPORTERS (Multiplexed via Bundled Master Config)
+// 4. REPORTERS
 // ============================================================================
 export function subscribeReporters(
   onData: (reporters: ReporterProfile[]) => void,
@@ -908,7 +978,7 @@ export async function saveAllReportersOnline(reporters: ReporterProfile[]): Prom
 }
 
 // ============================================================================
-// 5. SYSTEM CONFIG (Multiplexed via Bundled Master Config)
+// 5. SYSTEM CONFIG
 // ============================================================================
 export function subscribeSystemConfig(
   onData: (config: SystemConfig) => void,
@@ -985,7 +1055,7 @@ export async function initializeFirestoreIfEmpty(): Promise<{
 }
 
 // ============================================================================
-// 7. SYSTEM ISSUES & TROUBLE REPORTS (Multiplexed via Bundled Master Config)
+// 7. SYSTEM ISSUES & TROUBLE REPORTS
 // ============================================================================
 export async function reportSystemIssueOnline(issue: SystemIssueReport): Promise<void> {
   const prev = (masterDocCache.bundledIssues || []).filter((i) => i.id !== issue.id);

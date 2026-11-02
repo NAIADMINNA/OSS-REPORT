@@ -10,7 +10,7 @@ import {
 } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { DEFAULT_QUEUE_METRICS } from '../data/initialAdminData';
-import { sortOfficesByRegion } from '../utils/officeUtils';
+import { sortOfficesByRegion, deduplicateCenterList } from '../utils/officeUtils';
 import { DOELogo } from './DOELogo';
 import { ConfirmDialogModal } from './ConfirmDialogModal';
 import {
@@ -272,6 +272,8 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         !q ||
         o.name.toLowerCase().includes(q) ||
         o.centerName.toLowerCase().includes(q) ||
+        (o.additionalCenters &&
+          o.additionalCenters.some((c) => c.toLowerCase().includes(q))) ||
         o.region.toLowerCase().includes(q);
       return matchRegion && matchSearch;
     });
@@ -430,10 +432,22 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
   // 3. OFFICE & CENTER ACTIONS
   const handleSaveOffice = (office: EmploymentOffice) => {
-    const updated = offices.map((o) => (o.id === office.id ? office : o));
+    const cleanedAdditional = deduplicateCenterList(
+      office.additionalCenters || [],
+      office.centerName
+    );
+    const cleanedOffice: EmploymentOffice = {
+      ...office,
+      name: office.name.trim(),
+      centerName: office.centerName.trim(),
+      additionalCenters: cleanedAdditional,
+    };
+    const updated = offices.map((o) => (o.id === cleanedOffice.id ? cleanedOffice : o));
     onUpdateOffices(updated);
     setEditingOffice(null);
-    onNotify(`บันทึกข้อมูลศูนย์ "${office.name} (${office.centerName})" สำเร็จ`);
+    onNotify(
+      `บันทึกข้อมูลศูนย์ "${cleanedOffice.name} (${[cleanedOffice.centerName, ...cleanedAdditional].filter(Boolean).join(' / ')})" สำเร็จ`
+    );
   };
 
   const handleAddOffice = () => {
@@ -444,12 +458,17 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       return;
     }
 
-    // Find parent EmploymentOffice (by selected id, office name, or province match in centerName)
-    let targetOffice = offices.find(
-      (o) => o.id === newOffice.id || o.name === rawName
-    );
+    // Find parent EmploymentOffice (check specific province or Wat Pom Wichian first if default central_foreign_workers is selected)
+    let targetOffice: EmploymentOffice | undefined;
+    if (newOffice.id && newOffice.id !== 'central_foreign_workers') {
+      targetOffice = offices.find((o) => o.id === newOffice.id);
+    }
+    if (!targetOffice && (rawCenter.includes('วัดป้อมวิเชียร') || rawCenter.includes('ป้อมวิเชียร'))) {
+      targetOffice = offices.find((o) => o.id === 'samutsakhon');
+    }
     if (!targetOffice) {
       targetOffice = offices.find((o) => {
+        if (o.id === 'central_foreign_workers') return false;
         const shortProv = o.name
           .replace('สำนักงานจัดหางานจังหวัด', '')
           .replace('สำนักงานจัดหางาน', '')
@@ -462,16 +481,16 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     }
     if (!targetOffice) {
       targetOffice =
-        offices.find((o) => o.id === 'central_foreign_workers') || offices[0];
+        offices.find((o) => o.id === newOffice.id || o.name === rawName) ||
+        offices.find((o) => o.id === 'central_foreign_workers') ||
+        offices[0];
     }
 
     if (targetOffice) {
-      const existingAdd = targetOffice.additionalCenters || [];
-      const nextAdditional =
-        targetOffice.centerName.trim() === rawCenter ||
-        existingAdd.some((c) => c.trim() === rawCenter)
-          ? existingAdd
-          : [...existingAdd, rawCenter];
+      const nextAdditional = deduplicateCenterList(
+        [...(targetOffice.additionalCenters || []), rawCenter],
+        targetOffice.centerName
+      );
 
       const updatedOffices = offices.map((o) =>
         o.id === targetOffice!.id
@@ -2106,23 +2125,68 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                               <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
                                 ศูนย์บริการเพิ่มเติม / ศูนย์เฉพาะกิจ (แห่งที่ {idx + 2}):
                               </span>
-                              <input
-                                type="text"
-                                placeholder="เว้นว่างไว้หากไม่มีศูนย์เพิ่มเติม"
-                                value={addC}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  const list = [...(editingOffice.additionalCenters || [''])];
-                                  list[idx] = val;
-                                  setEditingOffice({
-                                    ...editingOffice,
-                                    additionalCenters: list.filter((x) => x.trim().length > 0),
-                                  });
-                                }}
-                                className="w-full text-xs p-1 bg-white border rounded"
-                              />
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  placeholder="ระบุชื่อศูนย์บริการเพิ่มเติม หรือเว้นว่างไว้หากไม่มี"
+                                  value={addC}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    const currentList =
+                                      editingOffice.additionalCenters &&
+                                      editingOffice.additionalCenters.length > 0
+                                        ? [...editingOffice.additionalCenters]
+                                        : [''];
+                                    currentList[idx] = val;
+                                    setEditingOffice({
+                                      ...editingOffice,
+                                      additionalCenters: currentList,
+                                    });
+                                  }}
+                                  className="w-full text-xs p-1 bg-white border rounded"
+                                />
+                                {addC.trim().length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const currentList = [
+                                        ...(editingOffice.additionalCenters || []),
+                                      ];
+                                      currentList.splice(idx, 1);
+                                      setEditingOffice({
+                                        ...editingOffice,
+                                        additionalCenters:
+                                          currentList.length > 0 ? currentList : [''],
+                                      });
+                                    }}
+                                    className="text-xs px-1.5 py-0.5 text-rose-600 hover:bg-rose-100 rounded cursor-pointer"
+                                    title="ลบช่องนี้"
+                                  >
+                                    ×
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditingOffice({
+                                ...editingOffice,
+                                additionalCenters: [
+                                  ...(editingOffice.additionalCenters &&
+                                  editingOffice.additionalCenters.length > 0
+                                    ? editingOffice.additionalCenters
+                                    : ['']),
+                                  '',
+                                ],
+                              })
+                            }
+                            className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-md cursor-pointer inline-flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>เพิ่มช่องกรอกศูนย์เพิ่มเติมอีกแห่ง</span>
+                          </button>
                         </td>
                         <td className="p-2 text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -2197,7 +2261,15 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setEditingOffice(office)}
+                            onClick={() =>
+                              setEditingOffice({
+                                ...office,
+                                additionalCenters:
+                                  office.additionalCenters && office.additionalCenters.length > 0
+                                    ? [...office.additionalCenters, '']
+                                    : [''],
+                              })
+                            }
                             className="p-1.5 text-blue-700 hover:text-white hover:bg-blue-600 border border-blue-200 hover:border-blue-600 rounded-lg transition-all cursor-pointer shadow-2xs"
                             title="แก้ไขชื่อศูนย์"
                             aria-label="แก้ไขชื่อศูนย์"

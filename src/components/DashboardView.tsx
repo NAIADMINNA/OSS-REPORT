@@ -9,7 +9,12 @@ import {
   formatThaiDateRange,
   getTodayIsoDate,
 } from '../utils/thaiDate';
-import { REGION_ORDER, getRegionLabel } from '../utils/officeUtils';
+import {
+  REGION_ORDER,
+  getRegionLabel,
+  areSameCenterName,
+  getCanonicalCenterKey,
+} from '../utils/officeUtils';
 import { calculateReportTotalSections } from '../utils/doeUtils';
 import {
   TrendingUp,
@@ -362,7 +367,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     if (filterVal === 'type:standard') return !isMob;
     if (filterVal.startsWith('center:')) {
       const targetCenter = filterVal.replace('center:', '');
-      return (r.centerName || '').trim() === targetCenter.trim();
+      return areSameCenterName(r.centerName, targetCenter);
     }
     return true;
   };
@@ -417,7 +422,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     let mobileCount = 0;
     const centerMap = new Map<string, { name: string; count: number; isMobile: boolean }>();
 
-    // If a specific province is selected, pre-populate its standard center & Mobile Unit so user always sees both choices
+    // If a specific province is selected, pre-populate its standard center, additional centers & Mobile Unit
     if (activeSelectedReport) {
       const officeConfig = (offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES).find(
         (o) => o.id === activeSelectedReport.officeId
@@ -428,13 +433,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           ? activeSelectedReport.centerName
           : '');
       if (stdCenterName) {
-        centerMap.set(stdCenterName, {
+        const key = getCanonicalCenterKey(stdCenterName) || stdCenterName;
+        centerMap.set(key, {
           name: stdCenterName,
           count: 0,
           isMobile: false,
         });
       }
-      centerMap.set(MOBILE_UNIT_DEFAULT_LABEL, {
+      if (officeConfig?.additionalCenters) {
+        officeConfig.additionalCenters.forEach((addC) => {
+          const cleanAdd = (addC || '').trim();
+          if (cleanAdd) {
+            const key = getCanonicalCenterKey(cleanAdd) || cleanAdd;
+            if (!centerMap.has(key)) {
+              centerMap.set(key, {
+                name: cleanAdd,
+                count: 0,
+                isMobile: isMobileUnitCenter(cleanAdd, officeConfig.region),
+              });
+            }
+          }
+        });
+      }
+      const mobKey = getCanonicalCenterKey(MOBILE_UNIT_DEFAULT_LABEL) || MOBILE_UNIT_DEFAULT_LABEL;
+      centerMap.set(mobKey, {
         name: MOBILE_UNIT_DEFAULT_LABEL,
         count: 0,
         isMobile: true,
@@ -448,11 +470,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       const cName = (r.centerName || '').trim();
       if (cName) {
-        const existing = centerMap.get(cName);
+        const key = getCanonicalCenterKey(cName) || cName;
+        const existing = centerMap.get(key);
         if (existing) {
           existing.count += 1;
+          if (
+            (existing.name.includes('ฯ') && !cName.includes('ฯ')) ||
+            (cName.length > existing.name.length && !cName.includes('ฯ'))
+          ) {
+            existing.name = cName;
+          }
         } else {
-          centerMap.set(cName, {
+          centerMap.set(key, {
             name: cName,
             count: 1,
             isMobile: isMob,
