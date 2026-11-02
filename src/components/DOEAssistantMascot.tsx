@@ -114,8 +114,9 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
     }
   }, [currentOfficeName]);
 
-  // Subscribe to issues from Firestore in real time so Admin resolutions/deletions update immediately
+  // Subscribe to issues from Firestore when the mascot panel is open to conserve read quota
   useEffect(() => {
+    if (!isOpen) return;
     const unsub = subscribeSystemIssues((onlineIssues) => {
       if (Array.isArray(onlineIssues)) {
         setMyIssues(onlineIssues);
@@ -127,7 +128,7 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
       }
     });
     return () => unsub();
-  }, []);
+  }, [isOpen]);
 
   const handleDeleteSingleIssue = async (issueId: string) => {
     try {
