@@ -138,24 +138,32 @@ export default function App() {
   );
   const pendingSaveReportIdsRef = useRef<Set<string>>(new Set());
 
-  // 1. Reports Database (respects deleted reports and intentional empty arrays)
+  // 1. Reports Database (merges active storage + rolling backup, excluding explicitly deleted IDs)
   const [reports, setReports] = useState<DOEReport[]>(() => {
     try {
       const delIds = deletedReportIdsRef.current;
-      const saved = localStorage.getItem(STORAGE_KEY_REPORTS);
-      if (saved !== null) {
-        const parsed = sanitizeReportList(JSON.parse(saved)).filter((r) => !delIds.has(r.id));
-        return parsed;
-      }
-      const backup = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
-      if (backup) {
-        const parsedBackup = sanitizeReportList(JSON.parse(backup)).filter(
+      const map = new Map<string, DOEReport>();
+
+      const backupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
+      if (backupRaw) {
+        const parsedBackup = sanitizeReportList(JSON.parse(backupRaw)).filter(
           (r) => !delIds.has(r.id)
         );
-        if (parsedBackup.length > 0) {
-          return parsedBackup;
-        }
+        parsedBackup.forEach((r) => map.set(r.id, r));
       }
+
+      const savedRaw = localStorage.getItem(STORAGE_KEY_REPORTS);
+      if (savedRaw) {
+        const parsedSaved = sanitizeReportList(JSON.parse(savedRaw)).filter(
+          (r) => !delIds.has(r.id)
+        );
+        parsedSaved.forEach((r) => map.set(r.id, r));
+      }
+
+      const combined = Array.from(map.values()).sort((a, b) =>
+        (b.reportDate || '').localeCompare(a.reportDate || '')
+      );
+      return combined;
     } catch (e) {
       console.error('Failed to load reports from storage', e);
     }
@@ -521,7 +529,7 @@ export default function App() {
               pendingSaveReportIdsRef.current.delete(r.id);
             });
 
-            // Only retain local reports that are actively pending upload (never re-upload reports deleted on server!)
+            // Upload any pending local reports that haven't reached the server yet
             const pendingUnsynced = cleanPrev.filter(
               (r) =>
                 !onlineIds.has(r.id) &&
@@ -533,8 +541,18 @@ export default function App() {
               pendingUnsynced.forEach((r) => saveReportOnline(r).catch(console.warn));
             }
 
-            const merged = [...cleanOnline, ...pendingUnsynced];
-            merged.sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''));
+            // Merge online reports with non-deleted local reports so partial/cached snapshots never drop reports
+            const mergedMap = new Map<string, DOEReport>();
+            cleanPrev.forEach((r) => {
+              if (!delIds.has(r.id)) mergedMap.set(r.id, r);
+            });
+            cleanOnline.forEach((r) => {
+              if (!delIds.has(r.id)) mergedMap.set(r.id, r);
+            });
+
+            const merged = Array.from(mergedMap.values()).sort((a, b) =>
+              (b.reportDate || '').localeCompare(a.reportDate || '')
+            );
             return merged;
           });
         });
@@ -553,11 +571,38 @@ export default function App() {
         });
         unsubs.push(unsubDelOffices);
 
-        // 3.1 Subscribe to online offices (real-time merge of base offices + admin edits & additions)
+        // 3.1 Subscribe to online offices (real-time merge of base offices + local & online admin edits)
         const unsubOffices = subscribeOffices((onlineOffices) => {
           if (Array.isArray(onlineOffices)) {
+            let combinedInput = onlineOffices;
+            try {
+              const savedLocalRaw = localStorage.getItem(STORAGE_KEY_OFFICES);
+              if (savedLocalRaw) {
+                const parsedLocal = JSON.parse(savedLocalRaw);
+                if (Array.isArray(parsedLocal)) {
+                  const byId = new Map<string, EmploymentOffice>();
+                  parsedLocal.forEach((o: EmploymentOffice) => {
+                    if (o && o.id) byId.set(o.id, o);
+                  });
+                  onlineOffices.forEach((o: EmploymentOffice) => {
+                    if (o && o.id) {
+                      const prev = byId.get(o.id);
+                      const mergedAdd = Array.from(
+                        new Set([
+                          ...(prev?.additionalCenters || []),
+                          ...(o.additionalCenters || []),
+                        ])
+                      );
+                      byId.set(o.id, { ...prev, ...o, additionalCenters: mergedAdd });
+                    }
+                  });
+                  combinedInput = Array.from(byId.values());
+                }
+              }
+            } catch {}
+
             const { merged, bogusDocsToDelete, updatedStdToSave } =
-              normalizeOfficesAndCenters(onlineOffices, deletedOfficeIdsRef.current);
+              normalizeOfficesAndCenters(combinedInput, deletedOfficeIdsRef.current);
             setOffices(merged);
 
             // Clean up any center that was mistakenly saved as a standalone office document in Firestore

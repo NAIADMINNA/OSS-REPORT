@@ -6,8 +6,6 @@ import {
   setLogLevel,
   doc,
   getDocFromServer,
-  persistentLocalCache,
-  persistentMultipleTabManager,
   Firestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -23,9 +21,6 @@ try {
     app,
     {
       experimentalAutoDetectLongPolling: true,
-      localCache: persistentLocalCache({
-        tabManager: persistentMultipleTabManager(),
-      }),
     },
     firebaseConfig.firestoreDatabaseId
   );
