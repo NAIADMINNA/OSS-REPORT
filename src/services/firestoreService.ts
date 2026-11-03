@@ -680,15 +680,22 @@ export function getBundleIdForReportId(reportId: string): string {
   return `bundle_shard_${shardIndex}`;
 }
 
-export async function saveBulkReportsOnline(reports: DOEReport[]): Promise<void> {
+export async function saveBulkReportsOnline(
+  reports: DOEReport[],
+  skipDeletedFilter = true
+): Promise<void> {
   if (!Array.isArray(reports) || reports.length === 0) return;
 
-  const delIds = new Set((masterDocCache.bundledDeletedReports || []).map((r) => r.id));
+  const delIds = skipDeletedFilter
+    ? new Set<string>()
+    : new Set((masterDocCache.bundledDeletedReports || []).map((r) => r.id));
   const shards = new Map<string, Record<string, DOEReport>>();
+  const restoredIds = new Set<string>();
 
   for (const raw of reports) {
     const sanitized = sanitizeReport(raw);
     if (!sanitized || !sanitized.id || delIds.has(sanitized.id)) continue;
+    restoredIds.add(sanitized.id);
     const bundleId = getBundleIdForReportId(sanitized.id);
     let map = shards.get(bundleId);
     if (!map) {
@@ -699,6 +706,17 @@ export async function saveBulkReportsOnline(reports: DOEReport[]): Promise<void>
   }
 
   if (shards.size === 0) return;
+
+  if (
+    skipDeletedFilter &&
+    Array.isArray(masterDocCache.bundledDeletedReports) &&
+    masterDocCache.bundledDeletedReports.some((r) => restoredIds.has(r.id))
+  ) {
+    const nextDel = masterDocCache.bundledDeletedReports.filter(
+      (r) => !restoredIds.has(r.id)
+    );
+    persistMasterConfigOnline({ bundledDeletedReports: nextDel }).catch(() => {});
+  }
 
   const now = new Date().toISOString();
   await Promise.all(
@@ -800,7 +818,7 @@ async function migrateLegacyReportsToBundlesOnce(
     }
 
     if (missingToWrite.length > 0) {
-      await saveBulkReportsOnline(missingToWrite);
+      await saveBulkReportsOnline(missingToWrite, false);
       try {
         localStorage.setItem('doe_ss_bundles_seeded_v1', 'true');
       } catch {}

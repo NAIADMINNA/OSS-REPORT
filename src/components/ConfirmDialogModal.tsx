@@ -88,8 +88,14 @@ export const ConfirmDialogModal: React.FC<ConfirmDialogModalProps> = ({
           <button
             type="button"
             onClick={() => {
-              onConfirm();
               onClose();
+              setTimeout(() => {
+                try {
+                  onConfirm();
+                } catch (err) {
+                  console.error('Error in ConfirmDialogModal onConfirm:', err);
+                }
+              }, 10);
             }}
             className={`px-4 py-2 text-xs font-bold text-white rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer ${
               isDanger

@@ -714,18 +714,43 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const json = JSON.parse(event.target?.result as string);
+        const rawJson = JSON.parse(event.target?.result as string);
+        const normalizedPayload = Array.isArray(rawJson)
+          ? { reports: rawJson }
+          : rawJson && typeof rawJson === 'object'
+          ? rawJson
+          : null;
+
+        if (!normalizedPayload) {
+          onNotify('⚠️ ไฟล์ JSON ไม่ถูกต้องหรือไม่ตรงตามรูปแบบฐานข้อมูล');
+          return;
+        }
+
+        const reportCount = Array.isArray(normalizedPayload.reports)
+          ? normalizedPayload.reports.length
+          : 0;
+        const officeCount = Array.isArray(normalizedPayload.offices)
+          ? normalizedPayload.offices.length
+          : 0;
+
         setConfirmModal({
           isOpen: true,
           title: 'ยืนยันการกู้คืนฐานข้อมูลจากไฟล์สำรอง',
-          message: 'การนำเข้าไฟล์สำรองจะแทนที่ข้อมูลที่มีอยู่ในระบบ (ศูนย์บริการ, หัวข้อ, ผู้รายงาน, รายงาน) ด้วยข้อมูลจากไฟล์นี้ ยืนยันดำเนินการต่อหรือไม่?',
+          message: `การนำเข้าไฟล์สำรองจะแทนที่ข้อมูลที่มีอยู่ในระบบ (พบข้อมูลรายงาน ${reportCount.toLocaleString()} ฉบับ${officeCount > 0 ? `, ศูนย์บริการ ${officeCount.toLocaleString()} แห่ง` : ''}) ด้วยข้อมูลจากไฟล์นี้ ยืนยันดำเนินการต่อหรือไม่?`,
           confirmText: 'ยืนยันกู้คืนฐานข้อมูล',
           cancelText: 'ยกเลิก',
           isDanger: false,
           iconType: 'warning',
           onConfirm: () => {
-            onRestoreFullDatabase(json);
-            onNotify('กู้คืนฐานข้อมูลจากไฟล์สำรองสำเร็จสมบูรณ์');
+            try {
+              onRestoreFullDatabase(normalizedPayload);
+              onNotify(
+                `กู้คืนฐานข้อมูลสำเร็จสมบูรณ์ (รายงาน ${reportCount.toLocaleString()} ฉบับ)`
+              );
+            } catch (restoreErr) {
+              console.error('Failed to restore database:', restoreErr);
+              onNotify('⚠️ เกิดข้อผิดพลาดบางส่วนระหว่างกู้คืนข้อมูล กรุณาลองใหม่อีกครั้ง');
+            }
           },
         });
       } catch (err) {

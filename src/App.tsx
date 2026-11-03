@@ -1187,6 +1187,23 @@ export default function App() {
     saveSystemConfigOnline(updatedConfig).catch(console.warn);
   };
 
+  const safeSetLocalStorage = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (err) {
+      try {
+        // Free up duplicate backup keys if browser 5MB localStorage quota is full
+        localStorage.removeItem('doe_ss_reports_backup_v1');
+        if (key !== STORAGE_KEY_REPORTS_BACKUP) {
+          localStorage.removeItem(STORAGE_KEY_REPORTS_BACKUP);
+        }
+        localStorage.setItem(key, value);
+      } catch (retryErr) {
+        console.warn(`Skipped localStorage caching for ${key} (quota exceeded):`, retryErr);
+      }
+    }
+  };
+
   const handleRestoreFullDatabase = (data: {
     offices?: EmploymentOffice[];
     categories?: ReportCategory[];
@@ -1195,36 +1212,46 @@ export default function App() {
     systemConfig?: SystemConfig;
     reports?: DOEReport[];
   }) => {
+    let restoredOffices: EmploymentOffice[] | null = null;
+    let restoredCats: ReportCategory[] | null = null;
+    let restoredQm: QueueMetricCategory[] | null = null;
+    let restoredReporters: ReporterProfile[] | null = null;
+    let restoredConfig: SystemConfig | null = null;
+    let restoredReports: DOEReport[] | null = null;
+
     if (data.offices && Array.isArray(data.offices)) {
+      data.offices.forEach((o) => {
+        if (o && o.id) deletedOfficeIdsRef.current.delete(o.id);
+      });
       const { merged } = normalizeOfficesAndCenters(
         data.offices,
         deletedOfficeIdsRef.current
       );
+      restoredOffices = merged;
       setOffices(merged);
-      localStorage.setItem(STORAGE_KEY_OFFICES, JSON.stringify(merged));
-      saveAllOfficesOnline(merged).catch(console.warn);
+      safeSetLocalStorage(STORAGE_KEY_OFFICES, JSON.stringify(merged));
     }
     if (data.categories && Array.isArray(data.categories)) {
       const normalizedCats = normalizeCategoriesList(data.categories);
+      restoredCats = normalizedCats;
       setCategories(normalizedCats);
-      localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(normalizedCats));
-      saveAllCategoriesOnline(normalizedCats).catch(console.warn);
+      safeSetLocalStorage(STORAGE_KEY_CATEGORIES, JSON.stringify(normalizedCats));
     }
     if (data.queueMetrics && Array.isArray(data.queueMetrics)) {
       const normalizedQm = normalizeQueueMetricsList(data.queueMetrics);
+      restoredQm = normalizedQm;
       setQueueMetrics(normalizedQm);
-      localStorage.setItem(STORAGE_KEY_QUEUE_METRICS, JSON.stringify(normalizedQm));
-      saveAllQueueMetricsOnline(normalizedQm).catch(console.warn);
+      safeSetLocalStorage(STORAGE_KEY_QUEUE_METRICS, JSON.stringify(normalizedQm));
     }
     if (data.reporters && Array.isArray(data.reporters)) {
+      restoredReporters = data.reporters;
       setReporters(data.reporters);
-      localStorage.setItem(STORAGE_KEY_REPORTERS, JSON.stringify(data.reporters));
-      saveAllReportersOnline(data.reporters).catch(console.warn);
+      safeSetLocalStorage(STORAGE_KEY_REPORTERS, JSON.stringify(data.reporters));
     }
     if (data.systemConfig) {
+      restoredConfig = data.systemConfig;
       setSystemConfig(data.systemConfig);
-      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(data.systemConfig));
-      saveSystemConfigOnline(data.systemConfig).catch(console.warn);
+      safeSetLocalStorage(STORAGE_KEY_CONFIG, JSON.stringify(data.systemConfig));
     }
     if (data.reports && Array.isArray(data.reports)) {
       const normalizedReports = sanitizeReportList(data.reports);
@@ -1232,19 +1259,43 @@ export default function App() {
         deletedReportIdsRef.current.delete(r.id);
         pendingSaveReportIdsRef.current.add(r.id);
       });
+      restoredReports = normalizedReports;
       setReports(normalizedReports);
-      localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(normalizedReports));
-      localStorage.setItem(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify(normalizedReports));
-      saveBulkReportsOnline(normalizedReports)
-        .then(() => {
-          normalizedReports.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
-        })
-        .catch(console.warn);
+      const serialized = JSON.stringify(normalizedReports);
+      safeSetLocalStorage(STORAGE_KEY_REPORTS, serialized);
+      safeSetLocalStorage(STORAGE_KEY_REPORTS_BACKUP, serialized);
       if (normalizedReports.length > 0) {
         setCurrentReport(normalizedReports[0]);
         setLivePreviewReport(normalizedReports[0]);
       }
     }
+
+    // Sync to Cloud Firestore asynchronously so UI never blocks
+    setTimeout(() => {
+      if (restoredOffices) {
+        saveAllOfficesOnline(restoredOffices).catch(console.warn);
+      }
+      if (restoredCats) {
+        saveAllCategoriesOnline(restoredCats).catch(console.warn);
+      }
+      if (restoredQm) {
+        saveAllQueueMetricsOnline(restoredQm).catch(console.warn);
+      }
+      if (restoredReporters) {
+        saveAllReportersOnline(restoredReporters).catch(console.warn);
+      }
+      if (restoredConfig) {
+        saveSystemConfigOnline(restoredConfig).catch(console.warn);
+      }
+      if (restoredReports && restoredReports.length > 0) {
+        const toSync = restoredReports;
+        saveBulkReportsOnline(toSync)
+          .then(() => {
+            toSync.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
+          })
+          .catch(console.warn);
+      }
+    }, 50);
   };
 
   const handleResetFactoryDefaults = () => {
