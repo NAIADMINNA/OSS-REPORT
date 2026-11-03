@@ -3,6 +3,7 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  deleteField,
   onSnapshot,
   getDocs,
   writeBatch,
@@ -28,6 +29,8 @@ import { sanitizeReport } from '../utils/doeUtils';
 import { deduplicateCenterList } from '../utils/officeUtils';
 
 const REPORTS_COLLECTION = 'reports';
+const REPORT_BUNDLES_COLLECTION = 'report_bundles';
+const REPORT_SHARD_COUNT = 6;
 const OFFICES_COLLECTION = 'offices';
 const CATEGORIES_COLLECTION = 'categories';
 const QUEUE_METRICS_COLLECTION = 'queue_metrics';
@@ -38,7 +41,7 @@ const DELETED_REPORTS_COLLECTION = 'deleted_reports';
 const DELETED_OFFICES_COLLECTION = 'deleted_offices';
 const ISSUES_COLLECTION = 'system_issues';
 
-const CURRENT_MIGRATION_VERSION = 7;
+const CURRENT_MIGRATION_VERSION = 8;
 
 let hasLoggedQuotaNotice = false;
 
@@ -136,8 +139,19 @@ function mergeTwoOfficeLists(
   return Array.from(map.values());
 }
 
+function parseArrayField<T>(val: unknown): T[] {
+  if (Array.isArray(val)) return val as T[];
+  if (typeof val === 'string' && val.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed as T[];
+    } catch {}
+  }
+  return [];
+}
+
 function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
-  let localOffices: EmploymentOffice[] = [];
+  let localOffices: EmploymentOffice[] = EMPLOYMENT_OFFICES.filter(isOfficeCustomized);
   let localDelOffices: EmploymentOffice[] = [];
   let localCats: (ReportCategory & { sortOrder?: number })[] = DEFAULT_CATEGORIES.map(
     (c, idx) => ({ ...c, sortOrder: idx })
@@ -152,84 +166,109 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
   let localDelReports: DOEReport[] = [];
   let localIssues: SystemIssueReport[] = [];
 
-  try {
-    const rawOffices = localStorage.getItem('doe_ss_offices_v1');
-    if (rawOffices) {
-      const parsed = JSON.parse(rawOffices);
-      if (Array.isArray(parsed)) {
-        localOffices = parsed.filter((o) => o && o.id && isOfficeCustomized(o));
-      }
-    }
-  } catch {}
-
-  try {
-    const rawDelOffices = localStorage.getItem('doe_ss_deleted_offices_v1');
-    if (rawDelOffices) {
-      const parsed = JSON.parse(rawDelOffices);
-      if (Array.isArray(parsed)) {
-        // Rescue any custom office_... center that was mistakenly placed in deleted_offices
-        const rescued = parsed.filter((o: EmploymentOffice) => o && o.id && o.id.startsWith('office_'));
-        if (rescued.length > 0) {
-          localOffices = mergeTwoOfficeLists(localOffices, rescued);
+  for (const key of ['doe_work_permit_offices_v1', 'doe_ss_offices_v1']) {
+    try {
+      const rawOffices = localStorage.getItem(key);
+      if (rawOffices) {
+        const parsed = JSON.parse(rawOffices);
+        if (Array.isArray(parsed)) {
+          const customLocal = parsed.filter((o) => o && o.id && isOfficeCustomized(o));
+          localOffices = mergeTwoOfficeLists(localOffices, customLocal);
         }
-        localDelOffices = parsed.filter((o: EmploymentOffice) => o && o.id && !o.id.startsWith('office_'));
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
-  try {
-    const rawCats = localStorage.getItem('doe_ss_categories_v1');
-    if (rawCats) {
-      const parsed = JSON.parse(rawCats);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        localCats = parsed.map((c: ReportCategory, idx: number) => ({ ...c, sortOrder: idx }));
+  for (const key of ['doe_work_permit_deleted_offices_v1', 'doe_ss_deleted_offices_v1']) {
+    try {
+      const rawDelOffices = localStorage.getItem(key);
+      if (rawDelOffices) {
+        const parsed = JSON.parse(rawDelOffices);
+        if (Array.isArray(parsed)) {
+          // Rescue any custom office_... center that was mistakenly placed in deleted_offices
+          const rescued = parsed.filter((o: EmploymentOffice) => o && o.id && o.id.startsWith('office_'));
+          if (rescued.length > 0) {
+            localOffices = mergeTwoOfficeLists(localOffices, rescued);
+          }
+          localDelOffices = parsed.filter(
+            (o: EmploymentOffice) =>
+              o && o.id && !o.id.startsWith('office_') && o.id !== 'central_foreign_workers'
+          );
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
-  try {
-    const rawQms = localStorage.getItem('doe_ss_queue_metrics_v1');
-    if (rawQms) {
-      const parsed = JSON.parse(rawQms);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        localQms = parsed.map((m: QueueMetricCategory, idx: number) => ({
-          ...m,
-          sortOrder: idx,
-        }));
+  for (const key of ['doe_work_permit_categories_v1', 'doe_ss_categories_v1']) {
+    try {
+      const rawCats = localStorage.getItem(key);
+      if (rawCats) {
+        const parsed = JSON.parse(rawCats);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          localCats = parsed.map((c: ReportCategory, idx: number) => ({ ...c, sortOrder: idx }));
+          break;
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
-  try {
-    const rawReps = localStorage.getItem('doe_ss_reporters_v1');
-    if (rawReps) {
-      const parsed = JSON.parse(rawReps);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        localReps = parsed.map((r: ReporterProfile, idx: number) => ({
-          ...r,
-          sortOrder: idx,
-        }));
+  for (const key of ['doe_work_permit_queue_metrics_v1', 'doe_ss_queue_metrics_v1']) {
+    try {
+      const rawQms = localStorage.getItem(key);
+      if (rawQms) {
+        const parsed = JSON.parse(rawQms);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          localQms = parsed.map((m: QueueMetricCategory, idx: number) => ({
+            ...m,
+            sortOrder: idx,
+          }));
+          break;
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
-  try {
-    const rawCfg = localStorage.getItem('doe_ss_config_v1');
-    if (rawCfg) {
-      const parsed = JSON.parse(rawCfg);
-      if (parsed && parsed.reportTitle) {
-        localConfig = { ...DEFAULT_SYSTEM_CONFIG, ...parsed };
+  for (const key of ['doe_work_permit_reporters_v1', 'doe_ss_reporters_v1']) {
+    try {
+      const rawReps = localStorage.getItem(key);
+      if (rawReps) {
+        const parsed = JSON.parse(rawReps);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          localReps = parsed.map((r: ReporterProfile, idx: number) => ({
+            ...r,
+            sortOrder: idx,
+          }));
+          break;
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
-  try {
-    const rawDelRep = localStorage.getItem('doe_ss_deleted_reports_v1');
-    if (rawDelRep) {
-      const parsed = JSON.parse(rawDelRep);
-      if (Array.isArray(parsed)) localDelReports = parsed;
-    }
-  } catch {}
+  for (const key of ['doe_work_permit_config_v1', 'doe_ss_config_v1']) {
+    try {
+      const rawCfg = localStorage.getItem(key);
+      if (rawCfg) {
+        const parsed = JSON.parse(rawCfg);
+        if (parsed && parsed.reportTitle) {
+          localConfig = { ...DEFAULT_SYSTEM_CONFIG, ...parsed };
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  for (const key of ['doe_work_permit_deleted_reports_v1', 'doe_ss_deleted_reports_v1']) {
+    try {
+      const rawDelRep = localStorage.getItem(key);
+      if (rawDelRep) {
+        const parsed = JSON.parse(rawDelRep);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          localDelReports = parsed;
+          break;
+        }
+      }
+    } catch {}
+  }
 
   try {
     const rawIssues = localStorage.getItem('doe_assistant_reported_issues_v1');
@@ -574,7 +613,14 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
       }
       hasReceivedFirstMasterSnapshot = true;
       if (snapshot.exists()) {
-        const data = snapshot.data() as BundledMasterConfig;
+        const rawData = snapshot.data() as BundledMasterConfig;
+        const data: BundledMasterConfig = {
+          ...rawData,
+          bundledOffices: parseArrayField<EmploymentOffice>(rawData.bundledOffices),
+          bundledDeletedOffices: parseArrayField<EmploymentOffice>(
+            rawData.bundledDeletedOffices
+          ).filter((o) => o && o.id !== 'central_foreign_workers'),
+        };
         const isMigrated = (data.migrationVersion || 0) >= CURRENT_MIGRATION_VERSION;
         if (isMigrated) {
           masterDocCache = {
@@ -621,36 +667,214 @@ function cleanupMasterSubscriptionIfIdle() {
 }
 
 // ============================================================================
-// 1. REPORTS
+// 1. REPORTS (BUNDLED SHARDS ARCHITECTURE: report_bundles/bundle_shard_0..5)
 // ============================================================================
+
+export function getBundleIdForReportId(reportId: string): string {
+  let hash = 0;
+  const str = String(reportId || '');
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  const shardIndex = hash % REPORT_SHARD_COUNT;
+  return `bundle_shard_${shardIndex}`;
+}
+
+export async function saveBulkReportsOnline(reports: DOEReport[]): Promise<void> {
+  if (!Array.isArray(reports) || reports.length === 0) return;
+
+  const delIds = new Set((masterDocCache.bundledDeletedReports || []).map((r) => r.id));
+  const shards = new Map<string, Record<string, DOEReport>>();
+
+  for (const raw of reports) {
+    const sanitized = sanitizeReport(raw);
+    if (!sanitized || !sanitized.id || delIds.has(sanitized.id)) continue;
+    const bundleId = getBundleIdForReportId(sanitized.id);
+    let map = shards.get(bundleId);
+    if (!map) {
+      map = {};
+      shards.set(bundleId, map);
+    }
+    map[sanitized.id] = cleanForFirestore(sanitized);
+  }
+
+  if (shards.size === 0) return;
+
+  const now = new Date().toISOString();
+  await Promise.all(
+    Array.from(shards.entries()).map(async ([bundleId, reportsMap]) => {
+      const bundleRef = doc(db, REPORT_BUNDLES_COLLECTION, bundleId);
+      try {
+        await setDoc(
+          bundleRef,
+          {
+            id: bundleId,
+            updatedAt: now,
+            reportsMap,
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        if (!isQuotaExceededError(err)) {
+          console.warn(`Failed to write report bundle ${bundleId}:`, err);
+        }
+      }
+    })
+  );
+}
+
+let isMigratingReportBundles = false;
+let hasMigratedReportBundlesInSession = false;
+
+function getLocalCachedReportsForBundleSync(): DOEReport[] {
+  const map = new Map<string, DOEReport>();
+  const delIds = new Set((masterDocCache.bundledDeletedReports || []).map((r) => r.id));
+  for (const key of [
+    'doe_work_permit_reports_backup_v1',
+    'doe_work_permit_reports_v1',
+    'doe_ss_reports_backup_v1',
+    'doe_ss_reports_v1',
+  ]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            const clean = sanitizeReport(item);
+            if (clean && clean.id && !delIds.has(clean.id)) {
+              map.set(clean.id, clean);
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+  return Array.from(map.values());
+}
+
+async function migrateLegacyReportsToBundlesOnce(
+  existingBundleMap: Map<string, DOEReport>,
+  onMigrated?: (mergedList: DOEReport[]) => void
+) {
+  if (isMigratingReportBundles || hasMigratedReportBundlesInSession) return;
+  isMigratingReportBundles = true;
+
+  try {
+    const delIds = new Set((masterDocCache.bundledDeletedReports || []).map((r) => r.id));
+    const combinedMap = new Map<string, DOEReport>(existingBundleMap);
+    const missingToWrite: DOEReport[] = [];
+
+    // 1. Check local cached reports first (0 Firestore reads)
+    const localReports = getLocalCachedReportsForBundleSync();
+    for (const r of localReports) {
+      if (!delIds.has(r.id) && !combinedMap.has(r.id)) {
+        combinedMap.set(r.id, r);
+        missingToWrite.push(r);
+      }
+    }
+
+    // 2. Also read legacy 'reports' collection if bundle has fewer than expected reports
+    if (existingBundleMap.size < 800) {
+      try {
+        const legacySnap = await getDocs(collection(db, REPORTS_COLLECTION));
+        legacySnap.forEach((docSnap) => {
+          const raw = docSnap.data();
+          if (docSnap.id === 'report-test-123' || raw?.id === 'report-test-123') {
+            return;
+          }
+          const clean = sanitizeReport({ ...raw, id: raw?.id || docSnap.id });
+          if (clean && !delIds.has(clean.id) && !existingBundleMap.has(clean.id)) {
+            if (!combinedMap.has(clean.id)) {
+              missingToWrite.push(clean);
+            }
+            combinedMap.set(clean.id, clean);
+          }
+        });
+        hasMigratedReportBundlesInSession = true;
+      } catch (err) {
+        logStreamStatus('legacy_reports_migration', err);
+      }
+    } else {
+      hasMigratedReportBundlesInSession = true;
+    }
+
+    if (missingToWrite.length > 0) {
+      await saveBulkReportsOnline(missingToWrite);
+      try {
+        localStorage.setItem('doe_ss_bundles_seeded_v1', 'true');
+      } catch {}
+    }
+
+    if (onMigrated && combinedMap.size > existingBundleMap.size) {
+      const mergedList = Array.from(combinedMap.values()).sort((a, b) =>
+        (b.reportDate || '').localeCompare(a.reportDate || '')
+      );
+      onMigrated(mergedList);
+    }
+  } finally {
+    isMigratingReportBundles = false;
+  }
+}
+
 export function subscribeReports(
   onData: (reports: DOEReport[]) => void,
   onError?: (err: unknown) => void
 ) {
-  const colRef = collection(db, REPORTS_COLLECTION);
+  const colRef = collection(db, REPORT_BUNDLES_COLLECTION);
   return onSnapshot(
     colRef,
     (snapshot) => {
       if (snapshot.metadata.fromCache && snapshot.empty) {
         return;
       }
-      const list: DOEReport[] = [];
+      const bundleMap = new Map<string, DOEReport>();
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data();
-        if (docSnap.id === 'report-test-123' || raw?.id === 'report-test-123') {
-          deleteDoc(docSnap.ref).catch(() => {});
-          return;
-        }
-        const clean = sanitizeReport({ ...raw, id: raw?.id || docSnap.id });
-        if (clean) {
-          list.push(clean);
+        const reportsMap = raw?.reportsMap;
+        if (reportsMap && typeof reportsMap === 'object') {
+          for (const [repId, repVal] of Object.entries(reportsMap)) {
+            if (repId === 'report-test-123' || !repVal || typeof repVal !== 'object') {
+              continue;
+            }
+            const clean = sanitizeReport({
+              ...(repVal as Record<string, unknown>),
+              id: (repVal as DOEReport).id || repId,
+            });
+            if (clean) {
+              bundleMap.set(clean.id, clean);
+            }
+          }
         }
       });
-      list.sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''));
-      onData(list);
+
+      const list = Array.from(bundleMap.values()).sort((a, b) =>
+        (b.reportDate || '').localeCompare(a.reportDate || '')
+      );
+      if (list.length > 0 || !snapshot.empty) {
+        onData(list);
+      }
+
+      // If report_bundles is empty or incomplete, automatically migrate from local cache + legacy 'reports' collection
+      if (bundleMap.size < 800 && !hasMigratedReportBundlesInSession) {
+        migrateLegacyReportsToBundlesOnce(bundleMap, onData);
+      }
     },
     (error) => {
-      logStreamStatus('reports', error, onError);
+      // Even if read quota is temporarily exceeded, seed report_bundles from local cache if not yet seeded (uses write quota only)
+      try {
+        if (localStorage.getItem('doe_ss_bundles_seeded_v1') !== 'true') {
+          const localReports = getLocalCachedReportsForBundleSync();
+          if (localReports.length > 0) {
+            saveBulkReportsOnline(localReports)
+              .then(() => {
+                localStorage.setItem('doe_ss_bundles_seeded_v1', 'true');
+              })
+              .catch(() => {});
+          }
+        }
+      } catch {}
+      logStreamStatus('report_bundles', error, onError);
     }
   );
 }
@@ -658,7 +882,9 @@ export function subscribeReports(
 export async function saveReportOnline(report: DOEReport): Promise<void> {
   const sanitized = sanitizeReport(report);
   if (!sanitized) return;
-  const docRef = doc(db, REPORTS_COLLECTION, sanitized.id);
+  const bundleId = getBundleIdForReportId(sanitized.id);
+  const bundleRef = doc(db, REPORT_BUNDLES_COLLECTION, bundleId);
+  const legacyDocRef = doc(db, REPORTS_COLLECTION, sanitized.id);
   const cleanReport = cleanForFirestore(sanitized);
 
   const existingDel = masterDocCache.bundledDeletedReports || [];
@@ -667,15 +893,28 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
     persistMasterConfigOnline({ bundledDeletedReports: nextDel }).catch(() => {});
   }
 
+  // Keep legacy single-doc collection synced in background
+  setDoc(legacyDocRef, cleanReport, { merge: true }).catch(() => {});
+
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await setDoc(docRef, cleanReport, { merge: true });
+      await setDoc(
+        bundleRef,
+        {
+          id: bundleId,
+          updatedAt: new Date().toISOString(),
+          reportsMap: {
+            [sanitized.id]: cleanReport,
+          },
+        },
+        { merge: true }
+      );
       return;
     } catch (error) {
       lastError = error;
       if (isQuotaExceededError(error)) {
-        logStreamStatus('save_report', error);
+        logStreamStatus('save_report_bundle', error);
         return;
       }
       if (attempt < 3) {
@@ -683,13 +922,26 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
       }
     }
   }
-  handleFirestoreError(lastError, OperationType.WRITE, `${REPORTS_COLLECTION}/${sanitized.id}`);
+  handleFirestoreError(lastError, OperationType.WRITE, `${REPORT_BUNDLES_COLLECTION}/${bundleId}`);
 }
 
 export async function purgeGhostReportOnline(reportId: string): Promise<void> {
   if (!reportId) return;
+  const bundleId = getBundleIdForReportId(reportId);
+  const bundleRef = doc(db, REPORT_BUNDLES_COLLECTION, bundleId);
+  deleteDoc(doc(db, REPORTS_COLLECTION, reportId)).catch(() => {});
   try {
-    await deleteDoc(doc(db, REPORTS_COLLECTION, reportId));
+    await setDoc(
+      bundleRef,
+      {
+        id: bundleId,
+        updatedAt: new Date().toISOString(),
+        reportsMap: {
+          [reportId]: deleteField(),
+        },
+      },
+      { merge: true }
+    );
   } catch (err) {
     if (!isQuotaExceededError(err)) {
       console.warn('Could not purge ghost report:', reportId, err);
@@ -698,7 +950,9 @@ export async function purgeGhostReportOnline(reportId: string): Promise<void> {
 }
 
 export async function deleteReportOnline(report: DOEReport): Promise<void> {
-  const docRef = doc(db, REPORTS_COLLECTION, report.id);
+  const bundleId = getBundleIdForReportId(report.id);
+  const bundleRef = doc(db, REPORT_BUNDLES_COLLECTION, bundleId);
+  const legacyDocRef = doc(db, REPORTS_COLLECTION, report.id);
   try {
     const sanitized = sanitizeReport(report);
     if (sanitized) {
@@ -709,33 +963,57 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
         bundledDeletedReports: [sanitized, ...prevDel].slice(0, 50),
       }).catch(() => {});
     }
-    await deleteDoc(docRef);
+    deleteDoc(legacyDocRef).catch(() => {});
+    await setDoc(
+      bundleRef,
+      {
+        id: bundleId,
+        updatedAt: new Date().toISOString(),
+        reportsMap: {
+          [report.id]: deleteField(),
+        },
+      },
+      { merge: true }
+    );
   } catch (error) {
     if (isQuotaExceededError(error)) {
       logStreamStatus('delete_report', error);
       return;
     }
-    handleFirestoreError(error, OperationType.DELETE, `${REPORTS_COLLECTION}/${report.id}`);
+    handleFirestoreError(error, OperationType.DELETE, `${REPORT_BUNDLES_COLLECTION}/${bundleId}`);
   }
 }
 
 export async function restoreReportOnline(report: DOEReport): Promise<void> {
   const sanitized = sanitizeReport(report);
   if (!sanitized) return;
-  const docRef = doc(db, REPORTS_COLLECTION, sanitized.id);
+  const bundleId = getBundleIdForReportId(sanitized.id);
+  const bundleRef = doc(db, REPORT_BUNDLES_COLLECTION, bundleId);
+  const legacyDocRef = doc(db, REPORTS_COLLECTION, sanitized.id);
   try {
     const cleanReport = cleanForFirestore(sanitized);
     const nextDel = (masterDocCache.bundledDeletedReports || []).filter(
       (r) => r.id !== sanitized.id
     );
     await persistMasterConfigOnline({ bundledDeletedReports: nextDel }).catch(() => {});
-    await setDoc(docRef, cleanReport);
+    setDoc(legacyDocRef, cleanReport, { merge: true }).catch(() => {});
+    await setDoc(
+      bundleRef,
+      {
+        id: bundleId,
+        updatedAt: new Date().toISOString(),
+        reportsMap: {
+          [sanitized.id]: cleanReport,
+        },
+      },
+      { merge: true }
+    );
   } catch (error) {
     if (isQuotaExceededError(error)) {
       logStreamStatus('restore_report', error);
       return;
     }
-    handleFirestoreError(error, OperationType.WRITE, `${REPORTS_COLLECTION}/${sanitized.id}`);
+    handleFirestoreError(error, OperationType.WRITE, `${REPORT_BUNDLES_COLLECTION}/${bundleId}`);
   }
 }
 
@@ -1043,9 +1321,27 @@ export async function saveSystemConfigOnline(config: SystemConfig): Promise<void
 // ============================================================================
 export async function clearAllReportsOnline(): Promise<void> {
   try {
-    const reportSnap = await getDocs(collection(db, REPORTS_COLLECTION));
+    const [bundleSnap, reportSnap] = await Promise.all([
+      getDocs(collection(db, REPORT_BUNDLES_COLLECTION)),
+      getDocs(collection(db, REPORTS_COLLECTION)),
+    ]);
     const archived: DOEReport[] = [];
     const batch = writeBatch(db);
+    bundleSnap.docs.forEach((docSnap) => {
+      const raw = docSnap.data();
+      if (raw?.reportsMap && typeof raw.reportsMap === 'object') {
+        for (const [repId, repVal] of Object.entries(raw.reportsMap)) {
+          if (repVal && typeof repVal === 'object') {
+            const clean = sanitizeReport({
+              ...(repVal as Record<string, unknown>),
+              id: (repVal as DOEReport).id || repId,
+            });
+            if (clean) archived.push(clean);
+          }
+        }
+      }
+      batch.delete(docSnap.ref);
+    });
     reportSnap.docs.forEach((docSnap) => {
       const clean = sanitizeReport({ ...docSnap.data(), id: docSnap.id });
       if (clean) archived.push(clean);

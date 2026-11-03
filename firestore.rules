@@ -38,6 +38,17 @@ service cloud.firestore {
       allow delete: if isValidId(reportId);
     }
 
+    // Sharded Report Bundles (High-efficiency bundled reports storage)
+    match /report_bundles/{bundleId} {
+      allow get: if isValidId(bundleId);
+      allow list: if true;
+      allow create: if isValidId(bundleId)
+        && incoming().id is string;
+      allow update: if isValidId(bundleId)
+        && (!('id' in existing()) || incoming().id == existing().id);
+      allow delete: if isValidId(bundleId);
+    }
+
     // Employment Offices & Mobile Units
     match /offices/{officeId} {
       allow get: if isValidId(officeId);

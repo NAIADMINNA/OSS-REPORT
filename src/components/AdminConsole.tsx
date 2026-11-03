@@ -691,6 +691,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       systemConfig,
       offices,
       categories,
+      queueMetrics,
       reporters,
       reports,
     };
@@ -729,6 +730,8 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         });
       } catch (err) {
         onNotify('⚠️ ไฟล์ JSON ไม่ถูกต้องหรือไม่ตรงตามรูปแบบฐานข้อมูล');
+      } finally {
+        e.target.value = '';
       }
     };
     reader.readAsText(file);

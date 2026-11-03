@@ -222,12 +222,27 @@
         "createdAt": { "type": "string", "description": "Creation timestamp" }
       },
       "required": ["id", "issueType", "title"]
+    },
+    "ReportBundle": {
+      "title": "ReportBundle",
+      "description": "Sharded bundle document containing a map of DOE reports to minimize read quota consumption",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Shard bundle identifier (e.g., bundle_shard_0)" },
+        "reportsMap": { "type": "object", "description": "Map of reportId to DOEReport object" },
+        "updatedAt": { "type": "string", "description": "Last updated ISO timestamp" }
+      },
+      "required": ["id", "reportsMap"]
     }
   },
   "firestore": {
     "/reports/{reportId}": {
       "schema": "Report",
       "description": "Daily DOE work permit reports submitted across provinces"
+    },
+    "/report_bundles/{bundleId}": {
+      "schema": "ReportBundle",
+      "description": "Bundled report shards holding grouped DOE reports for high-speed, low-quota synchronization"
     },
     "/offices/{officeId}": {
       "schema": "EmploymentOffice",

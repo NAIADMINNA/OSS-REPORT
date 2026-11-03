@@ -49,6 +49,7 @@ import { testConnection } from './firebase';
 import {
   subscribeReports,
   saveReportOnline,
+  saveBulkReportsOnline,
   deleteReportOnline,
   restoreReportOnline,
   purgeGhostReportOnline,
@@ -598,8 +599,8 @@ export default function App() {
               if (toUpload.length > 0) {
                 toUpload.forEach((r) => {
                   uploadedLocalReportIdsRef.current.add(r.id);
-                  saveReportOnline(r).catch(console.warn);
                 });
+                saveBulkReportsOnline(toUpload).catch(console.warn);
               }
             }
             return filtered.length === prev.length ? prev : filtered;
@@ -659,8 +660,8 @@ export default function App() {
             if (pendingUnsynced.length > 0) {
               pendingUnsynced.forEach((r) => {
                 uploadedLocalReportIdsRef.current.add(r.id);
-                saveReportOnline(r).catch(console.warn);
               });
+              saveBulkReportsOnline(pendingUnsynced).catch(console.warn);
             }
 
             // Merge online reports with non-deleted local reports so partial/cached snapshots never drop reports
@@ -1189,19 +1190,31 @@ export default function App() {
   const handleRestoreFullDatabase = (data: {
     offices?: EmploymentOffice[];
     categories?: ReportCategory[];
+    queueMetrics?: QueueMetricCategory[];
     reporters?: ReporterProfile[];
     systemConfig?: SystemConfig;
     reports?: DOEReport[];
   }) => {
     if (data.offices && Array.isArray(data.offices)) {
-      setOffices(data.offices);
-      localStorage.setItem(STORAGE_KEY_OFFICES, JSON.stringify(data.offices));
-      data.offices.forEach((o) => saveOfficeOnline(o).catch(console.warn));
+      const { merged } = normalizeOfficesAndCenters(
+        data.offices,
+        deletedOfficeIdsRef.current
+      );
+      setOffices(merged);
+      localStorage.setItem(STORAGE_KEY_OFFICES, JSON.stringify(merged));
+      saveAllOfficesOnline(merged).catch(console.warn);
     }
     if (data.categories && Array.isArray(data.categories)) {
-      setCategories(data.categories);
-      localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(data.categories));
-      saveAllCategoriesOnline(data.categories).catch(console.warn);
+      const normalizedCats = normalizeCategoriesList(data.categories);
+      setCategories(normalizedCats);
+      localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(normalizedCats));
+      saveAllCategoriesOnline(normalizedCats).catch(console.warn);
+    }
+    if (data.queueMetrics && Array.isArray(data.queueMetrics)) {
+      const normalizedQm = normalizeQueueMetricsList(data.queueMetrics);
+      setQueueMetrics(normalizedQm);
+      localStorage.setItem(STORAGE_KEY_QUEUE_METRICS, JSON.stringify(normalizedQm));
+      saveAllQueueMetricsOnline(normalizedQm).catch(console.warn);
     }
     if (data.reporters && Array.isArray(data.reporters)) {
       setReporters(data.reporters);
@@ -1214,20 +1227,22 @@ export default function App() {
       saveSystemConfigOnline(data.systemConfig).catch(console.warn);
     }
     if (data.reports && Array.isArray(data.reports)) {
-      data.reports.forEach((r) => {
+      const normalizedReports = sanitizeReportList(data.reports);
+      normalizedReports.forEach((r) => {
         deletedReportIdsRef.current.delete(r.id);
         pendingSaveReportIdsRef.current.add(r.id);
       });
-      setReports(data.reports);
-      localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(data.reports));
-      data.reports.forEach((r) =>
-        saveReportOnline(r)
-          .then(() => pendingSaveReportIdsRef.current.delete(r.id))
-          .catch(console.warn)
-      );
-      if (data.reports.length > 0) {
-        setCurrentReport(data.reports[0]);
-        setLivePreviewReport(data.reports[0]);
+      setReports(normalizedReports);
+      localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(normalizedReports));
+      localStorage.setItem(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify(normalizedReports));
+      saveBulkReportsOnline(normalizedReports)
+        .then(() => {
+          normalizedReports.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
+        })
+        .catch(console.warn);
+      if (normalizedReports.length > 0) {
+        setCurrentReport(normalizedReports[0]);
+        setLivePreviewReport(normalizedReports[0]);
       }
     }
   };
@@ -1332,11 +1347,11 @@ export default function App() {
       });
       setReports(finalRecovered);
       setDeletedReports([]);
-      finalRecovered.forEach((r) =>
-        restoreReportOnline(r)
-          .then(() => pendingSaveReportIdsRef.current.delete(r.id))
-          .catch(console.warn)
-      );
+      saveBulkReportsOnline(finalRecovered)
+        .then(() => {
+          finalRecovered.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
+        })
+        .catch(console.warn);
       showToast(`กู้คืนและซิงก์รายงานสำเร็จทั้งหมด ${finalRecovered.length} ฉบับ!`);
     } catch (e) {
       console.error('Failed to restore backup reports:', e);
@@ -1350,8 +1365,8 @@ export default function App() {
       showToast('ไม่มีรายการรายงานในเครื่องที่จะซิงก์ขึ้น Cloud Firestore');
       return;
     }
-    reports.forEach((r) => saveReportOnline(r).catch(console.warn));
-    showToast(`ซิงก์รายงานทั้งหมด (${reports.length} ฉบับ) ขึ้นฐานข้อมูลออนไลน์เรียบร้อยแล้ว`);
+    saveBulkReportsOnline(reports).catch(console.warn);
+    showToast(`ซิงก์รายงานทั้งหมด (${reports.length} ฉบับ) แบบรวมชุด (Bundled Shards) ขึ้นฐานข้อมูลออนไลน์เรียบร้อยแล้ว`);
   };
 
   // Save or update report

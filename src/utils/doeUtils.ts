@@ -1,5 +1,6 @@
 import { DOEReport, ReportCategory } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
+import { formatThaiDateFull } from './thaiDate';
 
 /**
  * ทำความสะอาดข้อมูลรายงาน (Sanitize & Normalize) เพื่อป้องกันปัญหาฟิลด์เป็น undefined/null
@@ -52,6 +53,12 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
     ? matchedOffice.name
     : rawOfficeName || officeId;
 
+  const officeNameEn =
+    matchedOffice?.nameEn ||
+    (typeof r.officeNameEn === 'string' && r.officeNameEn.trim()
+      ? r.officeNameEn
+      : officeName);
+
   const centerName =
     rawCenterName ||
     (rawOfficeName.startsWith('ศูนย์') ? rawOfficeName : '') ||
@@ -68,13 +75,20 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
       ? r.reportDate
       : new Date().toISOString().slice(0, 10);
 
+  const reportDateThaiStr =
+    typeof r.reportDateThaiStr === 'string' && r.reportDateThaiStr.trim()
+      ? r.reportDateThaiStr
+      : formatThaiDateFull(reportDate);
+
   return {
     id,
     officeId: normalizedOfficeId,
     officeName,
+    officeNameEn,
     centerName,
     region,
     reportDate,
+    reportDateThaiStr,
     reporterName: typeof r.reporterName === 'string' ? r.reporterName : '',
     reporterPosition: typeof r.reporterPosition === 'string' ? r.reporterPosition : '',
     phoneNumber: typeof r.phoneNumber === 'string' ? r.phoneNumber : '',
@@ -129,7 +143,7 @@ export function sanitizeReportList(list: unknown): DOEReport[] {
  */
 export function calculateReportTotalSections(
   report: Partial<DOEReport>,
-  categories?: ReportCategory[]
+  categories?: ReportCategory[] | null
 ): number {
   if (categories && categories.length > 0) {
     return categories
