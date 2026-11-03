@@ -2709,6 +2709,42 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 <span className="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-xl font-bold border border-emerald-200">
                   แก้ไขแล้ว: {reportedIssues.filter((i) => i.status === 'resolved').length}
                 </span>
+                {reportedIssues.some((i) => i.status === 'resolved') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const resolvedList = reportedIssues.filter((i) => i.status === 'resolved');
+                      setConfirmModal({
+                        isOpen: true,
+                        title: 'ยืนยันการลบรายการที่แก้ไขแล้วทั้งหมด',
+                        message: `คุณต้องการลบรายการข้อขัดข้องที่ทำเครื่องหมายว่า "แก้ไขแล้ว" จำนวน ${resolvedList.length} รายการ ออกจากระบบหรือไม่?`,
+                        confirmText: 'ยืนยันลบที่แก้ไขแล้ว',
+                        cancelText: 'ยกเลิก',
+                        isDanger: true,
+                        iconType: 'trash',
+                        onConfirm: async () => {
+                          const remaining = reportedIssues.filter((i) => i.status !== 'resolved');
+                          setReportedIssues(remaining);
+                          try {
+                            localStorage.setItem(
+                              'doe_assistant_reported_issues_v1',
+                              JSON.stringify(remaining)
+                            );
+                          } catch {}
+                          for (const item of resolvedList) {
+                            await deleteSystemIssueOnline(item.id);
+                          }
+                          onNotify(`ลบรายการที่แก้ไขแล้ว (${resolvedList.length} รายการ) เรียบร้อยแล้ว`);
+                        },
+                      });
+                    }}
+                    className="px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl font-bold border border-amber-200 flex items-center gap-1 cursor-pointer transition-colors"
+                    title="ลบเฉพาะรายการที่แก้ไขแล้ว"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ลบที่แก้ไขแล้ว ({reportedIssues.filter((i) => i.status === 'resolved').length})</span>
+                  </button>
+                )}
                 {reportedIssues.length > 0 && (
                   <button
                     type="button"
@@ -2723,12 +2759,12 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                         isDanger: true,
                         iconType: 'trash',
                         onConfirm: async () => {
-                          await clearAllSystemIssuesOnline();
                           setReportedIssues([]);
                           try {
-                            localStorage.removeItem('doe_assistant_reported_issues_v1');
+                            localStorage.setItem('doe_assistant_reported_issues_v1', '[]');
                           } catch {}
-                          onNotify('ล้างประวัติข้อขัดข้องทั้งหมดเรียบร้อยแล้ว');
+                          await clearAllSystemIssuesOnline();
+                          onNotify('ล้างประวัติข้อขัดข้องทั้งหมดออกจากระบบและฐานข้อมูลเรียบร้อยแล้ว');
                         },
                       });
                     }}
@@ -2897,7 +2933,6 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                               isDanger: true,
                               iconType: 'trash',
                               onConfirm: async () => {
-                                await deleteSystemIssueOnline(issue.id);
                                 setReportedIssues((prev) => {
                                   const next = prev.filter((i) => i.id !== issue.id);
                                   try {
@@ -2908,6 +2943,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                                   } catch {}
                                   return next;
                                 });
+                                await deleteSystemIssueOnline(issue.id);
                                 onNotify(`ลบข้อขัดข้อง "${issue.title}" เรียบร้อยแล้ว`);
                               },
                             });

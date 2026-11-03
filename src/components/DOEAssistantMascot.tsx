@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   AlertTriangle,
   Send,
@@ -12,6 +12,7 @@ import {
   HelpCircle,
   Trash2,
   ArrowLeftRight,
+  EyeOff,
 } from 'lucide-react';
 import { EmploymentOffice, SystemIssueReport } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
@@ -39,7 +40,10 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
   isFirestoreOnline = true,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [showGreetingBubble, setShowGreetingBubble] = useState(true);
+  const [isMascotActive, setIsMascotActive] = useState(false);
+  const [showGreetingBubble, setShowGreetingBubble] = useState(false);
+  const mascotContainerRef = useRef<HTMLDivElement>(null);
+  const panelContainerRef = useRef<HTMLDivElement>(null);
 
   // Position state: 'left' or 'right'
   const [position, setPosition] = useState<'left' | 'right'>(() => {
@@ -54,6 +58,7 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
 
   const togglePosition = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    setIsMascotActive(true);
     setPosition((prev) => {
       const next = prev === 'left' ? 'right' : 'left';
       try {
@@ -114,9 +119,8 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
     }
   }, [currentOfficeName]);
 
-  // Subscribe to issues from Firestore when the mascot panel is open to conserve read quota
+  // Subscribe to issues from Firestore (shares the multiplexed masterDocCache listener — 0 extra reads)
   useEffect(() => {
-    if (!isOpen) return;
     const unsub = subscribeSystemIssues((onlineIssues) => {
       if (Array.isArray(onlineIssues)) {
         setMyIssues(onlineIssues);
@@ -128,11 +132,10 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
       }
     });
     return () => unsub();
-  }, [isOpen]);
+  }, []);
 
   const handleDeleteSingleIssue = async (issueId: string) => {
     try {
-      await deleteSystemIssueOnline(issueId);
       setMyIssues((prev) => {
         const next = prev.filter((i) => i.id !== issueId);
         try {
@@ -140,6 +143,7 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
         } catch {}
         return next;
       });
+      await deleteSystemIssueOnline(issueId);
     } catch (err) {
       console.warn('Error deleting issue:', err);
     }
@@ -147,32 +151,35 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
 
   const handleClearAllIssues = async () => {
     try {
-      await clearAllSystemIssuesOnline();
       setMyIssues([]);
       try {
-        localStorage.removeItem(STORAGE_KEY_ISSUES);
+        localStorage.setItem(STORAGE_KEY_ISSUES, '[]');
       } catch {}
+      await clearAllSystemIssuesOnline();
     } catch (err) {
       console.warn('Error clearing issues:', err);
     }
   };
 
-  // Persist issues locally
+  // Return mascot to translucent state when clicking outside mascot and panel
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_ISSUES, JSON.stringify(myIssues));
-    } catch {
-      // ignore
-    }
-  }, [myIssues]);
+    if (!isMascotActive && !isOpen) return;
 
-  // Auto-hide greeting bubble after 12 seconds or keep until clicked
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowGreetingBubble(false);
-    }, 12000);
-    return () => clearTimeout(timer);
-  }, []);
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const clickedInsideMascot = mascotContainerRef.current?.contains(target);
+      const clickedInsidePanel = panelContainerRef.current?.contains(target);
+
+      if (!clickedInsideMascot && !clickedInsidePanel) {
+        setIsMascotActive(false);
+        setIsOpen(false);
+        setShowGreetingBubble(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isMascotActive, isOpen]);
 
   const isContactComplete = useMemo(() => {
     const hasName = issueReporterName.trim().length > 0;
@@ -228,22 +235,29 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
   };
 
   const pendingCount = myIssues.filter((i) => i.status === 'pending').length;
+  const isClearVisible = isMascotActive || isOpen;
 
   return (
     <>
       {/* ================= MASCOT FLOATING AVATAR ================= */}
       <div
+        ref={mascotContainerRef}
         className={`fixed bottom-5 z-40 flex flex-col select-none transition-all duration-300 no-print ${
           position === 'left' ? 'left-4 sm:left-5 items-start' : 'right-4 sm:right-5 items-end'
-        }`}
+        } ${isClearVisible ? 'opacity-100 scale-100' : 'opacity-25 scale-95'}`}
       >
-        {/* Floating Greeting Bubble (when panel is closed) */}
-        {!isOpen && showGreetingBubble && (
-          <div className="mb-2.5 max-w-[270px] bg-white text-slate-800 p-3.5 rounded-2xl shadow-2xl border-2 border-amber-300 ring-4 ring-amber-400/25 animate-in fade-in slide-in-from-bottom-2 duration-300 relative">
+        {/* Floating Greeting Bubble (when mascot is clicked/active and panel is closed) */}
+        {!isOpen && isMascotActive && showGreetingBubble && (
+          <div className="mb-2.5 max-w-[280px] bg-white text-slate-800 p-3.5 rounded-2xl shadow-2xl border-2 border-amber-300 ring-4 ring-amber-400/25 animate-in fade-in slide-in-from-bottom-2 duration-300 relative">
             <button
-              onClick={() => setShowGreetingBubble(false)}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowGreetingBubble(false);
+                setIsMascotActive(false);
+              }}
               className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-full flex items-center justify-center text-[10px] cursor-pointer shadow-xs border border-amber-300"
-              title="ปิดข้อความ"
+              title="ปรับเป็นโหมดโปร่งใส"
             >
               <X className="w-3 h-3" />
             </button>
@@ -255,8 +269,32 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
                   <span className="text-[9px] bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded-md font-bold">Online</span>
                 </p>
                 <p className="text-[11px] text-slate-700 leading-snug mt-1 font-medium">
-                  หุ่นยนต์รับแจ้งปัญหาและข้อขัดข้องการใช้งานระบบ คลิกแจ้งเรื่องได้ตลอดเวลาครับ!
+                  หุ่นยนต์รับแจ้งปัญหาและข้อขัดข้องการใช้งานระบบ คลิกเพื่อเปิดหน้าต่างแจ้งเรื่องได้เลยครับ!
                 </p>
+                <div className="mt-2.5 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(true);
+                      setShowGreetingBubble(false);
+                    }}
+                    className="flex-1 px-2.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-[11px] shadow-xs transition-colors cursor-pointer text-center"
+                  >
+                    แจ้งข้อขัดข้องระบบ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMascotActive(false);
+                      setShowGreetingBubble(false);
+                    }}
+                    className="px-2 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
+                    title="ปรับหุ่นยนต์ให้โปร่งใส"
+                  >
+                    <EyeOff className="w-3 h-3" />
+                    <span>โปร่งใส</span>
+                  </button>
+                </div>
               </div>
             </div>
             {/* Small speech triangle pointer */}
@@ -268,15 +306,29 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
           </div>
         )}
 
-        {/* Mascot Avatar Button - Bright, High-Visibility, Eye-Catching Gold & Amber */}
+        {/* Mascot Avatar Button - Translucent by default, Clear when clicked */}
         <button
           type="button"
           onClick={() => {
-            setIsOpen(!isOpen);
-            setShowGreetingBubble(false);
+            if (!isMascotActive && !isOpen) {
+              setIsMascotActive(true);
+              setShowGreetingBubble(true);
+            } else if (!isOpen) {
+              setIsOpen(true);
+              setShowGreetingBubble(false);
+            } else {
+              setIsOpen(false);
+              setIsMascotActive(false);
+              setShowGreetingBubble(false);
+            }
           }}
+          title={
+            !isClearVisible
+              ? 'คลิกเพื่อแสดงหุ่นยนต์ NAIJEABKUB แบบชัดเจน'
+              : 'คลิกเพื่อเปิดหน้าต่างแจ้งข้อขัดข้องระบบ'
+          }
           aria-label="เปิดหน้าต่างหุ่นยนต์ NAIJEABKUB แจ้งข้อขัดข้อง"
-          className="group relative flex items-center gap-2.5 p-2 pr-4 bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-slate-950 rounded-full shadow-2xl shadow-amber-500/40 hover:shadow-amber-400/60 border-2 border-white ring-4 ring-amber-400/70 transition-all transform hover:-translate-y-1 active:scale-95 cursor-pointer"
+          className="group relative flex items-center gap-2.5 p-2 pr-4 bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-slate-950 rounded-full shadow-2xl shadow-amber-500/40 hover:shadow-amber-400/60 border-2 border-white ring-4 ring-amber-400/70 transition-all transform active:scale-95 cursor-pointer"
         >
           {/* Animated Robot Mascot Avatar Badge */}
           <div className="relative w-12 h-12 rounded-full bg-white flex items-center justify-center shadow-md overflow-hidden border-2 border-amber-400 shrink-0">
@@ -360,7 +412,7 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-slate-900 font-bold leading-none mt-1 flex items-center gap-1">
-              <span>แจ้งข้อขัดข้องระบบ</span>
+              <span>{!isClearVisible ? 'คลิกเพื่อแสดงผลชัดเจน' : 'แจ้งข้อขัดข้องระบบ'}</span>
               <AlertTriangle className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
             </p>
           </div>
@@ -374,20 +426,39 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
         </button>
 
         {/* Quick Position Switcher Pill (ย้ายหุ่นยนต์ซ้าย/ขวา) */}
-        <button
-          type="button"
-          onClick={togglePosition}
-          title={position === 'left' ? 'ย้ายหุ่นยนต์ไปไว้ฝั่งขวาของหน้าจอ' : 'ย้ายหุ่นยนต์ไปไว้ฝั่งซ้ายของหน้าจอ'}
-          className="mt-1 px-2.5 py-0.5 rounded-full bg-slate-900/90 hover:bg-slate-950 text-amber-300 border border-amber-400/60 shadow-md text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer backdrop-blur-xs hover:scale-105 active:scale-95"
-        >
-          <ArrowLeftRight className="w-3 h-3 text-amber-300" />
-          <span>{position === 'left' ? 'ย้ายไปขวา ➔' : '⬅ ย้ายไปซ้าย'}</span>
-        </button>
+        <div className="mt-1 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={togglePosition}
+            title={position === 'left' ? 'ย้ายหุ่นยนต์ไปไว้ฝั่งขวาของหน้าจอ' : 'ย้ายหุ่นยนต์ไปไว้ฝั่งซ้ายของหน้าจอ'}
+            className="px-2.5 py-0.5 rounded-full bg-slate-900/90 hover:bg-slate-950 text-amber-300 border border-amber-400/60 shadow-md text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer backdrop-blur-xs hover:scale-105 active:scale-95"
+          >
+            <ArrowLeftRight className="w-3 h-3 text-amber-300" />
+            <span>{position === 'left' ? 'ย้ายไปขวา ➔' : '⬅ ย้ายไปซ้าย'}</span>
+          </button>
+          {isClearVisible && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsMascotActive(false);
+                setIsOpen(false);
+                setShowGreetingBubble(false);
+              }}
+              title="ปรับหุ่นยนต์ให้เป็นลักษณะโปร่งใส"
+              className="px-2 py-0.5 rounded-full bg-slate-800/90 hover:bg-slate-900 text-slate-200 border border-slate-600 shadow-md text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+            >
+              <EyeOff className="w-3 h-3" />
+              <span>โปร่งใส</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ================= ISSUE REPORTING WINDOW PANEL ================= */}
       {isOpen && (
         <div
+          ref={panelContainerRef}
           className={`fixed bottom-20 z-50 w-[94vw] sm:w-[420px] max-w-[450px] h-[580px] max-h-[85vh] bg-white rounded-3xl shadow-2xl border border-slate-200 ring-1 ring-slate-950/10 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 font-sans transition-all ${
             position === 'left' ? 'left-3 sm:left-5' : 'right-3 sm:right-5'
           }`}
@@ -427,7 +498,11 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setIsOpen(false)}
+                onClick={() => {
+                  setIsOpen(false);
+                  setIsMascotActive(true);
+                  setShowGreetingBubble(true);
+                }}
                 className="w-8 h-8 rounded-xl bg-slate-900/10 hover:bg-slate-900/20 text-slate-900 flex items-center justify-center transition-colors cursor-pointer"
                 title="ย่อหน้าต่าง"
               >
@@ -435,9 +510,13 @@ export const DOEAssistantMascot: React.FC<DOEAssistantMascotProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setIsOpen(false)}
+                onClick={() => {
+                  setIsOpen(false);
+                  setIsMascotActive(false);
+                  setShowGreetingBubble(false);
+                }}
                 className="w-8 h-8 rounded-xl bg-slate-900/10 hover:bg-rose-600 hover:text-white text-slate-900 flex items-center justify-center transition-colors cursor-pointer"
-                title="ปิดหน้าต่าง"
+                title="ปิดหน้าต่างและกลับสู่โหมดโปร่งใส"
               >
                 <X className="w-4 h-4" />
               </button>

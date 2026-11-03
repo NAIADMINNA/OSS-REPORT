@@ -150,6 +150,32 @@ function parseArrayField<T>(val: unknown): T[] {
   return [];
 }
 
+const STORAGE_KEY_DELETED_ISSUE_IDS = 'doe_deleted_issue_ids_v1';
+
+function loadDeletedIssueIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DELETED_ISSUE_IDS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((id) => typeof id === 'string'));
+      }
+    }
+  } catch {}
+  return new Set<string>();
+}
+
+const deletedIssueIds: Set<string> = loadDeletedIssueIds();
+
+function saveDeletedIssueIds() {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY_DELETED_ISSUE_IDS,
+      JSON.stringify(Array.from(deletedIssueIds))
+    );
+  } catch {}
+}
+
 function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
   let localOffices: EmploymentOffice[] = EMPLOYMENT_OFFICES.filter(isOfficeCustomized);
   let localDelOffices: EmploymentOffice[] = [];
@@ -274,13 +300,15 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
     const rawIssues = localStorage.getItem('doe_assistant_reported_issues_v1');
     if (rawIssues) {
       const parsed = JSON.parse(rawIssues);
-      if (Array.isArray(parsed)) localIssues = parsed;
+      if (Array.isArray(parsed)) {
+        localIssues = parsed.filter((i) => i && i.id && !deletedIssueIds.has(i.id));
+      }
     }
   } catch {}
 
   return {
     ...localConfig,
-    migrationVersion: 0,
+    migrationVersion: CURRENT_MIGRATION_VERSION,
     bundledOffices: localOffices,
     bundledDeletedOffices: localDelOffices,
     bundledCategories: localCats,
@@ -417,7 +445,7 @@ function broadcastMasterState(onlyConfigBranding = false) {
   // 8. System Issues
   if (Array.isArray(masterDocCache.bundledIssues)) {
     const issuesList = [...masterDocCache.bundledIssues].filter(
-      (i) => i && i.id && i.title
+      (i) => i && i.id && i.title && !deletedIssueIds.has(i.id)
     );
     issuesList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     systemIssuesListeners.forEach((cb) => cb(issuesList));
@@ -426,7 +454,7 @@ function broadcastMasterState(onlyConfigBranding = false) {
 
 async function persistMasterConfigOnline(
   partialUpdate: Partial<BundledMasterConfig>,
-  markMigrated = false
+  _markMigrated = false
 ): Promise<void> {
   masterDocCache = {
     ...masterDocCache,
@@ -443,9 +471,7 @@ async function persistMasterConfigOnline(
       partialUpdate.adminPin ||
       masterDocCache.adminPin ||
       DEFAULT_SYSTEM_CONFIG.adminPin,
-    migrationVersion: markMigrated
-      ? CURRENT_MIGRATION_VERSION
-      : masterDocCache.migrationVersion || 0,
+    migrationVersion: CURRENT_MIGRATION_VERSION,
     updatedAt: new Date().toISOString(),
   };
 
@@ -553,10 +579,13 @@ async function migrateLegacyCollectionsOnce(existingConfig: Partial<BundledMaste
     const issues: SystemIssueReport[] = [];
     issuesSnap.forEach((d) => {
       const data = d.data() as SystemIssueReport;
-      if (data && (data.id || d.id)) {
-        issues.push({ ...data, id: data.id || d.id });
+      const issueId = data?.id || d.id;
+      if (data && issueId && !deletedIssueIds.has(issueId)) {
+        issues.push({ ...data, id: issueId });
       }
     });
+
+    const hasExplicitBundledIssues = Array.isArray(existingConfig.bundledIssues);
 
     await persistMasterConfigOnline(
       {
@@ -588,10 +617,15 @@ async function migrateLegacyCollectionsOnce(existingConfig: Partial<BundledMaste
             : existingConfig.bundledDeletedReports ||
               masterDocCache.bundledDeletedReports ||
               [],
-        bundledIssues:
-          issues.length > 0
-            ? issues
-            : existingConfig.bundledIssues || masterDocCache.bundledIssues || [],
+        bundledIssues: hasExplicitBundledIssues
+          ? (existingConfig.bundledIssues || []).filter(
+              (i) => i && i.id && !deletedIssueIds.has(i.id)
+            )
+          : issues.length > 0
+          ? issues
+          : (masterDocCache.bundledIssues || []).filter(
+              (i) => i && i.id && !deletedIssueIds.has(i.id)
+            ),
       },
       true
     );
@@ -614,12 +648,18 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
       hasReceivedFirstMasterSnapshot = true;
       if (snapshot.exists()) {
         const rawData = snapshot.data() as BundledMasterConfig;
+        const parsedIssues = Array.isArray(rawData.bundledIssues)
+          ? rawData.bundledIssues.filter((i) => i && i.id && !deletedIssueIds.has(i.id))
+          : parseArrayField<SystemIssueReport>(rawData.bundledIssues).filter(
+              (i) => i && i.id && !deletedIssueIds.has(i.id)
+            );
         const data: BundledMasterConfig = {
           ...rawData,
           bundledOffices: parseArrayField<EmploymentOffice>(rawData.bundledOffices),
           bundledDeletedOffices: parseArrayField<EmploymentOffice>(
             rawData.bundledDeletedOffices
           ).filter((o) => o && o.id !== 'central_foreign_workers'),
+          bundledIssues: parsedIssues,
         };
         const isMigrated = (data.migrationVersion || 0) >= CURRENT_MIGRATION_VERSION;
         if (isMigrated) {
@@ -644,6 +684,9 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
                 ? data.customLogoUrl
                 : masterDocCache.customLogoUrl,
             adminPin: data.adminPin || masterDocCache.adminPin,
+            bundledIssues: Array.isArray(rawData.bundledIssues)
+              ? parsedIssues
+              : masterDocCache.bundledIssues,
           };
           broadcastMasterState(true);
           migrateLegacyCollectionsOnce(data);
@@ -1391,18 +1434,90 @@ export async function initializeFirestoreIfEmpty(): Promise<{
 // 7. SYSTEM ISSUES & TROUBLE REPORTS
 // ============================================================================
 export async function reportSystemIssueOnline(issue: SystemIssueReport): Promise<void> {
-  const prev = (masterDocCache.bundledIssues || []).filter((i) => i.id !== issue.id);
-  const next = [cleanForFirestore(issue), ...prev];
-  await persistMasterConfigOnline({ bundledIssues: next });
+  if (!issue || !issue.id) return;
+  deletedIssueIds.delete(issue.id);
+  saveDeletedIssueIds();
+
+  const cleanIssue = cleanForFirestore(issue);
+  const currentList = (masterDocCache.bundledIssues || []).filter(
+    (i) => i && i.id && !deletedIssueIds.has(i.id)
+  );
+  const existingIdx = currentList.findIndex((i) => i.id === issue.id);
+  let next: SystemIssueReport[];
+  if (existingIdx >= 0) {
+    next = [...currentList];
+    next[existingIdx] = cleanIssue;
+  } else {
+    next = [cleanIssue, ...currentList];
+  }
+
+  try {
+    localStorage.setItem('doe_assistant_reported_issues_v1', JSON.stringify(next));
+  } catch {}
+
+  // Keep legacy collection synced in background
+  setDoc(doc(db, ISSUES_COLLECTION, issue.id), cleanIssue, { merge: true }).catch(() => {});
+
+  await persistMasterConfigOnline({ bundledIssues: next }, true);
 }
 
 export async function deleteSystemIssueOnline(issueId: string): Promise<void> {
-  const next = (masterDocCache.bundledIssues || []).filter((i) => i.id !== issueId);
-  await persistMasterConfigOnline({ bundledIssues: next });
+  if (!issueId) return;
+  deletedIssueIds.add(issueId);
+  saveDeletedIssueIds();
+
+  const next = (masterDocCache.bundledIssues || []).filter(
+    (i) => i && i.id !== issueId && !deletedIssueIds.has(i.id)
+  );
+  masterDocCache.bundledIssues = next;
+  try {
+    localStorage.setItem('doe_assistant_reported_issues_v1', JSON.stringify(next));
+  } catch {}
+  broadcastMasterState(false);
+
+  // Also remove from legacy collection so it never resurrects
+  deleteDoc(doc(db, ISSUES_COLLECTION, issueId)).catch(() => {});
+
+  await persistMasterConfigOnline({ bundledIssues: next }, true);
 }
 
 export async function clearAllSystemIssuesOnline(): Promise<void> {
-  await persistMasterConfigOnline({ bundledIssues: [] });
+  (masterDocCache.bundledIssues || []).forEach((i) => {
+    if (i && i.id) deletedIssueIds.add(i.id);
+  });
+  try {
+    const saved = localStorage.getItem('doe_assistant_reported_issues_v1');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((i: SystemIssueReport) => {
+          if (i && i.id) deletedIssueIds.add(i.id);
+        });
+      }
+    }
+    localStorage.setItem('doe_assistant_reported_issues_v1', '[]');
+  } catch {}
+  saveDeletedIssueIds();
+
+  masterDocCache.bundledIssues = [];
+  broadcastMasterState(false);
+
+  // Also purge any documents in the legacy 'system_issues' collection
+  getDocs(collection(db, ISSUES_COLLECTION))
+    .then((snap) => {
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.docs.forEach((d) => {
+          deletedIssueIds.add(d.id);
+          batch.delete(d.ref);
+        });
+        saveDeletedIssueIds();
+        return batch.commit();
+      }
+    })
+    .catch(() => {});
+
+  await persistMasterConfigOnline({ bundledIssues: [] }, true);
 }
 
 export function subscribeSystemIssues(
@@ -1412,7 +1527,9 @@ export function subscribeSystemIssues(
   systemIssuesListeners.add(onData);
   ensureMasterSubscription(onError);
   if (hasReceivedFirstMasterSnapshot && Array.isArray(masterDocCache.bundledIssues)) {
-    const list = [...masterDocCache.bundledIssues].filter((i) => i && i.id && i.title);
+    const list = [...masterDocCache.bundledIssues].filter(
+      (i) => i && i.id && i.title && !deletedIssueIds.has(i.id)
+    );
     list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     onData(list);
   }
