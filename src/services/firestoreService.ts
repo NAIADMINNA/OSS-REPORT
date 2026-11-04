@@ -433,12 +433,15 @@ function broadcastMasterState(onlyConfigBranding = false) {
     reportersListeners.forEach((cb) => cb(repList));
   }
 
-  // 7. Deleted Reports
+  // 7. Deleted Reports (exclude any report that is currently active in report_bundles)
   if (Array.isArray(masterDocCache.bundledDeletedReports)) {
+    const activeBundleIds = getActiveReportIdsInBundles();
     const delReportsList: DOEReport[] = [];
     masterDocCache.bundledDeletedReports.forEach((raw) => {
       const clean = sanitizeReport(raw);
-      if (clean) delReportsList.push(clean);
+      if (clean && (!hasLoadedAllBundleShards || !activeBundleIds.has(clean.id))) {
+        delReportsList.push(clean);
+      }
     });
     deletedReportsListeners.forEach((cb) => cb(delReportsList));
   }
@@ -571,10 +574,15 @@ async function migrateLegacyCollectionsOnce(existingConfig: Partial<BundledMaste
       if (data && data.id && data.name) reps.push(data);
     });
 
+    const activeBundleIds = getActiveReportIdsInBundles();
     const delReports: DOEReport[] = [];
     delReportsSnap.forEach((d) => {
       const clean = sanitizeReport({ ...d.data(), id: d.id });
-      if (clean) delReports.push(clean);
+      if (clean && !activeBundleIds.has(clean.id)) {
+        delReports.push(clean);
+      } else if (clean && activeBundleIds.has(clean.id)) {
+        deleteDoc(d.ref).catch(() => {});
+      }
     });
 
     const issues: SystemIssueReport[] = [];
@@ -587,6 +595,7 @@ async function migrateLegacyCollectionsOnce(existingConfig: Partial<BundledMaste
     });
 
     const hasExplicitBundledIssues = Array.isArray(existingConfig.bundledIssues);
+    const hasExplicitBundledDelReports = Array.isArray(existingConfig.bundledDeletedReports);
 
     await persistMasterConfigOnline(
       {
@@ -612,12 +621,15 @@ async function migrateLegacyCollectionsOnce(existingConfig: Partial<BundledMaste
             : existingConfig.bundledReporters ||
               masterDocCache.bundledReporters ||
               DEFAULT_REPORTERS.map((r, idx) => ({ ...r, sortOrder: idx })),
-        bundledDeletedReports:
-          delReports.length > 0
-            ? delReports.slice(0, 50)
-            : existingConfig.bundledDeletedReports ||
-              masterDocCache.bundledDeletedReports ||
-              [],
+        bundledDeletedReports: hasExplicitBundledDelReports
+          ? (existingConfig.bundledDeletedReports || []).filter(
+              (r) => r && r.id && !activeBundleIds.has(r.id)
+            )
+          : delReports.length > 0
+          ? delReports.slice(0, 50)
+          : (masterDocCache.bundledDeletedReports || []).filter(
+              (r) => r && r.id && !activeBundleIds.has(r.id)
+            ),
         bundledIssues: hasExplicitBundledIssues
           ? (existingConfig.bundledIssues || []).filter(
               (i) => i && i.id && !deletedIssueIds.has(i.id)
@@ -716,6 +728,16 @@ function cleanupMasterSubscriptionIfIdle() {
 
 const liveBundleShardsCache = new Map<string, Record<string, DOEReport>>();
 let hasLoadedAllBundleShards = false;
+
+function getActiveReportIdsInBundles(): Set<string> {
+  const activeIds = new Set<string>();
+  liveBundleShardsCache.forEach((shardMap) => {
+    if (shardMap && typeof shardMap === 'object') {
+      Object.keys(shardMap).forEach((id) => activeIds.add(id));
+    }
+  });
+  return activeIds;
+}
 
 export function getBundleIdForReportId(
   reportId: string,
@@ -866,7 +888,12 @@ let hasMigratedReportBundlesInSession = false;
 
 function getLocalCachedReportsForBundleSync(): DOEReport[] {
   const map = new Map<string, DOEReport>();
-  const delIds = new Set((masterDocCache.bundledDeletedReports || []).map((r) => r.id));
+  const activeBundleIds = getActiveReportIdsInBundles();
+  const delIds = new Set(
+    (masterDocCache.bundledDeletedReports || [])
+      .map((r) => r?.id)
+      .filter((id): id is string => Boolean(id) && !activeBundleIds.has(id))
+  );
   for (const key of [
     'doe_work_permit_reports_backup_v1',
     'doe_work_permit_reports_v1',
@@ -891,21 +918,9 @@ function getLocalCachedReportsForBundleSync(): DOEReport[] {
   return Array.from(map.values());
 }
 
-function getLocalUnsyncedReportIds(): Set<string> {
-  try {
-    const raw = localStorage.getItem('doe_work_permit_unsynced_ids_v1');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return new Set(parsed.filter((id) => typeof id === 'string'));
-      }
-    }
-  } catch {}
-  return new Set<string>();
-}
-
 async function migrateLegacyReportsToBundlesOnce(
   existingBundleMap: Map<string, DOEReport>,
+  misplacedByShard: Map<string, string[]>,
   needsShardRebalance: boolean,
   onMigrated?: (mergedList: DOEReport[]) => void
 ) {
@@ -913,21 +928,36 @@ async function migrateLegacyReportsToBundlesOnce(
   isMigratingReportBundles = true;
 
   try {
-    const delIds = new Set((masterDocCache.bundledDeletedReports || []).map((r) => r.id));
+    const activeBundleIds = new Set(existingBundleMap.keys());
+    const delIds = new Set(
+      (masterDocCache.bundledDeletedReports || [])
+        .map((r) => r?.id)
+        .filter((id): id is string => Boolean(id) && !activeBundleIds.has(id))
+    );
     const combinedMap = new Map<string, DOEReport>(existingBundleMap);
     const reportsToSyncToBundles = new Map<string, DOEReport>();
 
-    // 1. Check local cached reports that were explicitly marked unsynced (or if cloud bundles are completely empty)
-    const unsyncedIds = getLocalUnsyncedReportIds();
+    // 0. Ensure any report that was sitting in a legacy 10-shard slot is written to its proper 24-shard slot
+    misplacedByShard.forEach((repIds) => {
+      for (const repId of repIds) {
+        const r = existingBundleMap.get(repId);
+        if (r) {
+          const targetShardId = getBundleIdForReportId(r.id, REPORT_SHARD_COUNT);
+          const alreadyInTargetShard = Boolean(liveBundleShardsCache.get(targetShardId)?.[r.id]);
+          if (!alreadyInTargetShard) {
+            reportsToSyncToBundles.set(r.id, r);
+          }
+        }
+      }
+    });
+
+    // 1. Rescue ALL valid local cached reports missing from Cloud Firestore bundles or strictly newer
+    // This guarantees Dev (ais-dev-...) and Deployed Web (ais-pre-...) always have the exact same dataset
     const localReports = getLocalCachedReportsForBundleSync();
     for (const r of localReports) {
       if (delIds.has(r.id)) continue;
       const existing = combinedMap.get(r.id);
-      const shouldRescueFromLocal =
-        existingBundleMap.size === 0 ||
-        unsyncedIds.has(r.id) ||
-        (!existing && r.reportDate >= '2026-11-01');
-      if (shouldRescueFromLocal && (!existing || isReportStrictlyNewer(r, existing))) {
+      if (!existing || isReportStrictlyNewer(r, existing)) {
         combinedMap.set(r.id, r);
         reportsToSyncToBundles.set(r.id, r);
       }
@@ -958,12 +988,40 @@ async function migrateLegacyReportsToBundlesOnce(
 
     const newlyDiscoveredOrNewer = Array.from(reportsToSyncToBundles.values());
     if (newlyDiscoveredOrNewer.length > 0) {
-      await saveBulkReportsOnline(newlyDiscoveredOrNewer, false, false);
+      await saveBulkReportsOnline(newlyDiscoveredOrNewer, true, false);
       try {
         localStorage.setItem('doe_ss_bundles_seeded_v1', 'true');
       } catch {}
     } else if (needsShardRebalance && combinedMap.size > 0) {
-      await saveBulkReportsOnline(Array.from(combinedMap.values()), false, false);
+      await saveBulkReportsOnline(Array.from(combinedMap.values()), true, false);
+    }
+
+    // 3. Clean up misplaced keys from old 10-shard layout so shards 0..9 stay small and well under 1MB
+    if (misplacedByShard.size > 0) {
+      await Promise.all(
+        Array.from(misplacedByShard.entries()).map(async ([shardId, keysToRemove]) => {
+          const uniqueKeys = Array.from(new Set(keysToRemove));
+          const bundleRef = doc(db, REPORT_BUNDLES_COLLECTION, shardId);
+          for (let i = 0; i < uniqueKeys.length; i += 40) {
+            const slice = uniqueKeys.slice(i, i + 40);
+            const delMap: Record<string, unknown> = {};
+            for (const k of slice) {
+              delMap[k] = deleteField();
+            }
+            try {
+              await setDoc(
+                bundleRef,
+                {
+                  id: shardId,
+                  updatedAt: new Date().toISOString(),
+                  reportsMap: delMap,
+                },
+                { merge: true }
+              );
+            } catch {}
+          }
+        })
+      );
     }
 
     if (onMigrated && newlyDiscoveredOrNewer.length > 0) {
@@ -1005,6 +1063,7 @@ export async function deepScanAndRecoverAllReports(
 ): Promise<DeepScanDiagnosticResult> {
   const activeMap = new Map<string, DOEReport>();
   const combinedMap = new Map<string, DOEReport>();
+  const cloudBundleMap = new Map<string, DOEReport>();
   const rescuedIds = new Set<string>();
   const trashMap = new Map<string, DOEReport>();
 
@@ -1043,6 +1102,9 @@ export async function deepScanAndRecoverAllReports(
     delSnap.forEach((docSnap) => {
       const clean = sanitizeReport({ ...docSnap.data(), id: docSnap.id });
       if (clean) trashMap.set(clean.id, pickNewerReport(trashMap.get(clean.id), clean));
+      if (includeTrash) {
+        deleteDoc(docSnap.ref).catch(() => {});
+      }
     });
   } catch (err) {
     logStreamStatus('deep_scan_deleted_reports', err);
@@ -1101,7 +1163,7 @@ export async function deepScanAndRecoverAllReports(
             id: (repVal as DOEReport).id || repId,
           });
           if (clean) {
-            bundleReportsCount++;
+            cloudBundleMap.set(clean.id, pickNewerReport(cloudBundleMap.get(clean.id), clean));
             if (!delIds.has(clean.id)) {
               const existing = combinedMap.get(clean.id);
               if (!existing || isReportStrictlyNewer(clean, existing)) {
@@ -1116,6 +1178,7 @@ export async function deepScanAndRecoverAllReports(
         }
       }
     });
+    bundleReportsCount = cloudBundleMap.size;
   } catch (err) {
     logStreamStatus('deep_scan_report_bundles', err);
   }
@@ -1164,10 +1227,21 @@ export async function deepScanAndRecoverAllReports(
     (b.reportDate || '').localeCompare(a.reportDate || '')
   );
 
-  // Sync rescued/newer reports back to Cloud Firestore shards non-destructively
-  if (rescuedIds.size > 0 && mergedReports.length > 0) {
-    const rescuedList = mergedReports.filter((r) => rescuedIds.has(r.id));
-    await saveBulkReportsOnline(rescuedList, includeTrash, false);
+  // Any report in mergedReports that is missing from Cloud Firestore 'report_bundles' or is strictly newer
+  // MUST be synced to Cloud Firestore so the Deployed Web App (ais-pre-...) gets 100% of the reports!
+  const missingFromCloudList: DOEReport[] = [];
+  for (const r of mergedReports) {
+    const cloudVer = cloudBundleMap.get(r.id);
+    if (!cloudVer || isReportStrictlyNewer(r, cloudVer) || rescuedIds.has(r.id)) {
+      missingFromCloudList.push(r);
+      rescuedIds.add(r.id);
+    }
+  }
+
+  if (missingFromCloudList.length > 0) {
+    await saveBulkReportsOnline(missingFromCloudList, includeTrash, includeTrash);
+  } else if (includeTrash && (masterDocCache.bundledDeletedReports || []).length > 0) {
+    await persistMasterConfigOnline({ bundledDeletedReports: [] }).catch(() => {});
   }
 
   // Build breakdown by date
@@ -1196,14 +1270,14 @@ export async function deepScanAndRecoverAllReports(
     });
 
   return {
-    bundleReportsCount,
+    bundleReportsCount: Math.max(bundleReportsCount, mergedReports.length),
     legacySingleDocsCount,
-    deletedTrashReportsCount: trashMap.size,
+    deletedTrashReportsCount: includeTrash ? 0 : trashMap.size,
     localBackupReportsCount,
     newlyRescuedCount: rescuedIds.size,
     totalMergedCount: mergedReports.length,
     mergedReports,
-    trashReports: Array.from(trashMap.values()),
+    trashReports: includeTrash ? [] : Array.from(trashMap.values()),
     countsByDate,
   };
 }
@@ -1220,6 +1294,7 @@ export function subscribeReports(
         return;
       }
       const bundleMap = new Map<string, DOEReport>();
+      const misplacedByShard = new Map<string, string[]>();
       let maxReportsInSingleShard = 0;
 
       snapshot.forEach((docSnap) => {
@@ -1239,8 +1314,16 @@ export function subscribeReports(
             if (clean) {
               const winner = pickNewerReport(bundleMap.get(clean.id), clean);
               bundleMap.set(clean.id, winner);
-              cleanShardMap[clean.id] = winner;
-              shardCount++;
+              const expectedShardId = getBundleIdForReportId(clean.id, REPORT_SHARD_COUNT);
+              if (docSnap.id === expectedShardId) {
+                cleanShardMap[clean.id] = winner;
+                shardCount++;
+              } else {
+                const list = misplacedByShard.get(docSnap.id) || [];
+                list.push(repId);
+                if (clean.id !== repId) list.push(clean.id);
+                misplacedByShard.set(docSnap.id, list);
+              }
             }
           }
         }
@@ -1252,6 +1335,19 @@ export function subscribeReports(
 
       hasLoadedAllBundleShards = true;
 
+      // If masterDocCache.bundledDeletedReports contains any report IDs that are currently active in bundleMap,
+      // clean them out so active reports are never falsely filtered out on Deployed Web or Dev
+      if (
+        hasReceivedFirstMasterSnapshot &&
+        Array.isArray(masterDocCache.bundledDeletedReports) &&
+        masterDocCache.bundledDeletedReports.some((r) => r && bundleMap.has(r.id))
+      ) {
+        const cleanedDel = masterDocCache.bundledDeletedReports.filter(
+          (r) => r && !bundleMap.has(r.id)
+        );
+        persistMasterConfigOnline({ bundledDeletedReports: cleanedDel }).catch(() => {});
+      }
+
       const list = Array.from(bundleMap.values()).sort((a, b) =>
         (b.reportDate || '').localeCompare(a.reportDate || '')
       );
@@ -1259,11 +1355,16 @@ export function subscribeReports(
         onData(list);
       }
 
-      // Run one-time check per session against single-doc 'reports' collection & unsynced local reports
-      // Only trigger after server snapshot arrives (or if cache has data) so we never migrate against a partial cache
-      const needsShardRebalance = maxReportsInSingleShard > 65;
+      // Run one-time check per session against single-doc 'reports' collection & local reports
+      // Only trigger after server snapshot arrives so we never migrate against a partial cache
+      const needsShardRebalance = maxReportsInSingleShard > 65 || misplacedByShard.size > 0;
       if (!snapshot.metadata.fromCache && (!hasMigratedReportBundlesInSession || needsShardRebalance)) {
-        migrateLegacyReportsToBundlesOnce(bundleMap, needsShardRebalance, onData);
+        migrateLegacyReportsToBundlesOnce(
+          bundleMap,
+          misplacedByShard,
+          needsShardRebalance,
+          onData
+        );
       }
     },
     (error) => {
@@ -1383,6 +1484,16 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
   const primaryBundleId = getBundleIdForReportId(report.id, REPORT_SHARD_COUNT);
   const legacyDocRef = doc(db, REPORTS_COLLECTION, report.id);
   try {
+    // 1. Remove from in-memory shard cache first so broadcastMasterState knows this report is deleted
+    for (const bundleId of bundleIds) {
+      const cached = liveBundleShardsCache.get(bundleId);
+      if (cached && report.id in cached) {
+        const next = { ...cached };
+        delete next[report.id];
+        liveBundleShardsCache.set(bundleId, next);
+      }
+    }
+
     const sanitized = sanitizeReport(report);
     if (sanitized) {
       const prevDel = (masterDocCache.bundledDeletedReports || []).filter(
@@ -1394,12 +1505,6 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
     }
     deleteDoc(legacyDocRef).catch(() => {});
     for (const bundleId of bundleIds) {
-      const cached = liveBundleShardsCache.get(bundleId);
-      if (cached && report.id in cached) {
-        const next = { ...cached };
-        delete next[report.id];
-        liveBundleShardsCache.set(bundleId, next);
-      }
       const bundleRef = doc(db, REPORT_BUNDLES_COLLECTION, bundleId);
       await setDoc(
         bundleRef,
@@ -1466,10 +1571,13 @@ export function subscribeDeletedReports(
   deletedReportsListeners.add(onData);
   ensureMasterSubscription(onError);
   if (hasReceivedFirstMasterSnapshot && Array.isArray(masterDocCache.bundledDeletedReports)) {
+    const activeBundleIds = getActiveReportIdsInBundles();
     const list: DOEReport[] = [];
     masterDocCache.bundledDeletedReports.forEach((raw) => {
       const clean = sanitizeReport(raw);
-      if (clean) list.push(clean);
+      if (clean && (!hasLoadedAllBundleShards || !activeBundleIds.has(clean.id))) {
+        list.push(clean);
+      }
     });
     onData(list);
   }

@@ -52,7 +52,6 @@ import {
   saveBulkReportsOnline,
   deleteReportOnline,
   restoreReportOnline,
-  purgeGhostReportOnline,
   subscribeDeletedReports,
   subscribeOffices,
   saveOfficeOnline,
@@ -613,12 +612,11 @@ export default function App() {
 
           setReports((prev) => {
             const filtered = delIdSet.size > 0 ? prev.filter((r) => !delIdSet.has(r.id)) : prev;
-            // If online reports already arrived, push any explicitly unsynced local reports to Firestore
+            // If online reports already arrived, push any local reports missing from Firestore
             if (hasReceivedOnlineReportsRef.current) {
               const onlineIds = latestOnlineReportIdsRef.current;
               const toUpload = filtered.filter(
                 (r) =>
-                  pendingSaveReportIdsRef.current.has(r.id) &&
                   !onlineIds.has(r.id) &&
                   !delIdSet.has(r.id) &&
                   !uploadedLocalReportIdsRef.current.has(r.id)
@@ -627,7 +625,7 @@ export default function App() {
                 toUpload.forEach((r) => {
                   uploadedLocalReportIdsRef.current.add(r.id);
                 });
-                saveBulkReportsOnline(toUpload)
+                saveBulkReportsOnline(toUpload, true, false)
                   .then(() => {
                     toUpload.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
                     persistUnsyncedIds();
@@ -656,16 +654,11 @@ export default function App() {
           if (!Array.isArray(onlineReports)) return;
           setIsFirestoreOnline(true);
           const rawOnline = sanitizeReportList(onlineReports);
-          const delIds = deletedReportIdsRef.current;
+          const delIds = hasLoadedDeletedReportsRef.current
+            ? deletedReportIdsRef.current
+            : new Set<string>();
 
-          // If any report in active Firestore collection is already in deleted_reports, purge the ghost doc
-          const cleanOnline = rawOnline.filter((r) => {
-            if (delIds.has(r.id)) {
-              purgeGhostReportOnline(r.id).catch(() => {});
-              return false;
-            }
-            return true;
-          });
+          const cleanOnline = rawOnline.filter((r) => !delIds.has(r.id));
 
           const onlineMap = new Map<string, DOEReport>();
           cleanOnline.forEach((r) => onlineMap.set(r.id, pickNewerReport(onlineMap.get(r.id), r)));
@@ -692,15 +685,15 @@ export default function App() {
               persistUnsyncedIds();
             }
 
-            // Upload local reports that are either marked unsynced OR have a strictly newer timestamp than the online copy
+            // Upload ANY non-deleted local report that is missing from Cloud Firestore (!onlineVer)
+            // OR has a strictly newer timestamp than the online copy so Dev and Deployed Web always match 100%
             const pendingUnsynced = cleanPrev.filter((r) => {
               if (delIds.has(r.id) || uploadedLocalReportIdsRef.current.has(r.id)) return false;
               const onlineVer = onlineMap.get(r.id);
-              if (pendingSaveReportIdsRef.current.has(r.id)) {
-                return !onlineVer || isReportStrictlyNewer(r, onlineVer);
+              if (!onlineVer) {
+                return true;
               }
-              // Also rescue local reports that have a newer edit timestamp than the cloud copy
-              if (onlineVer && isReportStrictlyNewer(r, onlineVer)) {
+              if (isReportStrictlyNewer(r, onlineVer)) {
                 return true;
               }
               return false;
@@ -710,7 +703,7 @@ export default function App() {
               pendingUnsynced.forEach((r) => {
                 uploadedLocalReportIdsRef.current.add(r.id);
               });
-              saveBulkReportsOnline(pendingUnsynced)
+              saveBulkReportsOnline(pendingUnsynced, true, false)
                 .then(() => {
                   pendingUnsynced.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
                   persistUnsyncedIds();
