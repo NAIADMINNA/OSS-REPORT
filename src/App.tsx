@@ -650,7 +650,7 @@ export default function App() {
         unsubs.push(unsubDelReports);
 
         // 2. Subscribe to online reports immediately (Realtime push via onSnapshot)
-        const unsubReports = subscribeReports((onlineReports) => {
+        const unsubReports = subscribeReports((onlineReports, isFromCache) => {
           if (!Array.isArray(onlineReports)) return;
           setIsFirestoreOnline(true);
           const rawOnline = sanitizeReportList(onlineReports);
@@ -663,52 +663,56 @@ export default function App() {
           const onlineMap = new Map<string, DOEReport>();
           cleanOnline.forEach((r) => onlineMap.set(r.id, pickNewerReport(onlineMap.get(r.id), r)));
           const onlineIds = new Set(onlineMap.keys());
-          latestOnlineReportIdsRef.current = onlineIds;
-          hasReceivedOnlineReportsRef.current = true;
+          if (!isFromCache) {
+            latestOnlineReportIdsRef.current = onlineIds;
+            hasReceivedOnlineReportsRef.current = true;
+          }
 
           setReports((prevLocal) => {
             const cleanPrev = sanitizeReportList(prevLocal).filter((r) => !delIds.has(r.id));
             const localMap = new Map<string, DOEReport>();
             cleanPrev.forEach((r) => localMap.set(r.id, pickNewerReport(localMap.get(r.id), r)));
 
-            // Clear pending flag for any report that has now arrived on the server with an equal-or-newer timestamp
-            let unsyncedChanged = false;
-            cleanOnline.forEach((r) => {
-              const localVer = localMap.get(r.id);
-              if (!localVer || !isReportStrictlyNewer(localVer, r)) {
-                if (pendingSaveReportIdsRef.current.delete(r.id)) {
-                  unsyncedChanged = true;
+            if (!isFromCache) {
+              // Clear pending flag for any report that has now arrived on the server with an equal-or-newer timestamp
+              let unsyncedChanged = false;
+              cleanOnline.forEach((r) => {
+                const localVer = localMap.get(r.id);
+                if (!localVer || !isReportStrictlyNewer(localVer, r)) {
+                  if (pendingSaveReportIdsRef.current.delete(r.id)) {
+                    unsyncedChanged = true;
+                  }
                 }
-              }
-            });
-            if (unsyncedChanged) {
-              persistUnsyncedIds();
-            }
-
-            // Upload ANY non-deleted local report that is missing from Cloud Firestore (!onlineVer)
-            // OR has a strictly newer timestamp than the online copy so Dev and Deployed Web always match 100%
-            const pendingUnsynced = cleanPrev.filter((r) => {
-              if (delIds.has(r.id) || uploadedLocalReportIdsRef.current.has(r.id)) return false;
-              const onlineVer = onlineMap.get(r.id);
-              if (!onlineVer) {
-                return true;
-              }
-              if (isReportStrictlyNewer(r, onlineVer)) {
-                return true;
-              }
-              return false;
-            });
-
-            if (pendingUnsynced.length > 0) {
-              pendingUnsynced.forEach((r) => {
-                uploadedLocalReportIdsRef.current.add(r.id);
               });
-              saveBulkReportsOnline(pendingUnsynced, true, false)
-                .then(() => {
-                  pendingUnsynced.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
-                  persistUnsyncedIds();
-                })
-                .catch(console.warn);
+              if (unsyncedChanged) {
+                persistUnsyncedIds();
+              }
+
+              // Upload ANY non-deleted local report that is missing from Cloud Firestore (!onlineVer)
+              // OR has a strictly newer timestamp than the online copy so Dev and Deployed Web always match 100%
+              const pendingUnsynced = cleanPrev.filter((r) => {
+                if (delIds.has(r.id) || uploadedLocalReportIdsRef.current.has(r.id)) return false;
+                const onlineVer = onlineMap.get(r.id);
+                if (!onlineVer) {
+                  return true;
+                }
+                if (isReportStrictlyNewer(r, onlineVer)) {
+                  return true;
+                }
+                return false;
+              });
+
+              if (pendingUnsynced.length > 0) {
+                pendingUnsynced.forEach((r) => {
+                  uploadedLocalReportIdsRef.current.add(r.id);
+                });
+                saveBulkReportsOnline(pendingUnsynced, true, false)
+                  .then(() => {
+                    pendingUnsynced.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
+                    persistUnsyncedIds();
+                  })
+                  .catch(console.warn);
+              }
             }
 
             // Merge online reports with non-deleted local reports by newest timestamp so newer evening edits always win

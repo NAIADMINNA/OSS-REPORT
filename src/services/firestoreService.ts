@@ -1283,7 +1283,7 @@ export async function deepScanAndRecoverAllReports(
 }
 
 export function subscribeReports(
-  onData: (reports: DOEReport[]) => void,
+  onData: (reports: DOEReport[], isFromCache?: boolean) => void,
   onError?: (err: unknown) => void
 ) {
   const colRef = collection(db, REPORT_BUNDLES_COLLECTION);
@@ -1333,11 +1333,14 @@ export function subscribeReports(
         }
       });
 
-      hasLoadedAllBundleShards = true;
+      if (!snapshot.metadata.fromCache) {
+        hasLoadedAllBundleShards = true;
+      }
 
       // If masterDocCache.bundledDeletedReports contains any report IDs that are currently active in bundleMap,
       // clean them out so active reports are never falsely filtered out on Deployed Web or Dev
       if (
+        !snapshot.metadata.fromCache &&
         hasReceivedFirstMasterSnapshot &&
         Array.isArray(masterDocCache.bundledDeletedReports) &&
         masterDocCache.bundledDeletedReports.some((r) => r && bundleMap.has(r.id))
@@ -1352,7 +1355,7 @@ export function subscribeReports(
         (b.reportDate || '').localeCompare(a.reportDate || '')
       );
       if (list.length > 0 || !snapshot.empty) {
-        onData(list);
+        onData(list, snapshot.metadata.fromCache);
       }
 
       // Run one-time check per session against single-doc 'reports' collection & local reports
@@ -1363,7 +1366,7 @@ export function subscribeReports(
           bundleMap,
           misplacedByShard,
           needsShardRebalance,
-          onData
+          (migratedList) => onData(migratedList, false)
         );
       }
     },
