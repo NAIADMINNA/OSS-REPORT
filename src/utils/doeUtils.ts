@@ -10,18 +10,17 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
 
-  const id = typeof r.id === 'string' ? r.id.trim() : '';
+  const rawId = r.id != null ? String(r.id).trim() : '';
   const officeId = typeof r.officeId === 'string' ? r.officeId.trim() : '';
-
-  // Filter out internal connectivity test document or empty records
-  if (!id || !officeId || id === 'report-test-123') {
-    return null;
-  }
-
   const rawOfficeName = typeof r.officeName === 'string' ? r.officeName.trim() : '';
   const rawCenterName = typeof r.centerName === 'string' ? r.centerName.trim() : '';
 
-  let matchedOffice = EMPLOYMENT_OFFICES.find((o) => o.id === officeId);
+  // Filter out internal connectivity test document or completely empty records
+  if (rawId === 'report-test-123' || (!officeId && !rawOfficeName && !rawCenterName)) {
+    return null;
+  }
+
+  let matchedOffice = officeId ? EMPLOYMENT_OFFICES.find((o) => o.id === officeId) : undefined;
   if (!matchedOffice) {
     if (
       rawCenterName.includes('วัดป้อมวิเชียร') ||
@@ -47,7 +46,41 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
     }
   }
 
-  const normalizedOfficeId = matchedOffice ? matchedOffice.id : officeId;
+  const normalizedOfficeId = matchedOffice
+    ? matchedOffice.id
+    : officeId || 'central_foreign_workers';
+
+  const rawDateStr =
+    typeof r.reportDate === 'string' && r.reportDate.trim()
+      ? r.reportDate.trim()
+      : new Date().toISOString().slice(0, 10);
+
+  let reportDate = rawDateStr;
+  // Normalize YYYY-MM-DD or YYYY/MM/DD (including Buddhist Era years >= 2400)
+  const ymdMatch = rawDateStr.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymdMatch) {
+    let year = parseInt(ymdMatch[1], 10);
+    const month = ymdMatch[2].padStart(2, '0');
+    const day = ymdMatch[3].padStart(2, '0');
+    if (year >= 2400) year -= 543;
+    reportDate = `${year}-${month}-${day}`;
+  } else {
+    // Normalize DD/MM/YYYY or DD-MM-YYYY
+    const dmyMatch = rawDateStr.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (dmyMatch) {
+      const day = dmyMatch[1].padStart(2, '0');
+      const month = dmyMatch[2].padStart(2, '0');
+      let year = parseInt(dmyMatch[3], 10);
+      if (year >= 2400) year -= 543;
+      reportDate = `${year}-${month}-${day}`;
+    }
+  }
+
+  const reportDateForId = reportDate;
+
+  const id =
+    rawId ||
+    `report-${normalizedOfficeId}-${reportDateForId}-${(rawCenterName || rawOfficeName || 'std').slice(0, 20)}`;
 
   const officeName = matchedOffice
     ? matchedOffice.name
@@ -69,11 +102,6 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
     typeof r.region === 'string' && r.region.trim() && (r.region as string) !== 'ส่วนกลาง'
       ? (r.region as DOEReport['region'])
       : matchedOffice?.region || 'กรุงเทพมหานคร';
-
-  const reportDate =
-    typeof r.reportDate === 'string' && r.reportDate.trim()
-      ? r.reportDate
-      : new Date().toISOString().slice(0, 10);
 
   const reportDateThaiStr =
     typeof r.reportDateThaiStr === 'string' && r.reportDateThaiStr.trim()

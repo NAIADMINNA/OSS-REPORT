@@ -181,6 +181,20 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
     return Array.from(map.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
   }, [allFolderStats]);
 
+  // Auto-expand month folders by default when month groups load so all daily folders are immediately visible
+  React.useEffect(() => {
+    if (allMonthGroups.length > 0) {
+      setExpandedMonths((prev) => {
+        if (Object.keys(prev).length > 0) return prev;
+        const next: Record<string, boolean> = {};
+        allMonthGroups.forEach((m) => {
+          next[m.monthKey] = true;
+        });
+        return next;
+      });
+    }
+  }, [allMonthGroups]);
+
   // Filtered reports list (supports 'ทั้งหมด', 'month:YYYY-MM', or 'YYYY-MM-DD')
   const filteredReports = useMemo(() => {
     return reports.filter((r) => {

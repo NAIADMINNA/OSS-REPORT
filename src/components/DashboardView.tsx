@@ -222,6 +222,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Selected Province/Report for drill-down to show specific province in cards and sections breakdown
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
 
+  // Latest date that actually has reports in the database
+  const latestDateWithReports = useMemo(() => {
+    if (!reports || reports.length === 0) return todayStr;
+    const datesWithData = Array.from(
+      new Set(reports.map((r) => r.reportDate).filter(Boolean))
+    ).sort((a, b) => b.localeCompare(a));
+    return datesWithData[0] || todayStr;
+  }, [reports, todayStr]);
+
+  const hasManuallyChangedDateRef = useRef(false);
+
   // Reset drill-down and filters when user clicks the logo to return to the summary dashboard
   useEffect(() => {
     if (resetSignal) {
@@ -239,20 +250,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   }, [reports, selectedReportId]);
 
-  // Automatically reset single-date filter to today if all reports for another selected date were deleted
+  // If today has 0 reports and user hasn't manually picked a date, automatically display the latest date that has reports
+  useEffect(() => {
+    if (!hasManuallyChangedDateRef.current && reports.length > 0) {
+      const todayHasReports = reports.some((r) => r.reportDate === todayStr);
+      if (!todayHasReports && selectedCycleKey === `single:${todayStr}` && latestDateWithReports !== todayStr) {
+        setSelectedCycleKey(`single:${latestDateWithReports}`);
+      }
+    }
+  }, [reports, todayStr, latestDateWithReports, selectedCycleKey]);
+
+  // Automatically reset single-date filter if all reports for the selected date were deleted
   useEffect(() => {
     if (selectedCycleKey.startsWith('single:')) {
       const targetDate = selectedCycleKey.replace('single:', '');
       if (targetDate !== todayStr && !availableDates.includes(targetDate)) {
-        setSelectedCycleKey(`single:${todayStr}`);
+        setSelectedCycleKey(`single:${latestDateWithReports}`);
       }
     }
-  }, [availableDates, selectedCycleKey, todayStr]);
+  }, [availableDates, selectedCycleKey, todayStr, latestDateWithReports]);
 
   // Display text for the current selectedCycleKey in the Date selector button
   const selectedDateDisplayLabel = useMemo(() => {
     if (selectedCycleKey === 'all') {
-      return `📊 ภาพรวมสะสมทั้งหมด (${reports.length} รายการ)`;
+      return `📊 ภาพรวมสะสมทั้งหมด (${reports.length.toLocaleString()} รายการ)`;
     }
     if (selectedCycleKey === 'custom') {
       return '📅 กำหนดช่วงวันที่เอง...';
@@ -1049,12 +1070,51 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <span className="text-xs sm:text-sm font-semibold text-slate-500 hidden sm:inline">
                     • ครอบคลุม 76 จังหวัด + กทม. 10 พื้นที่
                   </span>
+                  <span className="text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                    ฐานข้อมูลทั้งหมด: {reports.length.toLocaleString()} รายงาน
+                  </span>
                 </div>
                 <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight mt-1 font-['Prompt'] tracking-tight">
                   แดชบอร์ดสรุปผลการปฏิบัติงานภาพรวมทั้งประเทศ
                 </h2>
               </div>
             </div>
+
+            {/* Quick 1-Click Period Mode Switcher */}
+            {reports.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 bg-slate-100/90 p-1.5 rounded-xl border border-slate-200/80">
+                <button
+                  type="button"
+                  onClick={() => {
+                    hasManuallyChangedDateRef.current = true;
+                    setSelectedCycleKey('all');
+                    setSelectedReportId(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    selectedCycleKey === 'all'
+                      ? 'bg-blue-900 text-amber-300 shadow-xs'
+                      : 'bg-white hover:bg-blue-50 text-slate-700 border border-slate-200/80'
+                  }`}
+                >
+                  <span>📊 ภาพรวมสะสมทั้งหมด ({reports.length.toLocaleString()} รายการ)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    hasManuallyChangedDateRef.current = true;
+                    setSelectedCycleKey(`single:${latestDateWithReports}`);
+                    setSelectedReportId(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    selectedCycleKey === `single:${latestDateWithReports}`
+                      ? 'bg-blue-900 text-white shadow-xs'
+                      : 'bg-white hover:bg-blue-50 text-slate-700 border border-slate-200/80'
+                  }`}
+                >
+                  <span>📅 วันล่าสุดที่มีรายงาน ({formatThaiDateShort(latestDateWithReports)})</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Date, Region, Province & Center/Mobile Unit Selectors + Primary Actions */}
@@ -1077,8 +1137,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   onClick={() => {
                     setIsDateDropdownOpen((prev) => {
                       const nextOpen = !prev;
-                      if (nextOpen) {
-                        setExpandedMonthKey(null);
+                      if (nextOpen && !expandedMonthKey && availableMonthGroups.length > 0) {
+                        setExpandedMonthKey(availableMonthGroups[0].monthKey);
                       }
                       return nextOpen;
                     });
@@ -1101,6 +1161,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        hasManuallyChangedDateRef.current = true;
                         setSelectedCycleKey('custom');
                         setSelectedReportId(null);
                         setIsDateDropdownOpen(false);
@@ -1118,6 +1179,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        hasManuallyChangedDateRef.current = true;
                         setSelectedCycleKey('all');
                         setSelectedReportId(null);
                         setIsDateDropdownOpen(false);
@@ -1128,7 +1190,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           : 'text-slate-700 hover:bg-slate-200/70'
                       }`}
                     >
-                      <span>📊 ภาพรวมสะสมทั้งหมด ({reports.length} รายการ)</span>
+                      <span>📊 ภาพรวมสะสมทั้งหมด ({reports.length.toLocaleString()} รายการ)</span>
                       {selectedCycleKey === 'all' && <Check className="w-4 h-4 shrink-0" />}
                     </button>
                   </div>
@@ -1137,7 +1199,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div className="p-2.5 max-h-80 overflow-y-auto space-y-1.5">
                     <div className="px-2 py-1 flex items-center justify-between">
                       <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
-                        📆 เลือกดูแบบรายวัน (คลิกเลือกเดือนเพื่อดูรายวัน)
+                        📆 เลือกดูแบบรายเดือน หรือ รายวัน
                       </span>
                     </div>
 
@@ -1188,7 +1250,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                   {group.monthLabel}
                                 </div>
                                 <div className="text-[11px] text-slate-500 font-medium">
-                                  มีข้อมูล {group.dates.length} วัน • รวม {group.totalReportsInMonth} รายงาน
+                                  มีข้อมูล {group.dates.length} วัน • รวม {group.totalReportsInMonth.toLocaleString()} รายงาน
                                 </div>
                               </div>
                             </div>
@@ -1208,6 +1270,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           {/* Expanded Daily List inside the selected Month */}
                           {isExpanded && (
                             <div className="px-2.5 pb-2.5 pt-1 border-t border-blue-100 bg-white space-y-1">
+                              {/* Option to view entire month combined */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  hasManuallyChangedDateRef.current = true;
+                                  setSelectedCycleKey(`month:${group.monthKey}`);
+                                  setSelectedReportId(null);
+                                  setIsDateDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-xs sm:text-sm font-extrabold flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                  selectedCycleKey === `month:${group.monthKey}`
+                                    ? 'bg-indigo-900 text-amber-300 shadow-2xs'
+                                    : 'bg-indigo-50/70 text-indigo-950 hover:bg-indigo-100/80 border border-indigo-200/60'
+                                }`}
+                              >
+                                <span>🗓️ ดูผลรวมทั้ง{group.monthLabel}</span>
+                                <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-200/80 text-indigo-950 font-bold">
+                                  {group.totalReportsInMonth.toLocaleString()} รายการ
+                                </span>
+                              </button>
+
                               {group.dates.map(({ date: d, reportCount }) => {
                                 const isSelectedDay = selectedCycleKey === `single:${d}`;
                                 const isToday = d === todayStr;
@@ -1216,6 +1299,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     key={`single:${d}`}
                                     type="button"
                                     onClick={() => {
+                                      hasManuallyChangedDateRef.current = true;
                                       setSelectedCycleKey(`single:${d}`);
                                       setSelectedReportId(null);
                                       setIsDateDropdownOpen(false);

@@ -126,8 +126,26 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
   const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
 
   const officeList = useMemo(() => {
-    return offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES;
+    const raw = offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES;
+    return raw.filter((o) => o.region !== 'ส่วนกลาง' && o.id !== 'doe-hq');
   }, [offices]);
+
+  // Helper for Today & Yesterday ISO dates (YYYY-MM-DD)
+  const { todayIso, yesterdayIso } = useMemo(() => {
+    const now = new Date();
+    const toIso = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+    const yest = new Date(now);
+    yest.setDate(now.getDate() - 1);
+    return {
+      todayIso: toIso(now),
+      yesterdayIso: toIso(yest),
+    };
+  }, []);
 
   // Active categories list
   const activeCategories = useMemo(() => {
@@ -266,15 +284,69 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
     return Array.from(map.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
   }, [allFolderStats]);
 
+  // Auto-expand month folders by default when month groups load so all daily folders are immediately visible
+  React.useEffect(() => {
+    if (allMonthGroups.length > 0) {
+      setExpandedMonths((prev) => {
+        if (Object.keys(prev).length > 0) return prev;
+        const next: Record<string, boolean> = {};
+        allMonthGroups.forEach((m) => {
+          next[m.monthKey] = true;
+        });
+        return next;
+      });
+    }
+  }, [allMonthGroups]);
+
   // Available distinct dates from reports
   const availableDates = useMemo(() => {
     return allFolderStats.map((f) => f.date);
   }, [allFolderStats]);
 
-  // Selected date for checking pending offices
+  // Selected date for checking pending offices & daily completeness audit
   const [pendingCheckDate, setPendingCheckDate] = useState<string>(() => {
-    return availableDates[0] || '2026-10-07';
+    return yesterdayIso || availableDates[0] || '2026-11-02';
   });
+
+  // Daily Completeness Audit target date (defaults to Yesterday so user can immediately verify yesterday's records)
+  const [auditCheckDate, setAuditCheckDate] = useState<string>(() => {
+    return yesterdayIso;
+  });
+
+  // Compute completeness metrics for auditCheckDate
+  const auditDateSummary = useMemo(() => {
+    const reportsOnDate = reports.filter((r) => r.reportDate === auditCheckDate);
+    const reportedOfficeIds = new Set(reportsOnDate.map((r) => r.officeId));
+    const standardReportedCount = officeList.filter((o) => reportedOfficeIds.has(o.id)).length;
+    const missingOffices = officeList.filter((o) => !reportedOfficeIds.has(o.id));
+    const totalExpected = officeList.length;
+    const percent = totalExpected > 0 ? Math.round((standardReportedCount / totalExpected) * 100) : 0;
+
+    let totalQueue = 0;
+    let totalIssued = 0;
+    let latestUpdatedAt = '';
+    reportsOnDate.forEach((r) => {
+      totalQueue += Number(r.queueAppointment) || 0;
+      totalIssued += Number(r.cardsIssued) || 0;
+      const ts = r.updatedAt || r.createdAt || '';
+      if (ts > latestUpdatedAt) latestUpdatedAt = ts;
+    });
+
+    return {
+      date: auditCheckDate,
+      thaiDateFull: formatThaiDateFull(auditCheckDate),
+      thaiDateShort: formatThaiDateShort(auditCheckDate),
+      totalReportsCount: reportsOnDate.length,
+      standardReportedCount,
+      totalExpected,
+      missingCount: missingOffices.length,
+      percent,
+      totalQueue,
+      totalIssued,
+      latestUpdatedAt,
+      isComplete: totalExpected > 0 && missingOffices.length === 0,
+    };
+  }, [reports, auditCheckDate, officeList]);
 
   const [copiedPendingList, setCopiedPendingList] = useState(false);
 
@@ -734,6 +806,184 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
             <Plus className="w-4.5 h-4.5" />
             <span>เพิ่มรายงานใหม่</span>
           </button>
+        </div>
+      </div>
+
+      {/* 1.2 DAILY & YESTERDAY COMPLETENESS CHECKER BAR (ตรวจสอบความครบถ้วนของข้อมูลเมื่อวาน / รายวัน) */}
+      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white p-4 rounded-2xl border border-blue-800/80 shadow-sm space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center shrink-0 shadow-xs">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm sm:text-base font-extrabold font-['Prompt'] text-white">
+                  ตรวจสอบความครบถ้วนของการบันทึกข้อมูลรายวัน
+                </h3>
+                {auditCheckDate === yesterdayIso && (
+                  <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-amber-400 text-slate-950">
+                    ข้อมูลเมื่อวาน
+                  </span>
+                )}
+                {auditCheckDate === todayIso && (
+                  <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-400 text-slate-950">
+                    ข้อมูลวันนี้
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-sky-200 mt-0.5">
+                เลือกวันที่ต้องการตรวจสอบ เพื่อเช็คว่าระบบบันทึกข้อมูลครบทุกสำนักงานจัดหางานหรือไม่
+              </p>
+            </div>
+          </div>
+
+          {/* Quick Date Selector Buttons (เมื่อวาน / วันนี้ / เลือกวันที่เอง) */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setAuditCheckDate(yesterdayIso);
+                setPendingCheckDate(yesterdayIso);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                auditCheckDate === yesterdayIso
+                  ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-xs'
+                  : 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>เมื่อวาน ({formatThaiDateShort(yesterdayIso)})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAuditCheckDate(todayIso);
+                setPendingCheckDate(todayIso);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                auditCheckDate === todayIso
+                  ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-xs'
+                  : 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>วันนี้ ({formatThaiDateShort(todayIso)})</span>
+            </button>
+
+            {availableDates
+              .filter((d) => d !== yesterdayIso && d !== todayIso)
+              .slice(0, 2)
+              .map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => {
+                    setAuditCheckDate(d);
+                    setPendingCheckDate(d);
+                  }}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                    auditCheckDate === d
+                      ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-xs'
+                      : 'bg-white/10 hover:bg-white/20 text-sky-100 border-white/15'
+                  }`}
+                >
+                  {formatThaiDateShort(d)}
+                </button>
+              ))}
+
+            <div className="flex items-center gap-1.5 bg-white/10 border border-white/20 rounded-xl px-2.5 py-1">
+              <span className="text-[11px] text-sky-200 font-semibold">ระบุวัน:</span>
+              <input
+                type="date"
+                value={auditCheckDate}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setAuditCheckDate(e.target.value);
+                    setPendingCheckDate(e.target.value);
+                  }
+                }}
+                aria-label="เลือกวันที่ตรวจสอบความครบถ้วน"
+                className="bg-transparent text-white text-xs font-bold focus:outline-hidden cursor-pointer"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Completeness Status Metrics & 1-Click Drilldown Buttons */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-1">
+          <div className="md:col-span-7 bg-white/10 border border-white/15 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="text-xs text-sky-200 font-semibold flex items-center gap-1.5 flex-wrap">
+                <span>ประจำ{auditDateSummary.thaiDateFull}</span>
+                <span className="font-mono text-[11px] text-sky-300">({auditDateSummary.date})</span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm sm:text-base font-black text-amber-300 font-['Prompt']">
+                  บันทึกเข้าระบบแล้ว {auditDateSummary.totalReportsCount} ฉบับ
+                </span>
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-200 border border-emerald-400/30 font-bold">
+                  ส่งแล้ว {auditDateSummary.standardReportedCount} / {auditDateSummary.totalExpected} สำนักงาน ({auditDateSummary.percent}%)
+                </span>
+                {auditDateSummary.missingCount > 0 ? (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/25 text-amber-200 border border-amber-400/40 font-bold">
+                    ยังไม่ส่ง {auditDateSummary.missingCount} แห่ง
+                  </span>
+                ) : (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500 text-slate-950 font-extrabold">
+                    ✓ ส่งครบ 100% ทุกสำนักงาน
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="text-right text-xs text-sky-100 space-y-0.5">
+              <div>
+                คิวนัดหมายรวม: <b className="text-white">{formatNumber(auditDateSummary.totalQueue)}</b> คิว
+              </div>
+              <div>
+                ออกบัตรสำเร็จรวม: <b className="text-emerald-300">{formatNumber(auditDateSummary.totalIssued)}</b> ใบ
+              </div>
+            </div>
+          </div>
+
+          <div className="md:col-span-5 flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveHistoryTab('reported');
+                setSelectedFolderDate(auditCheckDate);
+                const meta = getMonthMetaFromIsoDate(auditCheckDate);
+                setExpandedMonths((prev) => ({ ...prev, [meta.monthKey]: true }));
+                setCollapsedDates((prev) => ({ ...prev, [auditCheckDate]: false }));
+              }}
+              className={`flex-1 min-w-[175px] px-3.5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 border ${
+                activeHistoryTab === 'reported' && selectedFolderDate === auditCheckDate
+                  ? 'bg-emerald-400 text-slate-950 border-emerald-300 shadow-xs'
+                  : 'bg-emerald-600/90 hover:bg-emerald-500 text-white border-emerald-400/40'
+              }`}
+            >
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>ดูรายงานที่บันทึกแล้ว ({auditDateSummary.totalReportsCount} ฉบับ)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveHistoryTab('pending');
+                setPendingCheckDate(auditCheckDate);
+              }}
+              className={`flex-1 min-w-[175px] px-3.5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 border ${
+                activeHistoryTab === 'pending' && pendingCheckDate === auditCheckDate
+                  ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-xs'
+                  : 'bg-amber-500/90 hover:bg-amber-400 hover:text-slate-950 text-white border-amber-300/40'
+              }`}
+            >
+              <Clock className="w-4 h-4 shrink-0" />
+              <span>ดูศูนย์ที่ยังไม่ส่ง ({auditDateSummary.missingCount} แห่ง)</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1548,14 +1798,33 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                                           </p>
                                         </div>
 
-                                        {/* Reporter info */}
-                                        <div className="mt-2.5 text-sm bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                        {/* Reporter info & Saved timestamp */}
+                                        <div className="mt-2.5 text-sm bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1">
                                           <div className="font-bold text-slate-800 truncate">
                                             👤 {r.reporterName}
                                           </div>
-                                          <div className="text-xs sm:text-sm text-slate-500 truncate mt-0.5">
+                                          <div className="text-xs sm:text-sm text-slate-500 truncate">
                                             💼 {r.reporterPosition}
                                           </div>
+                                          {(r.updatedAt || r.createdAt) && (
+                                            <div className="text-[11px] text-emerald-700 font-medium flex items-center gap-1 pt-0.5 border-t border-slate-200/70">
+                                              <CheckCircle2 className="w-3 h-3 shrink-0 text-emerald-600" />
+                                              <span className="truncate">
+                                                บันทึกเมื่อ:{' '}
+                                                {(() => {
+                                                  const d = new Date(r.updatedAt || r.createdAt);
+                                                  if (isNaN(d.getTime())) return r.updatedAt || r.createdAt;
+                                                  return d.toLocaleString('th-TH', {
+                                                    day: 'numeric',
+                                                    month: 'short',
+                                                    year: '2-digit',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit',
+                                                  }) + ' น.';
+                                                })()}
+                                              </span>
+                                            </div>
+                                          )}
                                         </div>
 
                                         {/* Metrics snapshot */}

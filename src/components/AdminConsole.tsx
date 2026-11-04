@@ -18,7 +18,9 @@ import {
   reportSystemIssueOnline,
   deleteSystemIssueOnline,
   clearAllSystemIssuesOnline,
+  DeepScanDiagnosticResult,
 } from '../services/firestoreService';
+import { formatThaiDateShort } from '../utils/thaiDate';
 import {
   ShieldCheck,
   Building2,
@@ -89,6 +91,7 @@ interface AdminConsoleProps {
   onClearAllReportsForProduction?: () => void;
   onRestoreBackupReports?: () => void;
   onSyncAllReportsToOnline?: () => void;
+  onDeepScanReports?: (includeTrash?: boolean) => Promise<DeepScanDiagnosticResult>;
   onNotify: (msg: string) => void;
   initialSubTab?: AdminSubTab;
   onNavigateTab?: (tab: ActiveTab) => void;
@@ -123,11 +126,39 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   onClearAllReportsForProduction,
   onRestoreBackupReports,
   onSyncAllReportsToOnline,
+  onDeepScanReports,
   onNotify,
   onAdminAuthenticated,
   onAdminLoggedOut,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<AdminSubTab>(initialSubTab || 'sections');
+  const [isScanningDeep, setIsScanningDeep] = useState(false);
+  const [deepScanResult, setDeepScanResult] = useState<DeepScanDiagnosticResult | null>(null);
+  const [showAllDatesAudit, setShowAllDatesAudit] = useState(false);
+
+  // Daily breakdown of active reports & deleted reports
+  const dailyAuditBreakdown = useMemo(() => {
+    const countMap = new Map<string, { active: number; trash: number }>();
+    reports.forEach((r) => {
+      const d = r.reportDate || 'ไม่ระบุวันที่';
+      const prev = countMap.get(d) || { active: 0, trash: 0 };
+      countMap.set(d, { ...prev, active: prev.active + 1 });
+    });
+    deletedReports.forEach((r) => {
+      const d = r.reportDate || 'ไม่ระบุวันที่';
+      const prev = countMap.get(d) || { active: 0, trash: 0 };
+      countMap.set(d, { ...prev, trash: prev.trash + 1 });
+    });
+    // Ensure Nov 1, Nov 2, Nov 3 (2026-11-01, 2026-11-02, 2026-11-03) are explicitly visible in the audit check
+    for (const targetDate of ['2026-11-03', '2026-11-02', '2026-11-01']) {
+      if (!countMap.has(targetDate)) {
+        countMap.set(targetDate, { active: 0, trash: 0 });
+      }
+    }
+    return Array.from(countMap.entries())
+      .map(([date, counts]) => ({ date, ...counts }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [reports, deletedReports]);
 
   useEffect(() => {
     if (initialSubTab) {
@@ -726,18 +757,33 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           return;
         }
 
-        const reportCount = Array.isArray(normalizedPayload.reports)
-          ? normalizedPayload.reports.length
-          : 0;
+        const reportList: DOEReport[] = Array.isArray(normalizedPayload.reports)
+          ? normalizedPayload.reports
+          : [];
+        const reportCount = reportList.length;
         const officeCount = Array.isArray(normalizedPayload.offices)
           ? normalizedPayload.offices.length
           : 0;
 
+        const fileDates = Array.from(
+          new Set(reportList.map((r) => r?.reportDate).filter(Boolean))
+        ).sort();
+        const minDate = fileDates[0] ? formatThaiDateShort(fileDates[0]) : '-';
+        const maxDate = fileDates[fileDates.length - 1]
+          ? formatThaiDateShort(fileDates[fileDates.length - 1])
+          : '-';
+        const nov2Count = reportList.filter((r) =>
+          String(r?.reportDate || '').endsWith('-11-02')
+        ).length;
+        const nov3Count = reportList.filter((r) =>
+          String(r?.reportDate || '').endsWith('-11-03')
+        ).length;
+
         setConfirmModal({
           isOpen: true,
-          title: 'ยืนยันการกู้คืนฐานข้อมูลจากไฟล์สำรอง',
-          message: `การนำเข้าไฟล์สำรองจะแทนที่ข้อมูลที่มีอยู่ในระบบ (พบข้อมูลรายงาน ${reportCount.toLocaleString()} ฉบับ${officeCount > 0 ? `, ศูนย์บริการ ${officeCount.toLocaleString()} แห่ง` : ''}) ด้วยข้อมูลจากไฟล์นี้ ยืนยันดำเนินการต่อหรือไม่?`,
-          confirmText: 'ยืนยันกู้คืนฐานข้อมูล',
+          title: 'ยืนยันการนำเข้าและผสานฐานข้อมูลจากไฟล์สำรอง (Smart Merge)',
+          message: `พบข้อมูลในไฟล์สำรองจำนวน ${reportCount.toLocaleString()} ฉบับ (ช่วงวันที่ในไฟล์: ${minDate} ถึง ${maxDate} • วันที่ 2 พ.ย.: ${nov2Count} ฉบับ, 3 พ.ย.: ${nov3Count} ฉบับ${officeCount > 0 ? `, ศูนย์บริการ ${officeCount.toLocaleString()} แห่ง` : ''}) ระบบจะผสานข้อมูลจากไฟล์นี้เข้ากับรายงานที่มีอยู่ในระบบโดยไม่ลบรายงานวันที่ใหม่กว่า ยืนยันดำเนินการต่อหรือไม่?`,
+          confirmText: 'ยืนยันกู้คืนและผสานฐานข้อมูล',
           cancelText: 'ยกเลิก',
           isDanger: false,
           iconType: 'warning',
@@ -745,7 +791,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
             try {
               onRestoreFullDatabase(normalizedPayload);
               onNotify(
-                `กู้คืนฐานข้อมูลสำเร็จสมบูรณ์ (รายงาน ${reportCount.toLocaleString()} ฉบับ)`
+                `นำเข้าและผสานฐานข้อมูลสำเร็จสมบูรณ์ (ผสานรายงาน ${reportCount.toLocaleString()} ฉบับ)`
               );
             } catch (restoreErr) {
               console.error('Failed to restore database:', restoreErr);
@@ -3074,6 +3120,181 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 </div>
                 <div className="text-[10px] text-slate-400">ท่าน</div>
               </div>
+            </div>
+          </div>
+
+          {/* Deep Data Audit & Missing Date Diagnostic Card (ตรวจสอบข้อมูลรายวัน & กู้คืนวันที่ 2-3 พ.ย.) */}
+          <div className="bg-white rounded-2xl p-5 border-2 border-indigo-200 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                    DATA AUDIT & RECOVERY
+                  </span>
+                  <h3 className="font-extrabold text-slate-900 text-sm sm:text-base font-['Prompt'] flex items-center gap-1.5">
+                    <span>🔍 ตรวจสอบความครบถ้วนของข้อมูลรายวัน & สแกนกู้คืนข้อมูลเชิงลึก</span>
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed max-w-3xl">
+                  ตรวจสอบจำนวนรายงานแยกตามวันที่ในฐานข้อมูลปัจจุบัน หากข้อมูลบางวัน (เช่น <b>วันที่ 2 - 3 พ.ย.</b>) หายไปหลังจากการสลับฐานข้อมูล Cloud Firestore ใหม่หรือการนำเข้าไฟล์ Backup JSON ที่สำรองไว้ก่อนหน้านั้น สามารถกดปุ่ม <b>"สแกนค้นหาและกู้คืนข้อมูลจากทุกแหล่ง"</b> ด้านขวาเพื่อดึงข้อมูลที่อาจตกค้างอยู่ในคอลเลกชันสำรอง (`reports` รายฉบับ), ถังขยะ (`deleted_reports`) หรือหน่วยความจำสำรองของเบราว์เซอร์กลับคืนมาได้ทันที
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  disabled={isScanningDeep}
+                  onClick={async () => {
+                    if (!onDeepScanReports) return;
+                    setIsScanningDeep(true);
+                    try {
+                      const res = await onDeepScanReports(true);
+                      setDeepScanResult(res);
+                    } finally {
+                      setIsScanningDeep(false);
+                    }
+                  }}
+                  className="text-xs font-bold px-4 py-2.5 bg-indigo-700 hover:bg-indigo-800 disabled:opacity-60 text-white rounded-xl shadow-sm transition-colors flex items-center gap-2 cursor-pointer"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isScanningDeep ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isScanningDeep
+                      ? 'กำลังสแกนทุกแหล่งข้อมูล...'
+                      : '🔍 สแกนค้นหา & กู้คืนข้อมูลจากทุกแหล่งทันที'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Result of Deep Scan if executed */}
+            {deepScanResult && (
+              <div className="bg-indigo-50/90 border border-indigo-200 rounded-xl p-4 space-y-2">
+                <div className="font-bold text-xs text-indigo-950 flex items-center justify-between flex-wrap gap-2">
+                  <span>📊 ผลการสแกนเชิงลึกจากทุกแหล่งเก็บข้อมูล (Cloud Firestore & LocalStorage):</span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-indigo-700 text-white text-[11px]">
+                    กู้คืนเพิ่มสำเร็จ: {deepScanResult.newlyRescuedCount} ฉบับ (รวมทั้งหมด {deepScanResult.totalMergedCount} ฉบับ)
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1 text-xs">
+                  <div className="bg-white p-2.5 rounded-lg border border-indigo-100">
+                    <div className="text-[11px] text-slate-500">1. Cloud Bundles (24 Shards)</div>
+                    <div className="font-black text-slate-900 text-sm">{deepScanResult.bundleReportsCount.toLocaleString()} ฉบับ</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-indigo-100">
+                    <div className="text-[11px] text-slate-500">2. Cloud คอลเลกชันแยกฉบับ (reports)</div>
+                    <div className="font-black text-blue-800 text-sm">{deepScanResult.legacySingleDocsCount.toLocaleString()} ฉบับ</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-indigo-100">
+                    <div className="text-[11px] text-slate-500">3. LocalStorage สำรองในเครื่อง</div>
+                    <div className="font-black text-teal-800 text-sm">{deepScanResult.localBackupReportsCount.toLocaleString()} ฉบับ</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-indigo-100">
+                    <div className="text-[11px] text-slate-500">4. ถังขยะ (deleted_reports)</div>
+                    <div className="font-black text-amber-700 text-sm">{deepScanResult.deletedTrashReportsCount.toLocaleString()} ฉบับ</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Highlighted Date Audit Grid */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs font-bold text-slate-800">
+                  📅 สถานะข้อมูลรายงานแยกตามวันที่ (ตรวจสอบวันที่ 1 - 3 พ.ย. และวันอื่นๆ ทั้งหมด {dailyAuditBreakdown.filter((d) => d.active > 0).length} วันที่มีข้อมูล):
+                </span>
+                {dailyAuditBreakdown.length > 12 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllDatesAudit((prev) => !prev)}
+                    className="text-xs font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
+                  >
+                    {showAllDatesAudit
+                      ? 'ย่อรายการวันที่'
+                      : `ดูครบทุกวัน (${dailyAuditBreakdown.length} วัน)`}
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+                {(showAllDatesAudit
+                  ? dailyAuditBreakdown
+                  : dailyAuditBreakdown.slice(0, 12)
+                ).map((item) => {
+                  const isNov2Or3 =
+                    item.date.endsWith('-11-02') || item.date.endsWith('-11-03');
+                  const isMissing = item.active === 0;
+                  return (
+                    <div
+                      key={item.date}
+                      className={`p-2.5 rounded-xl border text-xs flex flex-col justify-between gap-1 ${
+                        isMissing
+                          ? 'bg-rose-50/80 border-rose-300 text-rose-900'
+                          : isNov2Or3
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                          : 'bg-slate-50 border-slate-200 text-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-bold truncate">
+                          {formatThaiDateShort(item.date)}
+                        </span>
+                        {isNov2Or3 && (
+                          <span
+                            className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${
+                              isMissing
+                                ? 'bg-rose-200 text-rose-900'
+                                : 'bg-emerald-200 text-emerald-900'
+                            }`}
+                          >
+                            {isMissing ? 'ไม่พบข้อมูล' : 'มีข้อมูล'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-baseline justify-between pt-1">
+                        <span className="text-[10px] opacity-75 font-mono">{item.date}</span>
+                        <span
+                          className={`font-black text-sm ${
+                            isMissing ? 'text-rose-600' : 'text-slate-900'
+                          }`}
+                        >
+                          {item.active.toLocaleString()} ฉบับ
+                        </span>
+                      </div>
+                      {item.trash > 0 && (
+                        <div className="text-[10px] font-bold text-amber-700 bg-amber-100/80 px-1.5 py-0.5 rounded mt-0.5">
+                          อยู่ในถังขยะ {item.trash} ฉบับ
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {(dailyAuditBreakdown.find((d) => d.date === '2026-11-02')?.active === 0 ||
+                dailyAuditBreakdown.find((d) => d.date === '2026-11-03')?.active === 0) && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 text-xs text-amber-950 space-y-1.5 mt-2">
+                  <div className="font-extrabold flex items-center gap-1.5 text-amber-900">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>ทำไมข้อมูลวันที่ 2 - 3 พ.ย. จึงแสดง 0 ฉบับ หรือหายไปหลังย้ายฐานข้อมูล?</span>
+                  </div>
+                  <ul className="list-disc pl-5 space-y-1 text-[11px] text-amber-900 leading-relaxed">
+                    <li>
+                      <b>สาเหตุหลัก:</b> เมื่อมีการสร้างฐานข้อมูล Cloud Firestore ตัวใหม่ และกดนำเข้า <b>"ไฟล์สำรองฐานข้อมูล (.json)"</b> ระบบเดิมได้นำข้อมูลในไฟล์ `.json` ไปแทนที่ข้อมูลทั้งหมด หากไฟล์ `.json` ที่เลือกนำเข้าเป็นไฟล์ที่ดาวน์โหลดไว้ <b>ก่อนที่จะมีการส่งรายงานของวันที่ 2 - 3 พ.ย.</b> ข้อมูลของวันที่ 2 - 3 พ.ย. จึงไม่ได้อยู่ในไฟล์ `.json` นั้น
+                    </li>
+                    <li>
+                      <b>วิธีแก้ไขและกู้คืน:</b>
+                      <ol className="list-decimal pl-4 mt-0.5 space-y-0.5">
+                        <li>
+                          กดปุ่มสีน้ำเงิน <b>"🔍 สแกนค้นหา & กู้คืนข้อมูลจากทุกแหล่งทันที"</b> ด้านบน เพื่อตรวจสอบว่ามีข้อมูลวันที่ 2 - 3 พ.ย. ค้างอยู่ในคอลเลกชัน `reports` รายฉบับ, ถังขยะ หรือใน LocalStorage ของเบราว์เซอร์เครื่องนี้หรือไม่
+                        </li>
+                        <li>
+                          หากท่านมีไฟล์ `.json` ฉบับล่าสุดที่ดาวน์โหลดไว้หลังวันที่ 2 - 3 พ.ย. หรือเปิดระบบในเครื่องคอมพิวเตอร์/เบราว์เซอร์เครื่องที่เคยเปิดดูข้อมูลวันที่ 2 - 3 พ.ย. ค้างไว้ สามารถกดปุ่ม <b>"☁️ ซิงก์รายงานทั้งหมดขึ้น Cloud Firestore"</b> จากเครื่องนั้นได้ทันที (ระบบปรับปรุงเป็น <b>Smart Merge</b> แล้ว จะไม่ลบข้อมูลวันอื่นอีกต่อไป)
+                        </li>
+                      </ol>
+                    </li>
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
 

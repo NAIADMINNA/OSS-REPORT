@@ -70,10 +70,15 @@ import {
   saveSystemConfigOnline,
   initializeFirestoreIfEmpty,
   clearAllReportsOnline,
+  deepScanAndRecoverAllReports,
+  DeepScanDiagnosticResult,
+  pickNewerReport,
+  isReportStrictlyNewer,
 } from './services/firestoreService';
 
 const STORAGE_KEY_REPORTS = 'doe_work_permit_reports_v1';
 const STORAGE_KEY_REPORTS_BACKUP = 'doe_work_permit_reports_backup_v1';
+const STORAGE_KEY_UNSYNCED_REPORT_IDS = 'doe_work_permit_unsynced_ids_v1';
 const STORAGE_KEY_OFFICES = 'doe_work_permit_offices_v1';
 const STORAGE_KEY_CATEGORIES = 'doe_work_permit_categories_v1';
 const STORAGE_KEY_QUEUE_METRICS = 'doe_work_permit_queue_metrics_v1';
@@ -139,13 +144,34 @@ export default function App() {
       return new Set<string>();
     })()
   );
-  const pendingSaveReportIdsRef = useRef<Set<string>>(new Set());
+  const pendingSaveReportIdsRef = useRef<Set<string>>(
+    (() => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY_UNSYNCED_REPORT_IDS);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return new Set(parsed.filter((id) => typeof id === 'string'));
+          }
+        }
+      } catch {}
+      return new Set<string>();
+    })()
+  );
+  const persistUnsyncedIds = () => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY_UNSYNCED_REPORT_IDS,
+        JSON.stringify(Array.from(pendingSaveReportIdsRef.current))
+      );
+    } catch {}
+  };
   const hasLoadedDeletedReportsRef = useRef<boolean>(false);
   const hasReceivedOnlineReportsRef = useRef<boolean>(false);
   const latestOnlineReportIdsRef = useRef<Set<string>>(new Set());
   const uploadedLocalReportIdsRef = useRef<Set<string>>(new Set());
 
-  // 1. Reports Database (merges active storage + rolling backup, excluding explicitly deleted IDs)
+  // 1. Reports Database (merges active storage + rolling backup by newest timestamp, excluding explicitly deleted IDs)
   const [reports, setReports] = useState<DOEReport[]>(() => {
     try {
       const delIds = deletedReportIdsRef.current;
@@ -156,7 +182,7 @@ export default function App() {
         const parsedBackup = sanitizeReportList(JSON.parse(backupRaw)).filter(
           (r) => !delIds.has(r.id)
         );
-        parsedBackup.forEach((r) => map.set(r.id, r));
+        parsedBackup.forEach((r) => map.set(r.id, pickNewerReport(map.get(r.id), r)));
       }
 
       const savedRaw = localStorage.getItem(STORAGE_KEY_REPORTS);
@@ -164,7 +190,7 @@ export default function App() {
         const parsedSaved = sanitizeReportList(JSON.parse(savedRaw)).filter(
           (r) => !delIds.has(r.id)
         );
-        parsedSaved.forEach((r) => map.set(r.id, r));
+        parsedSaved.forEach((r) => map.set(r.id, pickNewerReport(map.get(r.id), r)));
       }
 
       const combined = Array.from(map.values()).sort((a, b) =>
@@ -587,11 +613,12 @@ export default function App() {
 
           setReports((prev) => {
             const filtered = delIdSet.size > 0 ? prev.filter((r) => !delIdSet.has(r.id)) : prev;
-            // If online reports already arrived before deleted reports, push any unsynced local reports to Firestore now
+            // If online reports already arrived, push any explicitly unsynced local reports to Firestore
             if (hasReceivedOnlineReportsRef.current) {
               const onlineIds = latestOnlineReportIdsRef.current;
               const toUpload = filtered.filter(
                 (r) =>
+                  pendingSaveReportIdsRef.current.has(r.id) &&
                   !onlineIds.has(r.id) &&
                   !delIdSet.has(r.id) &&
                   !uploadedLocalReportIdsRef.current.has(r.id)
@@ -600,7 +627,12 @@ export default function App() {
                 toUpload.forEach((r) => {
                   uploadedLocalReportIdsRef.current.add(r.id);
                 });
-                saveBulkReportsOnline(toUpload).catch(console.warn);
+                saveBulkReportsOnline(toUpload)
+                  .then(() => {
+                    toUpload.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
+                    persistUnsyncedIds();
+                  })
+                  .catch(console.warn);
               }
             }
             return filtered.length === prev.length ? prev : filtered;
@@ -635,42 +667,68 @@ export default function App() {
             return true;
           });
 
-          const onlineIds = new Set(cleanOnline.map((r) => r.id));
+          const onlineMap = new Map<string, DOEReport>();
+          cleanOnline.forEach((r) => onlineMap.set(r.id, pickNewerReport(onlineMap.get(r.id), r)));
+          const onlineIds = new Set(onlineMap.keys());
           latestOnlineReportIdsRef.current = onlineIds;
           hasReceivedOnlineReportsRef.current = true;
 
           setReports((prevLocal) => {
             const cleanPrev = sanitizeReportList(prevLocal).filter((r) => !delIds.has(r.id));
+            const localMap = new Map<string, DOEReport>();
+            cleanPrev.forEach((r) => localMap.set(r.id, pickNewerReport(localMap.get(r.id), r)));
 
-            // Clear pending flag for any report that has now arrived on the server
+            // Clear pending flag for any report that has now arrived on the server with an equal-or-newer timestamp
+            let unsyncedChanged = false;
             cleanOnline.forEach((r) => {
-              pendingSaveReportIdsRef.current.delete(r.id);
+              const localVer = localMap.get(r.id);
+              if (!localVer || !isReportStrictlyNewer(localVer, r)) {
+                if (pendingSaveReportIdsRef.current.delete(r.id)) {
+                  unsyncedChanged = true;
+                }
+              }
             });
+            if (unsyncedChanged) {
+              persistUnsyncedIds();
+            }
 
-            // Upload any local reports that haven't reached the server yet (so deployed URLs always get 100% of reports)
-            const pendingUnsynced = cleanPrev.filter(
-              (r) =>
-                !onlineIds.has(r.id) &&
-                !delIds.has(r.id) &&
-                (pendingSaveReportIdsRef.current.has(r.id) ||
-                  (hasLoadedDeletedReportsRef.current &&
-                    !uploadedLocalReportIdsRef.current.has(r.id)))
-            );
+            // Upload local reports that are either marked unsynced OR have a strictly newer timestamp than the online copy
+            const pendingUnsynced = cleanPrev.filter((r) => {
+              if (delIds.has(r.id) || uploadedLocalReportIdsRef.current.has(r.id)) return false;
+              const onlineVer = onlineMap.get(r.id);
+              if (pendingSaveReportIdsRef.current.has(r.id)) {
+                return !onlineVer || isReportStrictlyNewer(r, onlineVer);
+              }
+              // Also rescue local reports that have a newer edit timestamp than the cloud copy
+              if (onlineVer && isReportStrictlyNewer(r, onlineVer)) {
+                return true;
+              }
+              return false;
+            });
 
             if (pendingUnsynced.length > 0) {
               pendingUnsynced.forEach((r) => {
                 uploadedLocalReportIdsRef.current.add(r.id);
               });
-              saveBulkReportsOnline(pendingUnsynced).catch(console.warn);
+              saveBulkReportsOnline(pendingUnsynced)
+                .then(() => {
+                  pendingUnsynced.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
+                  persistUnsyncedIds();
+                })
+                .catch(console.warn);
             }
 
-            // Merge online reports with non-deleted local reports so partial/cached snapshots never drop reports
+            // Merge online reports with non-deleted local reports by newest timestamp so newer evening edits always win
             const mergedMap = new Map<string, DOEReport>();
             cleanPrev.forEach((r) => {
-              if (!delIds.has(r.id)) mergedMap.set(r.id, r);
+              if (!delIds.has(r.id)) {
+                mergedMap.set(r.id, pickNewerReport(mergedMap.get(r.id), r));
+              }
             });
             cleanOnline.forEach((r) => {
-              if (!delIds.has(r.id)) mergedMap.set(r.id, r);
+              if (!delIds.has(r.id)) {
+                mergedMap.set(r.id, pickNewerReport(mergedMap.get(r.id), r));
+              }
             });
 
             const merged = Array.from(mergedMap.values()).sort((a, b) =>
@@ -902,34 +960,58 @@ export default function App() {
     };
   }, []);
 
-  // Persist Databases to localStorage (keeping backup clean of deleted reports)
+  const safeSetLocalStorage = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (err) {
+      try {
+        // Free up duplicate backup keys if browser 5MB localStorage quota is full
+        localStorage.removeItem('doe_ss_reports_backup_v1');
+        localStorage.removeItem('doe_ss_reports_v1');
+        if (key !== STORAGE_KEY_REPORTS_BACKUP) {
+          localStorage.removeItem(STORAGE_KEY_REPORTS_BACKUP);
+        }
+        localStorage.setItem(key, value);
+      } catch (retryErr) {
+        console.warn(`Skipped localStorage caching for ${key} (quota exceeded):`, retryErr);
+      }
+    }
+  };
+
+  // Persist Databases to localStorage (keeping backup clean of deleted reports and respecting 5MB quota)
   useEffect(() => {
     try {
       const delIds = deletedReportIdsRef.current;
       const activeClean = reports.filter((r) => !delIds.has(r.id));
-      localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(activeClean));
+      const serializedActive = JSON.stringify(activeClean);
+      safeSetLocalStorage(STORAGE_KEY_REPORTS, serializedActive);
 
-      const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
-      let backupList: DOEReport[] = [];
-      if (existingBackupRaw) {
-        const parsed = JSON.parse(existingBackupRaw);
-        if (Array.isArray(parsed)) backupList = parsed;
+      // Only maintain a second backup copy in localStorage if payload is small enough (<1.5MB) not to exhaust 5MB quota
+      if (serializedActive.length < 1_500_000) {
+        const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
+        let backupList: DOEReport[] = [];
+        if (existingBackupRaw) {
+          const parsed = JSON.parse(existingBackupRaw);
+          if (Array.isArray(parsed)) backupList = parsed;
+        }
+        const map = new Map<string, DOEReport>();
+        backupList.forEach((r) => {
+          if (r && r.id && !delIds.has(r.id)) {
+            map.set(r.id, r);
+          }
+        });
+        activeClean.forEach((r) => {
+          if (r && r.id && !delIds.has(r.id)) {
+            map.set(r.id, r);
+          }
+        });
+        const mergedBackup = Array.from(map.values()).sort((a, b) =>
+          (b.reportDate || '').localeCompare(a.reportDate || '')
+        );
+        safeSetLocalStorage(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify(mergedBackup));
+      } else {
+        localStorage.removeItem(STORAGE_KEY_REPORTS_BACKUP);
       }
-      const map = new Map<string, DOEReport>();
-      backupList.forEach((r) => {
-        if (r && r.id && !delIds.has(r.id)) {
-          map.set(r.id, r);
-        }
-      });
-      activeClean.forEach((r) => {
-        if (r && r.id && !delIds.has(r.id)) {
-          map.set(r.id, r);
-        }
-      });
-      const mergedBackup = Array.from(map.values()).sort((a, b) =>
-        (b.reportDate || '').localeCompare(a.reportDate || '')
-      );
-      localStorage.setItem(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify(mergedBackup));
     } catch (e) {
       console.error('Failed to persist reports', e);
     }
@@ -981,51 +1063,27 @@ export default function App() {
   }, [reports]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_OFFICES, JSON.stringify(offices));
-    } catch (e) {
-      console.error('Failed to persist offices', e);
-    }
+    safeSetLocalStorage(STORAGE_KEY_OFFICES, JSON.stringify(offices));
   }, [offices]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_DELETED_OFFICES, JSON.stringify(deletedOffices));
-    } catch (e) {
-      console.error('Failed to persist deleted offices', e);
-    }
+    safeSetLocalStorage(STORAGE_KEY_DELETED_OFFICES, JSON.stringify(deletedOffices));
   }, [deletedOffices]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_DELETED_REPORTS, JSON.stringify(deletedReports));
-    } catch (e) {
-      console.error('Failed to persist deleted reports', e);
-    }
+    safeSetLocalStorage(STORAGE_KEY_DELETED_REPORTS, JSON.stringify(deletedReports));
   }, [deletedReports]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(categories));
-    } catch (e) {
-      console.error('Failed to persist categories', e);
-    }
+    safeSetLocalStorage(STORAGE_KEY_CATEGORIES, JSON.stringify(categories));
   }, [categories]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_REPORTERS, JSON.stringify(reporters));
-    } catch (e) {
-      console.error('Failed to persist reporters', e);
-    }
+    safeSetLocalStorage(STORAGE_KEY_REPORTERS, JSON.stringify(reporters));
   }, [reporters]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(systemConfig));
-    } catch (e) {
-      console.error('Failed to persist system config', e);
-    }
+    safeSetLocalStorage(STORAGE_KEY_CONFIG, JSON.stringify(systemConfig));
   }, [systemConfig]);
 
   const showToast = (message: string, actionLabel?: string, onAction?: () => void) => {
@@ -1171,9 +1229,7 @@ export default function App() {
 
   const handleUpdateQueueMetrics = (updatedMetrics: QueueMetricCategory[]) => {
     setQueueMetrics(updatedMetrics);
-    try {
-      localStorage.setItem(STORAGE_KEY_QUEUE_METRICS, JSON.stringify(updatedMetrics));
-    } catch {}
+    safeSetLocalStorage(STORAGE_KEY_QUEUE_METRICS, JSON.stringify(updatedMetrics));
     saveAllQueueMetricsOnline(updatedMetrics).catch(console.warn);
   };
 
@@ -1185,23 +1241,6 @@ export default function App() {
   const handleUpdateSystemConfig = (updatedConfig: SystemConfig) => {
     setSystemConfig(updatedConfig);
     saveSystemConfigOnline(updatedConfig).catch(console.warn);
-  };
-
-  const safeSetLocalStorage = (key: string, value: string) => {
-    try {
-      localStorage.setItem(key, value);
-    } catch (err) {
-      try {
-        // Free up duplicate backup keys if browser 5MB localStorage quota is full
-        localStorage.removeItem('doe_ss_reports_backup_v1');
-        if (key !== STORAGE_KEY_REPORTS_BACKUP) {
-          localStorage.removeItem(STORAGE_KEY_REPORTS_BACKUP);
-        }
-        localStorage.setItem(key, value);
-      } catch (retryErr) {
-        console.warn(`Skipped localStorage caching for ${key} (quota exceeded):`, retryErr);
-      }
-    }
   };
 
   const handleRestoreFullDatabase = (data: {
@@ -1220,9 +1259,9 @@ export default function App() {
     let restoredReports: DOEReport[] | null = null;
 
     if (data.offices && Array.isArray(data.offices)) {
-      data.offices.forEach((o) => {
-        if (o && o.id) deletedOfficeIdsRef.current.delete(o.id);
-      });
+      deletedOfficeIdsRef.current.clear();
+      setDeletedOffices([]);
+      safeSetLocalStorage(STORAGE_KEY_DELETED_OFFICES, '[]');
       const { merged } = normalizeOfficesAndCenters(
         data.offices,
         deletedOfficeIdsRef.current
@@ -1254,46 +1293,76 @@ export default function App() {
       safeSetLocalStorage(STORAGE_KEY_CONFIG, JSON.stringify(data.systemConfig));
     }
     if (data.reports && Array.isArray(data.reports)) {
-      const normalizedReports = sanitizeReportList(data.reports);
+      // Smart Merge: preserve existing reports (such as newer reports on Nov 2-3) while merging all valid reports from the backup JSON by newest timestamp
+      const byId = new Map<string, DOEReport>();
+      for (const existingItem of reports) {
+        const cleanExisting = sanitizeReportList([existingItem])[0];
+        if (cleanExisting && !deletedReportIdsRef.current.has(cleanExisting.id)) {
+          byId.set(cleanExisting.id, cleanExisting);
+        }
+      }
+      for (const rawItem of data.reports) {
+        const clean = sanitizeReportList([rawItem])[0];
+        if (clean) {
+          byId.set(clean.id, pickNewerReport(byId.get(clean.id), clean));
+        }
+      }
+      const normalizedReports = Array.from(byId.values()).sort((a, b) =>
+        (b.reportDate || '').localeCompare(a.reportDate || '')
+      );
+
+      // Clear all deleted report tracking so no restored report is filtered out or purged
+      deletedReportIdsRef.current.clear();
+      setDeletedReports([]);
+      safeSetLocalStorage(STORAGE_KEY_DELETED_REPORTS, '[]');
+
       normalizedReports.forEach((r) => {
-        deletedReportIdsRef.current.delete(r.id);
         pendingSaveReportIdsRef.current.add(r.id);
+        uploadedLocalReportIdsRef.current.add(r.id);
       });
+      persistUnsyncedIds();
       restoredReports = normalizedReports;
       setReports(normalizedReports);
       const serialized = JSON.stringify(normalizedReports);
       safeSetLocalStorage(STORAGE_KEY_REPORTS, serialized);
-      safeSetLocalStorage(STORAGE_KEY_REPORTS_BACKUP, serialized);
       if (normalizedReports.length > 0) {
         setCurrentReport(normalizedReports[0]);
         setLivePreviewReport(normalizedReports[0]);
       }
     }
 
-    // Sync to Cloud Firestore asynchronously so UI never blocks
-    setTimeout(() => {
-      if (restoredOffices) {
-        saveAllOfficesOnline(restoredOffices).catch(console.warn);
-      }
-      if (restoredCats) {
-        saveAllCategoriesOnline(restoredCats).catch(console.warn);
-      }
-      if (restoredQm) {
-        saveAllQueueMetricsOnline(restoredQm).catch(console.warn);
-      }
-      if (restoredReporters) {
-        saveAllReportersOnline(restoredReporters).catch(console.warn);
-      }
-      if (restoredConfig) {
-        saveSystemConfigOnline(restoredConfig).catch(console.warn);
-      }
-      if (restoredReports && restoredReports.length > 0) {
-        const toSync = restoredReports;
-        saveBulkReportsOnline(toSync)
-          .then(() => {
-            toSync.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
-          })
-          .catch(console.warn);
+    // Sync to Cloud Firestore asynchronously in balanced 24 shards so UI never blocks
+    setIsSyncing(true);
+    setTimeout(async () => {
+      try {
+        if (restoredOffices) {
+          await saveAllOfficesOnline(restoredOffices).catch(console.warn);
+        }
+        if (restoredCats) {
+          await saveAllCategoriesOnline(restoredCats).catch(console.warn);
+        }
+        if (restoredQm) {
+          await saveAllQueueMetricsOnline(restoredQm).catch(console.warn);
+        }
+        if (restoredReporters) {
+          await saveAllReportersOnline(restoredReporters).catch(console.warn);
+        }
+        if (restoredConfig) {
+          await saveSystemConfigOnline(restoredConfig).catch(console.warn);
+        }
+        if (restoredReports && restoredReports.length > 0) {
+          const toSync = restoredReports;
+          await saveBulkReportsOnline(toSync, true, false);
+          toSync.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
+          persistUnsyncedIds();
+          showToast(
+            `ซิงก์ฐานข้อมูลขึ้น Cloud Firestore สำเร็จครบถ้วน (${toSync.length.toLocaleString()} รายงาน)`
+          );
+        }
+      } catch (err) {
+        console.warn('Error syncing restored database to Firestore:', err);
+      } finally {
+        setIsSyncing(false);
       }
     }, 50);
   };
@@ -1343,8 +1412,8 @@ export default function App() {
       }
 
       setReports([]);
-      localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify([]));
-      localStorage.setItem(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify([]));
+      safeSetLocalStorage(STORAGE_KEY_REPORTS, '[]');
+      safeSetLocalStorage(STORAGE_KEY_REPORTS_BACKUP, '[]');
       await clearAllReportsOnline();
 
       const emptyReport = createEmptyReportTemplate();
@@ -1361,53 +1430,46 @@ export default function App() {
     }
   };
 
-  // กู้คืนรายงานจาก Rolling Local Backup หรือถังขยะ
-  const handleRestoreBackupReports = () => {
+  // สแกนเชิงลึกและกู้คืนรายงานจากทุกแหล่ง (Cloud Firestore report_bundles, คอลเลกชัน reports รายฉบับ, ถังขยะ deleted_reports และ LocalStorage สำรอง)
+  const handleDeepScanReports = async (
+    includeTrash = true
+  ): Promise<DeepScanDiagnosticResult> => {
+    setIsSyncing(true);
     try {
-      const backupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
-      const deletedRaw = localStorage.getItem(STORAGE_KEY_DELETED_REPORTS);
-      let recovered: DOEReport[] = [];
-
-      if (backupRaw) {
-        const parsed = JSON.parse(backupRaw);
-        if (Array.isArray(parsed)) recovered = [...recovered, ...parsed];
+      const scanResult = await deepScanAndRecoverAllReports(reports, includeTrash);
+      if (scanResult.mergedReports.length > 0) {
+        if (includeTrash) {
+          deletedReportIdsRef.current.clear();
+          setDeletedReports([]);
+          safeSetLocalStorage(STORAGE_KEY_DELETED_REPORTS, '[]');
+        }
+        setReports(scanResult.mergedReports);
+        safeSetLocalStorage(
+          STORAGE_KEY_REPORTS,
+          JSON.stringify(scanResult.mergedReports)
+        );
       }
-      if (deletedRaw) {
-        const parsedDel = JSON.parse(deletedRaw);
-        if (Array.isArray(parsedDel)) recovered = [...recovered, ...parsedDel];
+      if (scanResult.newlyRescuedCount > 0) {
+        showToast(
+          `กู้คืนรายงานที่ตกหล่นสำเร็จเพิ่มอีก ${scanResult.newlyRescuedCount.toLocaleString()} ฉบับ (รวมทั้งหมด ${scanResult.totalMergedCount.toLocaleString()} ฉบับ)`
+        );
+      } else {
+        showToast(
+          `สแกนตรวจสอบทุกแหล่งข้อมูลครบถ้วนแล้ว (พบรายงานรวม ${scanResult.totalMergedCount.toLocaleString()} ฉบับ)`
+        );
       }
-      if (deletedReports.length > 0) {
-        recovered = [...recovered, ...deletedReports];
-      }
+      return scanResult;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
-      const map = new Map<string, DOEReport>();
-      reports.forEach((r) => map.set(r.id, r));
-      recovered.forEach((r) => map.set(r.id, r));
-      const finalRecovered = Array.from(map.values()).sort((a, b) =>
-        (b.reportDate || '').localeCompare(a.reportDate || '')
-      );
-
-      if (finalRecovered.length === 0) {
-        showToast('ไม่พบข้อมูลรายงานสำรองในเบราว์เซอร์เครื่องนี้ (หากบันทึกจากเครื่องอื่น กรุณากดซิงก์จากเครื่องที่บันทึก)');
-        return;
-      }
-
-      finalRecovered.forEach((r) => {
-        deletedReportIdsRef.current.delete(r.id);
-        pendingSaveReportIdsRef.current.add(r.id);
-      });
-      setReports(finalRecovered);
-      setDeletedReports([]);
-      saveBulkReportsOnline(finalRecovered)
-        .then(() => {
-          finalRecovered.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
-        })
-        .catch(console.warn);
-      showToast(`กู้คืนและซิงก์รายงานสำเร็จทั้งหมด ${finalRecovered.length} ฉบับ!`);
-    } catch (e) {
+  // กู้คืนรายงานจาก Rolling Local Backup, ถังขยะ และคอลเลกชันสำรองบน Cloud Firestore
+  const handleRestoreBackupReports = () => {
+    handleDeepScanReports(true).catch((e) => {
       console.error('Failed to restore backup reports:', e);
       showToast('เกิดข้อผิดพลาดในการกู้คืนรายงานสำรอง');
-    }
+    });
   };
 
   // ซิงก์รายงานทั้งหมดในเครื่องขึ้น Cloud Firestore
@@ -1416,8 +1478,15 @@ export default function App() {
       showToast('ไม่มีรายการรายงานในเครื่องที่จะซิงก์ขึ้น Cloud Firestore');
       return;
     }
-    saveBulkReportsOnline(reports).catch(console.warn);
-    showToast(`ซิงก์รายงานทั้งหมด (${reports.length} ฉบับ) แบบรวมชุด (Bundled Shards) ขึ้นฐานข้อมูลออนไลน์เรียบร้อยแล้ว`);
+    setIsSyncing(true);
+    saveBulkReportsOnline(reports, true, true)
+      .then(() => {
+        showToast(
+          `ซิงก์รายงานทั้งหมด (${reports.length.toLocaleString()} ฉบับ) แบบ 24 Shards ขึ้นฐานข้อมูลออนไลน์เรียบร้อยแล้ว`
+        );
+      })
+      .catch(console.warn)
+      .finally(() => setIsSyncing(false));
   };
 
   // Save or update report
@@ -1476,6 +1545,8 @@ export default function App() {
 
     deletedReportIdsRef.current.delete(finalReport.id);
     pendingSaveReportIdsRef.current.add(finalReport.id);
+    uploadedLocalReportIdsRef.current.delete(finalReport.id);
+    persistUnsyncedIds();
 
     const targetIndex = reports.findIndex((r) => r.id === finalReport.id);
     let updatedList: DOEReport[];
@@ -1487,23 +1558,26 @@ export default function App() {
       updatedList = [finalReport, ...reports];
     }
 
-    // 1. Immediately persist to localStorage & rolling backup before async network call
+    // 1. Immediately persist to localStorage & rolling backup using quota-safe helper before async network call
     try {
       const delIds = deletedReportIdsRef.current;
-      localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(updatedList));
-      const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
-      const existingBackup: DOEReport[] = existingBackupRaw ? JSON.parse(existingBackupRaw) : [];
-      const backupMap = new Map<string, DOEReport>();
-      existingBackup.forEach((r) => {
-        if (r && r.id && !delIds.has(r.id)) backupMap.set(r.id, r);
-      });
-      updatedList.forEach((r) => {
-        if (r && r.id && !delIds.has(r.id)) backupMap.set(r.id, r);
-      });
-      localStorage.setItem(
-        STORAGE_KEY_REPORTS_BACKUP,
-        JSON.stringify(Array.from(backupMap.values()))
-      );
+      const serializedUpdated = JSON.stringify(updatedList);
+      safeSetLocalStorage(STORAGE_KEY_REPORTS, serializedUpdated);
+      if (serializedUpdated.length < 1_500_000) {
+        const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
+        const existingBackup: DOEReport[] = existingBackupRaw ? JSON.parse(existingBackupRaw) : [];
+        const backupMap = new Map<string, DOEReport>();
+        existingBackup.forEach((r) => {
+          if (r && r.id && !delIds.has(r.id)) backupMap.set(r.id, pickNewerReport(backupMap.get(r.id), r));
+        });
+        updatedList.forEach((r) => {
+          if (r && r.id && !delIds.has(r.id)) backupMap.set(r.id, pickNewerReport(backupMap.get(r.id), r));
+        });
+        safeSetLocalStorage(
+          STORAGE_KEY_REPORTS_BACKUP,
+          JSON.stringify(Array.from(backupMap.values()))
+        );
+      }
     } catch (e) {
       console.warn('Immediate localStorage save warning:', e);
     }
@@ -1521,6 +1595,7 @@ export default function App() {
     try {
       await saveReportOnline(finalReport);
       pendingSaveReportIdsRef.current.delete(finalReport.id);
+      persistUnsyncedIds();
       setIsFirestoreOnline(true);
       showToast(
         targetIndex >= 0
@@ -1530,11 +1605,14 @@ export default function App() {
     } catch (err) {
       console.error('Failed to save report online to Firestore:', err);
       showToast(
-        `บันทึกรายงาน "${finalReport.officeName}" ลงเครื่องสำรองแล้ว (กำลังรอเชื่อมต่อฐานข้อมูลออนไลน์)`,
+        `บันทึกรายงาน "${finalReport.officeName}" ลงเครื่องสำรองแล้ว (ระบบจะซิงก์ขึ้นฐานข้อมูลออนไลน์ให้อัตโนมัติทันทีที่เชื่อมต่อได้)`,
         '🔄 ลองซิงก์ใหม่',
         () => {
           saveReportOnline(finalReport)
-            .then(() => pendingSaveReportIdsRef.current.delete(finalReport.id))
+            .then(() => {
+              pendingSaveReportIdsRef.current.delete(finalReport.id);
+              persistUnsyncedIds();
+            })
             .catch(console.warn);
         }
       );
@@ -1555,6 +1633,7 @@ export default function App() {
     // Mark as deleted immediately so no listener or backup can re-add it
     deletedReportIdsRef.current.add(target.id);
     pendingSaveReportIdsRef.current.delete(target.id);
+    persistUnsyncedIds();
 
     const remaining = reports.filter((r) => r.id !== target.id);
     setReports(remaining);
@@ -1913,6 +1992,7 @@ export default function App() {
             onClearAllReportsForProduction={handleClearAllReportsForProduction}
             onRestoreBackupReports={handleRestoreBackupReports}
             onSyncAllReportsToOnline={handleSyncAllReportsToOnline}
+            onDeepScanReports={handleDeepScanReports}
             onNotify={showToast}
             onAdminAuthenticated={handleAdminAuthenticated}
             onAdminLoggedOut={() => setIsAdmin(false)}
