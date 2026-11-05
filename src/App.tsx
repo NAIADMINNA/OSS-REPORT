@@ -36,6 +36,10 @@ import { formatThaiDateFull, getTodayIsoDate } from './utils/thaiDate';
 import { sanitizeReportList } from './utils/doeUtils';
 import { areSameCenterName, deduplicateCenterList } from './utils/officeUtils';
 import {
+  loadReportsFromIndexedDB,
+  saveReportsToIndexedDB,
+} from './utils/indexedDbStorage';
+import {
   Eye,
   CheckCircle,
   Maximize2,
@@ -601,6 +605,33 @@ export default function App() {
     async function initOnlineDB() {
       setIsSyncing(true);
       try {
+        // 0. Hydrate from Unlimited Browser IndexedDB immediately so even if localStorage or Firestore quota is full, 100% of reports appear
+        loadReportsFromIndexedDB()
+          .then((idbReports) => {
+            if (idbReports && idbReports.length > 0) {
+              setReports((prev) => {
+                const delIds = hasLoadedDeletedReportsRef.current
+                  ? deletedReportIdsRef.current
+                  : new Set<string>();
+                const map = new Map<string, DOEReport>();
+                prev.forEach((r) => {
+                  if (r && r.id && !delIds.has(r.id)) {
+                    map.set(r.id, pickNewerReport(map.get(r.id), r));
+                  }
+                });
+                idbReports.forEach((r) => {
+                  if (r && r.id && !delIds.has(r.id)) {
+                    map.set(r.id, pickNewerReport(map.get(r.id), r));
+                  }
+                });
+                return Array.from(map.values()).sort((a, b) =>
+                  (b.reportDate || '').localeCompare(a.reportDate || '')
+                );
+              });
+            }
+          })
+          .catch(() => {});
+
         // 1. Subscribe to deleted reports (trash) first so deletedReportIdsRef stays authoritative
         const unsubDelReports = subscribeDeletedReports((onlineDel) => {
           if (!Array.isArray(onlineDel)) return;
@@ -975,16 +1006,23 @@ export default function App() {
     }
   };
 
-  // Persist Databases to localStorage (keeping backup clean of deleted reports and respecting 5MB quota)
+  // Persist Databases to IndexedDB (unlimited capacity) and localStorage (respecting 5MB UTF-16 quota)
   useEffect(() => {
     try {
       const delIds = deletedReportIdsRef.current;
       const activeClean = reports.filter((r) => !delIds.has(r.id));
+      if (activeClean.length > 0) {
+        saveReportsToIndexedDB(activeClean).catch(() => {});
+      }
+
       const serializedActive = JSON.stringify(activeClean);
+      // Free up secondary backup key first if payload exceeds 600k chars (~1.2MB UTF-16) so primary localStorage never hits 5MB quota
+      if (serializedActive.length >= 600_000) {
+        localStorage.removeItem(STORAGE_KEY_REPORTS_BACKUP);
+      }
       safeSetLocalStorage(STORAGE_KEY_REPORTS, serializedActive);
 
-      // Only maintain a second backup copy in localStorage if payload is small enough (<1.5MB) not to exhaust 5MB quota
-      if (serializedActive.length < 1_500_000) {
+      if (serializedActive.length < 600_000) {
         const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
         let backupList: DOEReport[] = [];
         if (existingBackupRaw) {
@@ -1006,8 +1044,6 @@ export default function App() {
           (b.reportDate || '').localeCompare(a.reportDate || '')
         );
         safeSetLocalStorage(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify(mergedBackup));
-      } else {
-        localStorage.removeItem(STORAGE_KEY_REPORTS_BACKUP);
       }
     } catch (e) {
       console.error('Failed to persist reports', e);
@@ -1555,12 +1591,16 @@ export default function App() {
       updatedList = [finalReport, ...reports];
     }
 
-    // 1. Immediately persist to localStorage & rolling backup using quota-safe helper before async network call
+    // 1. Immediately persist to IndexedDB & localStorage using quota-safe helper before async network call
     try {
       const delIds = deletedReportIdsRef.current;
+      saveReportsToIndexedDB(updatedList).catch(() => {});
       const serializedUpdated = JSON.stringify(updatedList);
+      if (serializedUpdated.length >= 600_000) {
+        localStorage.removeItem(STORAGE_KEY_REPORTS_BACKUP);
+      }
       safeSetLocalStorage(STORAGE_KEY_REPORTS, serializedUpdated);
-      if (serializedUpdated.length < 1_500_000) {
+      if (serializedUpdated.length < 600_000) {
         const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
         const existingBackup: DOEReport[] = existingBackupRaw ? JSON.parse(existingBackupRaw) : [];
         const backupMap = new Map<string, DOEReport>();
@@ -1636,16 +1676,17 @@ export default function App() {
     setReports(remaining);
     setDeletedReports((prev) => [target, ...prev.filter((r) => r.id !== target.id)]);
 
-    // Immediately purge from both localStorage keys so page reloads or backups never resurrect it
+    // Immediately purge from IndexedDB and localStorage keys so page reloads or backups never resurrect it
     try {
-      localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(remaining));
+      saveReportsToIndexedDB(remaining).catch(() => {});
+      safeSetLocalStorage(STORAGE_KEY_REPORTS, JSON.stringify(remaining));
       const backupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
       if (backupRaw) {
         const parsedBackup = sanitizeReportList(JSON.parse(backupRaw));
         const cleanedBackup = parsedBackup.filter(
           (r) => r.id !== target.id && !deletedReportIdsRef.current.has(r.id)
         );
-        localStorage.setItem(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify(cleanedBackup));
+        safeSetLocalStorage(STORAGE_KEY_REPORTS_BACKUP, JSON.stringify(cleanedBackup));
       }
     } catch (e) {
       console.warn('Could not clean backup on delete:', e);

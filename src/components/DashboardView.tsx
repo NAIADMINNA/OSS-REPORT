@@ -231,6 +231,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return datesWithData[0] || todayStr;
   }, [reports, todayStr]);
 
+  // Latest previous date (before todayStr or before latestDateWithReports) that has reports
+  const latestPreviousDateInfo = useMemo(() => {
+    if (!reports || reports.length === 0) return null;
+    const countsByDate = new Map<string, number>();
+    reports.forEach((r) => {
+      if (r.reportDate) {
+        countsByDate.set(r.reportDate, (countsByDate.get(r.reportDate) || 0) + 1);
+      }
+    });
+    const sortedDates = Array.from(countsByDate.keys()).sort((a, b) => b.localeCompare(a));
+    const prevDate = sortedDates.find((d) => d < todayStr) || sortedDates[1] || null;
+    if (!prevDate) return null;
+    return {
+      date: prevDate,
+      count: countsByDate.get(prevDate) || 0,
+    };
+  }, [reports, todayStr]);
+
+  const latestDateReportsCount = useMemo(() => {
+    return reports.filter((r) => r.reportDate === latestDateWithReports).length;
+  }, [reports, latestDateWithReports]);
+
   const hasManuallyChangedDateRef = useRef(false);
 
   // Reset drill-down and filters when user clicks the logo to return to the summary dashboard
@@ -1098,6 +1120,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 >
                   <span>📊 ภาพรวมสะสมทั้งหมด ({reports.length.toLocaleString()} รายการ)</span>
                 </button>
+                {latestPreviousDateInfo &&
+                  latestPreviousDateInfo.date !== latestDateWithReports && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        hasManuallyChangedDateRef.current = true;
+                        setSelectedCycleKey(`single:${latestPreviousDateInfo.date}`);
+                        setSelectedReportId(null);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        selectedCycleKey === `single:${latestPreviousDateInfo.date}`
+                          ? 'bg-blue-900 text-white shadow-xs'
+                          : 'bg-white hover:bg-blue-50 text-slate-700 border border-slate-200/80'
+                      }`}
+                    >
+                      <span>
+                        ⏪ วันก่อนหน้า ({formatThaiDateShort(latestPreviousDateInfo.date)} •{' '}
+                        {latestPreviousDateInfo.count.toLocaleString()} รายการ)
+                      </span>
+                    </button>
+                  )}
                 <button
                   type="button"
                   onClick={() => {
@@ -1111,11 +1154,64 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       : 'bg-white hover:bg-blue-50 text-slate-700 border border-slate-200/80'
                   }`}
                 >
-                  <span>📅 วันล่าสุดที่มีรายงาน ({formatThaiDateShort(latestDateWithReports)})</span>
+                  <span>
+                    📅 วันล่าสุดที่มีรายงาน ({formatThaiDateShort(latestDateWithReports)} •{' '}
+                    {latestDateReportsCount.toLocaleString()} รายการ)
+                  </span>
                 </button>
               </div>
             )}
           </div>
+
+          {/* Smart Date Filter Status Notice when viewing a single day with partial reports */}
+          {selectedCycleKey.startsWith('single:') &&
+            reports.length > reportedList.length && (
+              <div className="flex flex-wrap items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl bg-amber-50/90 border border-amber-200/90 text-xs text-amber-950">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    กำลังแสดงข้อมูลเฉพาะ{' '}
+                    <strong className="font-extrabold">
+                      {formatThaiDateShort(selectedCycleKey.replace('single:', ''))}
+                    </strong>{' '}
+                    จำนวน <strong className="font-extrabold">{reportedList.length.toLocaleString()}</strong> รายการ
+                    {' '}(ข้อมูลในฐานข้อมูลทั้งหมดอยู่ครบ{' '}
+                    <strong className="font-extrabold text-emerald-800">
+                      {reports.length.toLocaleString()}
+                    </strong>{' '}
+                    รายการ)
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {latestPreviousDateInfo &&
+                    selectedCycleKey !== `single:${latestPreviousDateInfo.date}` && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          hasManuallyChangedDateRef.current = true;
+                          setSelectedCycleKey(`single:${latestPreviousDateInfo.date}`);
+                          setSelectedReportId(null);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold transition-colors cursor-pointer"
+                      >
+                        ดูวันที่ {formatThaiDateShort(latestPreviousDateInfo.date)} (
+                        {latestPreviousDateInfo.count.toLocaleString()} รายการ)
+                      </button>
+                    )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      hasManuallyChangedDateRef.current = true;
+                      setSelectedCycleKey('all');
+                      setSelectedReportId(null);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-blue-900 hover:bg-blue-800 text-amber-300 font-bold transition-colors cursor-pointer"
+                  >
+                    ดูข้อมูลสะสมทั้งหมด ({reports.length.toLocaleString()} รายการ)
+                  </button>
+                </div>
+              </div>
+            )}
 
           {/* Date, Region, Province & Center/Mobile Unit Selectors + Primary Actions */}
           <div className="w-full bg-gradient-to-r from-slate-50/95 via-sky-50/40 to-slate-50/95 p-3 sm:p-3.5 rounded-2xl border border-slate-200/90 shadow-inner flex flex-wrap items-stretch gap-2.5">

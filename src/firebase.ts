@@ -80,6 +80,10 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 export async function testConnection(): Promise<boolean> {
   try {
+    const res = await fetch('/api/doe/state');
+    if (res.ok) return true;
+  } catch {}
+  try {
     await getDoc(doc(db, 'system_config', 'main_config'));
     return true;
   } catch {
