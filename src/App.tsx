@@ -742,7 +742,12 @@ export default function App() {
                     pendingUnsynced.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
                     persistUnsyncedIds();
                   })
-                  .catch(console.warn);
+                  .catch(console.warn)
+                  .finally(() => {
+                    pendingUnsynced.forEach((r) => {
+                      uploadedLocalReportIdsRef.current.delete(r.id);
+                    });
+                  });
               }
             }
 

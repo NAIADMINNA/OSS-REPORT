@@ -1,8 +1,9 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import * as dotenv from 'dotenv';
-import { requireAuth, optionalAuth, AuthRequest } from './src/middleware/auth.ts';
+import { requireAuth, optionalAuth, type AuthRequest } from './src/middleware/auth.ts';
 import { getUsers, getOrCreateUser } from './src/db/users.ts';
 import {
   getAllReportsFromSql,
@@ -23,7 +24,7 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '50mb' }));
 
@@ -170,7 +171,12 @@ async function startServer() {
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(__dirname, 'dist');
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    (Boolean(process.env.K_SERVICE) && fs.existsSync(path.join(distPath, 'index.html')));
+
+  if (!isProduction) {
     process.env.DISABLE_HMR = 'true';
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -179,7 +185,6 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*all', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

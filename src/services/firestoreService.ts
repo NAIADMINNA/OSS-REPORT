@@ -589,19 +589,37 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
     hasReceivedFirstMasterSnapshot = true;
     broadcastMasterState(false);
 
+    // Ensure local deleted_reports caches never retain IDs that are active in Cloud SQL
+    if (nextActiveMap.size > 0) {
+      for (const delKey of ['doe_work_permit_deleted_reports_v1', 'doe_ss_deleted_reports_v1']) {
+        try {
+          const rawDel = localStorage.getItem(delKey);
+          if (rawDel) {
+            const parsedDel = JSON.parse(rawDel);
+            if (Array.isArray(parsedDel)) {
+              const filteredDel = parsedDel.filter((r) => r && r.id && !nextActiveMap.has(r.id));
+              if (filteredDel.length !== parsedDel.length) {
+                localStorage.setItem(delKey, JSON.stringify(filteredDel));
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
     if (sqlActive.length > 0 || hasCompletedInitialSqlSync) {
       broadcastActiveReports(false);
     }
 
-    if (!hasCompletedInitialSqlSync) {
-      hasCompletedInitialSqlSync = true;
-      migrateLegacyReportsToBundlesOnce(nextActiveMap, (migratedList) => {
-        for (const r of migratedList) {
-          sqlActiveReportsCache.set(r.id, r);
-        }
-        broadcastActiveReports(false);
-      });
-    }
+    hasCompletedInitialSqlSync = true;
+    // Allow re-checking local cache if any reports in IndexedDB/localStorage are still missing from Cloud SQL
+    hasMigratedReportBundlesInSession = false;
+    migrateLegacyReportsToBundlesOnce(nextActiveMap, (migratedList) => {
+      for (const r of migratedList) {
+        sqlActiveReportsCache.set(r.id, r);
+      }
+      broadcastActiveReports(false);
+    });
     return true;
   } catch (err) {
     if (onError) onError(err);

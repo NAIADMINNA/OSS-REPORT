@@ -3,7 +3,7 @@ import path from 'path';
 import { eq, sql } from 'drizzle-orm';
 import { db } from './index.ts';
 import { doeReports, doeMasterState } from './schema.ts';
-import { DOEReport } from '../types/doe.ts';
+import type { DOEReport } from '../types/doe.ts';
 
 const MASTER_CONFIG_ID = 'main_config';
 const MIRROR_DIR = path.resolve(process.cwd(), '.data');
@@ -326,7 +326,7 @@ export async function upsertBulkReportsInSql(
 
   const toSyncList = Array.from(dedupedSyncMap.values());
   if (toSyncList.length > 0) {
-    enqueueBackgroundSqlSync(async () => {
+    const runBatchInsert = async () => {
       const BATCH_SIZE = 50;
       for (let i = 0; i < toSyncList.length; i += BATCH_SIZE) {
         const chunk = toSyncList.slice(i, i + BATCH_SIZE);
@@ -352,7 +352,13 @@ export async function upsertBulkReportsInSql(
           2
         );
       }
-    });
+    };
+
+    try {
+      await runBatchInsert();
+    } catch {
+      enqueueBackgroundSqlSync(runBatchInsert);
+    }
   }
 
   const { activeReports } = await getAllReportsFromSql();
