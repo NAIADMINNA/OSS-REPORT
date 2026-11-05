@@ -125,6 +125,8 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   departmentNameEn: 'DEPARTMENT OF EMPLOYMENT',
   customLogoUrl: null,
   adminPin: '0841543524',
+  googleSheetsWebhookUrl: '',
+  googleSheetsAutoSync: true,
 };
 
 export const DEFAULT_QUEUE_METRICS: QueueMetricCategory[] = [

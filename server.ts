@@ -171,6 +171,56 @@ async function startServer() {
     }
   });
 
+  // Google Sheets Apps Script Webhook Proxy (POST)
+  app.post('/api/doe/sheets-proxy', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const webhookUrl = String(req.body?.webhookUrl || '').trim();
+      const payload = req.body?.payload;
+      if (!webhookUrl.startsWith('https://script.google.com/')) {
+        return res.status(400).json({ error: 'Invalid Google Apps Script URL' });
+      }
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload || {}),
+        redirect: 'follow',
+      });
+      const text = await response.text();
+      try {
+        return res.json(JSON.parse(text));
+      } catch {
+        return res.json({ ok: response.ok, raw: text.slice(0, 300) });
+      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Google Sheets proxy POST failed';
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // Google Sheets Apps Script Webhook Proxy (GET - Restore from Sheets)
+  app.get('/api/doe/sheets-proxy', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const webhookUrl = String(req.query?.webhookUrl || '').trim();
+      if (!webhookUrl.startsWith('https://script.google.com/')) {
+        return res.status(400).json({ error: 'Invalid Google Apps Script URL' });
+      }
+      const response = await fetch(webhookUrl, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        redirect: 'follow',
+      });
+      const text = await response.text();
+      try {
+        return res.json(JSON.parse(text));
+      } catch {
+        return res.status(502).json({ error: 'Invalid JSON returned from Google Apps Script' });
+      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Google Sheets proxy GET failed';
+      res.status(500).json({ error: msg });
+    }
+  });
+
   const distPath = path.join(__dirname, 'dist');
   const isProduction =
     process.env.NODE_ENV === 'production' ||

@@ -18,8 +18,16 @@ import {
   reportSystemIssueOnline,
   deleteSystemIssueOnline,
   clearAllSystemIssuesOnline,
+  saveBulkReportsOnline,
   DeepScanDiagnosticResult,
 } from '../services/firestoreService';
+import {
+  GOOGLE_APPS_SCRIPT_TEMPLATE,
+  getStoredGoogleSheetsConfig,
+  saveStoredGoogleSheetsConfig,
+  syncBulkReportsToGoogleSheets,
+  pullReportsFromGoogleSheets,
+} from '../utils/googleSheetsSync';
 import { formatThaiDateShort } from '../utils/thaiDate';
 import {
   ShieldCheck,
@@ -136,6 +144,85 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [deepScanResult, setDeepScanResult] = useState<DeepScanDiagnosticResult | null>(null);
   const [showAllDatesAudit, setShowAllDatesAudit] = useState(false);
 
+  // Google Sheets Auto-Sync states
+  const [sheetsWebhookUrl, setSheetsWebhookUrl] = useState<string>(() => {
+    return systemConfig.googleSheetsWebhookUrl || getStoredGoogleSheetsConfig().webhookUrl || '';
+  });
+  const [sheetsAutoSync, setSheetsAutoSync] = useState<boolean>(() => {
+    return systemConfig.googleSheetsAutoSync !== undefined
+      ? systemConfig.googleSheetsAutoSync
+      : getStoredGoogleSheetsConfig().autoSync;
+  });
+  const [isSyncingToSheets, setIsSyncingToSheets] = useState(false);
+  const [sheetsSyncProgress, setSheetsSyncProgress] = useState<{ done: number; total: number } | null>(null);
+  const [isPullingFromSheets, setIsPullingFromSheets] = useState(false);
+  const [showAppsScriptGuide, setShowAppsScriptGuide] = useState(false);
+
+  useEffect(() => {
+    if (systemConfig.googleSheetsWebhookUrl && systemConfig.googleSheetsWebhookUrl !== sheetsWebhookUrl) {
+      setSheetsWebhookUrl(systemConfig.googleSheetsWebhookUrl);
+    }
+    if (systemConfig.googleSheetsAutoSync !== undefined) {
+      setSheetsAutoSync(systemConfig.googleSheetsAutoSync);
+    }
+  }, [systemConfig.googleSheetsWebhookUrl, systemConfig.googleSheetsAutoSync]);
+
+  const handleSaveGoogleSheetsSettings = () => {
+    const cleanUrl = sheetsWebhookUrl.trim();
+    saveStoredGoogleSheetsConfig(cleanUrl, sheetsAutoSync);
+    onUpdateSystemConfig({
+      ...systemConfig,
+      googleSheetsWebhookUrl: cleanUrl,
+      googleSheetsAutoSync: sheetsAutoSync,
+    });
+    onNotify('บันทึกการตั้งค่า Google Sheets Auto-Sync เรียบร้อยแล้ว');
+  };
+
+  const handleSyncAllReportsToGoogleSheets = async () => {
+    const cleanUrl = sheetsWebhookUrl.trim();
+    if (!cleanUrl || !cleanUrl.startsWith('https://script.google.com/')) {
+      onNotify('กรุณาวาง Google Apps Script Web App URL (https://script.google.com/...) ก่อนกดซิงค์');
+      return;
+    }
+    saveStoredGoogleSheetsConfig(cleanUrl, sheetsAutoSync);
+    onUpdateSystemConfig({
+      ...systemConfig,
+      googleSheetsWebhookUrl: cleanUrl,
+      googleSheetsAutoSync: sheetsAutoSync,
+    });
+    setIsSyncingToSheets(true);
+    setSheetsSyncProgress({ done: 0, total: reports.length });
+    try {
+      const result = await syncBulkReportsToGoogleSheets(reports, cleanUrl, (done, total) => {
+        setSheetsSyncProgress({ done, total });
+      });
+      onNotify(result.message || 'ซิงค์ข้อมูลลง Google Sheets สำเร็จ');
+    } finally {
+      setIsSyncingToSheets(false);
+      setSheetsSyncProgress(null);
+    }
+  };
+
+  const handlePullFromGoogleSheets = async () => {
+    const cleanUrl = sheetsWebhookUrl.trim();
+    if (!cleanUrl || !cleanUrl.startsWith('https://script.google.com/')) {
+      onNotify('กรุณาวาง Google Apps Script Web App URL ก่อนดึงข้อมูล');
+      return;
+    }
+    setIsPullingFromSheets(true);
+    try {
+      const result = await pullReportsFromGoogleSheets(cleanUrl);
+      if (result.success && result.reports.length > 0) {
+        await saveBulkReportsOnline(result.reports, true, false);
+        onNotify(`กู้คืนและซิงค์ข้อมูลจาก Google Sheets จำนวน ${result.reports.length.toLocaleString()} รายการ เข้าสู่ระบบเรียบร้อยแล้ว`);
+      } else {
+        onNotify(result.message || 'ไม่พบรายการรายงานใน Google Sheets');
+      }
+    } finally {
+      setIsPullingFromSheets(false);
+    }
+  };
+
   // Daily breakdown of active reports & deleted reports
   const dailyAuditBreakdown = useMemo(() => {
     const countMap = new Map<string, { active: number; trash: number }>();
@@ -149,8 +236,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       const prev = countMap.get(d) || { active: 0, trash: 0 };
       countMap.set(d, { ...prev, trash: prev.trash + 1 });
     });
-    // Ensure Nov 1, Nov 2, Nov 3 (2026-11-01, 2026-11-02, 2026-11-03) are explicitly visible in the audit check
-    for (const targetDate of ['2026-11-03', '2026-11-02', '2026-11-01']) {
+    for (const targetDate of ['2026-11-05', '2026-11-04', '2026-11-03', '2026-11-02', '2026-11-01']) {
       if (!countMap.has(targetDate)) {
         countMap.set(targetDate, { active: 0, trash: 0 });
       }
@@ -3341,6 +3427,148 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     className="hidden"
                   />
                 </label>
+              </div>
+            </div>
+
+            {/* Google Sheets Real-Time Auto-Sync & Off-Site Backup Card */}
+            <div className="bg-gradient-to-br from-emerald-950 via-teal-950 to-slate-900 text-white rounded-2xl p-5 border border-emerald-700/50 shadow-md space-y-4 md:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center">
+                    <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <div>
+                    <div className="font-extrabold text-sm text-white tracking-tight flex items-center gap-2">
+                      <span>ระบบสำรองข้อมูลอัตโนมัติลง Google Sheets (Real-Time Auto-Sync & Backup)</span>
+                      {sheetsWebhookUrl.trim().startsWith('https://script.google.com/') && sheetsAutoSync && (
+                        <span className="text-[10px] bg-emerald-500/25 text-emerald-300 border border-emerald-400/40 px-2 py-0.5 rounded-md font-bold">
+                          เชื่อมต่อพร้อมซิงค์อัตโนมัติ
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-emerald-200/80 mt-0.5">
+                      บันทึกสำเนารายงานทุกฉบับลงตาราง Google Sheets ใน Google Drive ของคุณโดยอัตโนมัติ (เจ้าหน้าที่ทั้ง 85 จังหวัดไม่ต้องล็อกอิน Gmail)
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAppsScriptGuide((prev) => !prev)}
+                  className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Code className="w-3.5 h-3.5" />
+                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'ดูวิธีตั้งค่า & คัดลอกโค้ด Apps Script (1 นาที)'}</span>
+                </button>
+              </div>
+
+              {showAppsScriptGuide && (
+                <div className="bg-slate-950/80 rounded-xl p-4 border border-emerald-800/50 space-y-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-bold text-emerald-300">
+                      ขั้นตอนการสร้าง Google Sheets Webhook (ทำเพียงครั้งเดียว ใช้เวลา 1 นาที):
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
+                        onNotify('คัดลอกโค้ด Google Apps Script สำเร็จรูปเรียบร้อยแล้ว');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>คัดลอกโค้ด Apps Script ทั้งหมด</span>
+                    </button>
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1.5 text-slate-300 leading-relaxed">
+                    <li>สร้างไฟล์ <strong>Google Sheets</strong> ใหม่ใน Google Drive ของคุณ แล้วไปที่เมนูด้านบน <strong>ส่วนขยาย (Extensions) &rarr; Apps Script</strong></li>
+                    <li>ลบโค้ดเดิมออกทั้งหมด กดปุ่ม <strong>"คัดลอกโค้ด Apps Script ทั้งหมด"</strong> ด้านบนไปวางแทนที่ แล้วกดไอคอนบันทึก (Save)</li>
+                    <li>กดปุ่มสีน้ำเงินมุมขวาบน <strong>ทำให้ใช้งานได้ (Deploy) &rarr; การทำให้ใช้งานได้รายการใหม่ (New deployment)</strong></li>
+                    <li>เลือกประเภทเป็น <strong>เว็บแอป (Web app)</strong> &bull; ช่อง <em>ผู้ที่มีสิทธิ์เข้าถึง (Who has access)</em> เลือกเป็น <strong>ทุกคน (Anyone)</strong> แล้วกด Deploy</li>
+                    <li>คัดลอก <strong>Web App URL</strong> (ที่ขึ้นต้นด้วย <code>https://script.google.com/macros/s/.../exec</code>) มาวางในช่องด้านล่างแล้วกดบันทึก</li>
+                  </ol>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="url"
+                    value={sheetsWebhookUrl}
+                    onChange={(e) => setSheetsWebhookUrl(e.target.value)}
+                    placeholder="วาง Google Apps Script Web App URL ที่นี่ (https://script.google.com/macros/s/.../exec)"
+                    className="flex-1 bg-slate-950/80 border border-emerald-700/60 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder:text-slate-400 outline-none font-mono"
+                  />
+                  <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900/80 border border-slate-700 text-xs font-bold text-slate-200 cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={sheetsAutoSync}
+                      onChange={(e) => setSheetsAutoSync(e.target.checked)}
+                      className="rounded accent-emerald-500 w-4 h-4"
+                    />
+                    <span>ซิงค์อัตโนมัติเมื่อส่งรายงาน</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleSaveGoogleSheetsSettings}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>บันทึก URL</span>
+                  </button>
+                </div>
+
+                {sheetsSyncProgress && (
+                  <div className="bg-slate-950/70 rounded-xl p-3 border border-emerald-500/40 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-bold text-emerald-300">
+                      <span>กำลังส่งข้อมูลรายงานลง Google Sheets...</span>
+                      <span>
+                        {sheetsSyncProgress.done.toLocaleString()} / {sheetsSyncProgress.total.toLocaleString()} รายการ
+                      </span>
+                    </div>
+                    <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500 transition-all duration-300"
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            Math.round((sheetsSyncProgress.done / Math.max(1, sheetsSyncProgress.total)) * 100)
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    disabled={isSyncingToSheets}
+                    onClick={handleSyncAllReportsToGoogleSheets}
+                    className="flex-1 min-w-[240px] px-4 py-2.5 bg-white hover:bg-emerald-50 text-emerald-950 font-extrabold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-4 h-4 text-emerald-700 ${isSyncingToSheets ? 'animate-spin' : ''}`} />
+                    <span>
+                      {isSyncingToSheets
+                        ? 'กำลังซิงค์ข้อมูลลง Google Sheets...'
+                        : `ซิงค์ข้อมูลทั้งหมด (${reports.length.toLocaleString()} รายการ) ลง Google Sheets ทันที`}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isPullingFromSheets}
+                    onClick={handlePullFromGoogleSheets}
+                    className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>
+                      {isPullingFromSheets
+                        ? 'กำลังดึงข้อมูลจาก Google Sheets...'
+                        : 'ดึงข้อมูลจาก Google Sheets กลับเข้าระบบ'}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
 

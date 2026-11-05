@@ -29,6 +29,12 @@ import {
   loadReportsFromIndexedDB,
   saveReportsToIndexedDB,
 } from '../utils/indexedDbStorage';
+import {
+  deleteReportFromGoogleSheets,
+  getStoredGoogleSheetsConfig,
+  saveStoredGoogleSheetsConfig,
+  syncReportToGoogleSheets,
+} from '../utils/googleSheetsSync';
 
 const REPORT_BUNDLES_COLLECTION = 'report_bundles';
 const REPORT_SHARD_COUNT = 24;
@@ -342,6 +348,21 @@ function getActiveMasterListenerCount(): number {
 }
 
 function broadcastMasterState(onlyConfigBranding = false) {
+  const localSheetsCfg = getStoredGoogleSheetsConfig();
+  const resolvedWebhookUrl =
+    masterDocCache.googleSheetsWebhookUrl !== undefined &&
+    masterDocCache.googleSheetsWebhookUrl !== ''
+      ? masterDocCache.googleSheetsWebhookUrl
+      : localSheetsCfg.webhookUrl;
+  const resolvedAutoSync =
+    masterDocCache.googleSheetsAutoSync !== undefined
+      ? masterDocCache.googleSheetsAutoSync
+      : localSheetsCfg.autoSync;
+
+  if (resolvedWebhookUrl) {
+    saveStoredGoogleSheetsConfig(resolvedWebhookUrl, resolvedAutoSync);
+  }
+
   const sysConfig: SystemConfig = {
     reportTitle: masterDocCache.reportTitle || DEFAULT_SYSTEM_CONFIG.reportTitle,
     reportSubtitle: masterDocCache.reportSubtitle || DEFAULT_SYSTEM_CONFIG.reportSubtitle,
@@ -354,6 +375,8 @@ function broadcastMasterState(onlyConfigBranding = false) {
         ? masterDocCache.customLogoUrl
         : DEFAULT_SYSTEM_CONFIG.customLogoUrl,
     adminPin: masterDocCache.adminPin || DEFAULT_SYSTEM_CONFIG.adminPin,
+    googleSheetsWebhookUrl: resolvedWebhookUrl,
+    googleSheetsAutoSync: resolvedAutoSync,
   };
   systemConfigListeners.forEach((cb) => cb(sysConfig));
 
@@ -1485,6 +1508,11 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
     }
   });
 
+  // 3. Background sync to Google Sheets (non-blocking)
+  if (masterDocCache.googleSheetsAutoSync !== false) {
+    syncReportToGoogleSheets(cleanReport, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
+  }
+
   await Promise.all([sqlPromise, firestoreShardPromise]);
 }
 
@@ -1524,6 +1552,10 @@ export async function purgeGhostReportOnline(reportId: string): Promise<void> {
       { merge: true }
     ).catch(() => {})
   );
+
+  if (masterDocCache.googleSheetsAutoSync !== false) {
+    deleteReportFromGoogleSheets(reportId, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
+  }
 
   await Promise.all([sqlPromise, ...firestorePromises]);
 }
@@ -1576,6 +1608,10 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
     ).catch(() => {})
   );
 
+  if (masterDocCache.googleSheetsAutoSync !== false) {
+    deleteReportFromGoogleSheets(report.id, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
+  }
+
   await Promise.all([sqlPromise, ...firestorePromises]);
 }
 
@@ -1614,6 +1650,10 @@ export async function restoreReportOnline(report: DOEReport): Promise<void> {
     },
     { merge: true }
   ).catch(() => {});
+
+  if (masterDocCache.googleSheetsAutoSync !== false) {
+    syncReportToGoogleSheets(cleanReport, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
+  }
 
   await Promise.all([sqlPromise, firestorePromise]);
 }
@@ -1883,6 +1923,7 @@ export function subscribeSystemConfig(
   systemConfigListeners.add(onData);
   ensureMasterSubscription(onError);
   if (hasReceivedFirstMasterSnapshot) {
+    const localSheetsCfg = getStoredGoogleSheetsConfig();
     onData({
       reportTitle: masterDocCache.reportTitle || DEFAULT_SYSTEM_CONFIG.reportTitle,
       reportSubtitle:
@@ -1896,6 +1937,12 @@ export function subscribeSystemConfig(
           ? masterDocCache.customLogoUrl
           : DEFAULT_SYSTEM_CONFIG.customLogoUrl,
       adminPin: masterDocCache.adminPin || DEFAULT_SYSTEM_CONFIG.adminPin,
+      googleSheetsWebhookUrl:
+        masterDocCache.googleSheetsWebhookUrl || localSheetsCfg.webhookUrl || '',
+      googleSheetsAutoSync:
+        masterDocCache.googleSheetsAutoSync !== undefined
+          ? masterDocCache.googleSheetsAutoSync
+          : localSheetsCfg.autoSync,
     });
   }
   return () => {
@@ -1905,6 +1952,12 @@ export function subscribeSystemConfig(
 }
 
 export async function saveSystemConfigOnline(config: SystemConfig): Promise<void> {
+  if (config.googleSheetsWebhookUrl !== undefined) {
+    saveStoredGoogleSheetsConfig(
+      config.googleSheetsWebhookUrl,
+      config.googleSheetsAutoSync !== false
+    );
+  }
   await persistMasterConfigOnline({
     reportTitle: config.reportTitle,
     reportSubtitle: config.reportSubtitle,
@@ -1912,6 +1965,8 @@ export async function saveSystemConfigOnline(config: SystemConfig): Promise<void
     departmentNameEn: config.departmentNameEn,
     customLogoUrl: config.customLogoUrl,
     adminPin: config.adminPin,
+    googleSheetsWebhookUrl: config.googleSheetsWebhookUrl,
+    googleSheetsAutoSync: config.googleSheetsAutoSync,
   });
 }
 

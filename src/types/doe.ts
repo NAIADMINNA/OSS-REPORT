@@ -96,6 +96,8 @@ export interface SystemConfig {
   departmentNameEn: string;
   customLogoUrl: string | null; // URL หรือ Base64 รูปภาพโลโก้
   adminPin: string; // รหัสผ่าน Admin
+  googleSheetsWebhookUrl?: string; // Google Apps Script Web App URL สำหรับสำรองข้อมูลอัตโนมัติ
+  googleSheetsAutoSync?: boolean; // เปิด/ปิดการซิงค์อัตโนมัติลง Google Sheets
 }
 
 export interface SystemIssueReport {
