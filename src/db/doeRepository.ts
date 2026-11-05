@@ -8,6 +8,9 @@ import type { DOEReport } from '../types/doe.ts';
 const MASTER_CONFIG_ID = 'main_config';
 const MIRROR_DIR = path.resolve(process.cwd(), '.data');
 const MIRROR_FILE = path.join(MIRROR_DIR, 'doe_cloudsql_mirror.json');
+const SRC_SEED_FILE = path.resolve(process.cwd(), 'src/data/doe_cloudsql_seed.json');
+const PUBLIC_SEED_FILE = path.resolve(process.cwd(), 'public/doe_cloudsql_seed.json');
+const DIST_SEED_FILE = path.resolve(process.cwd(), 'dist/doe_cloudsql_seed.json');
 
 interface ServerMirrorState {
   reports: Record<string, { report: DOEReport; isDeleted: boolean; updatedAtMs: number }>;
@@ -18,37 +21,72 @@ let memoryMirror: ServerMirrorState | null = null;
 
 function loadMirror(): ServerMirrorState {
   if (memoryMirror) return memoryMirror;
-  try {
-    if (fs.existsSync(MIRROR_FILE)) {
-      const raw = fs.readFileSync(MIRROR_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        memoryMirror = {
-          reports: parsed.reports && typeof parsed.reports === 'object' ? parsed.reports : {},
-          masterConfig:
-            parsed.masterConfig && typeof parsed.masterConfig === 'object'
-              ? parsed.masterConfig
-              : null,
-        };
-        return memoryMirror;
+  const mergedReports: Record<
+    string,
+    { report: DOEReport; isDeleted: boolean; updatedAtMs: number }
+  > = {};
+  let mergedMasterConfig: Record<string, unknown> | null = null;
+
+  for (const candidatePath of [SRC_SEED_FILE, PUBLIC_SEED_FILE, DIST_SEED_FILE, MIRROR_FILE]) {
+    try {
+      if (fs.existsSync(candidatePath)) {
+        const raw = fs.readFileSync(candidatePath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          if (parsed.reports && typeof parsed.reports === 'object') {
+            for (const [id, entry] of Object.entries(parsed.reports)) {
+              const typedEntry = entry as {
+                report: DOEReport;
+                isDeleted: boolean;
+                updatedAtMs: number;
+              };
+              if (!typedEntry || !typedEntry.report) continue;
+              const prev = mergedReports[id];
+              if (!prev || (typedEntry.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
+                mergedReports[id] = typedEntry;
+              }
+            }
+          }
+          if (parsed.masterConfig && typeof parsed.masterConfig === 'object') {
+            mergedMasterConfig = {
+              ...(mergedMasterConfig || {}),
+              ...(parsed.masterConfig as Record<string, unknown>),
+            };
+          }
+        }
       }
+    } catch {
+      // Ignore candidate read error
     }
-  } catch {
-    // Ignore mirror read error
   }
-  memoryMirror = { reports: {}, masterConfig: null };
+
+  memoryMirror = {
+    reports: mergedReports,
+    masterConfig: mergedMasterConfig,
+  };
   return memoryMirror;
 }
 
 function saveMirror(state: ServerMirrorState): void {
   memoryMirror = state;
+  const serialized = JSON.stringify(state);
   try {
     if (!fs.existsSync(MIRROR_DIR)) {
       fs.mkdirSync(MIRROR_DIR, { recursive: true });
     }
-    fs.writeFileSync(MIRROR_FILE, JSON.stringify(state), 'utf-8');
+    fs.writeFileSync(MIRROR_FILE, serialized, 'utf-8');
   } catch {
     // Ignore mirror write error
+  }
+  for (const seedPath of [SRC_SEED_FILE, PUBLIC_SEED_FILE, DIST_SEED_FILE]) {
+    try {
+      const dir = path.dirname(seedPath);
+      if (fs.existsSync(dir)) {
+        fs.writeFileSync(seedPath, serialized, 'utf-8');
+      }
+    } catch {
+      // Ignore read-only filesystem in production container
+    }
   }
 }
 

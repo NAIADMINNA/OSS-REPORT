@@ -490,28 +490,92 @@ function broadcastActiveReports(isFromCache = false) {
   activeReportsListeners.forEach((cb) => cb(list, isFromCache));
 }
 
+let cachedStaticSeed: {
+  activeReports: DOEReport[];
+  deletedReports: DOEReport[];
+  masterConfig: Partial<BundledMasterConfig> | null;
+} | null = null;
+
+async function loadStaticCloudSqlSeedOnce(): Promise<{
+  activeReports: DOEReport[];
+  deletedReports: DOEReport[];
+  masterConfig: Partial<BundledMasterConfig> | null;
+}> {
+  if (cachedStaticSeed) return cachedStaticSeed;
+  try {
+    const res = await fetch('./doe_cloudsql_seed.json', {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (res.ok) {
+      const raw = await res.json();
+      const activeReports: DOEReport[] = [];
+      const deletedReports: DOEReport[] = [];
+      if (raw?.reports && typeof raw.reports === 'object') {
+        for (const [id, entry] of Object.entries(raw.reports)) {
+          if (id === 'report-test-123' || !entry || typeof entry !== 'object') continue;
+          const typed = entry as { report?: DOEReport; isDeleted?: boolean };
+          if (typed.report) {
+            if (typed.isDeleted) {
+              deletedReports.push(typed.report);
+            } else {
+              activeReports.push(typed.report);
+            }
+          }
+        }
+      }
+      cachedStaticSeed = {
+        activeReports,
+        deletedReports,
+        masterConfig:
+          raw?.masterConfig && typeof raw.masterConfig === 'object' ? raw.masterConfig : null,
+      };
+      return cachedStaticSeed;
+    }
+  } catch {
+    // Ignore static seed fetch error
+  }
+  cachedStaticSeed = { activeReports: [], deletedReports: [], masterConfig: null };
+  return cachedStaticSeed;
+}
+
 async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Promise<boolean> {
   if (isFetchingSqlState) return true;
   isFetchingSqlState = true;
   try {
-    const res = await fetch('/api/doe/state', {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) {
-      throw new Error(`Cloud SQL API returned status ${res.status}`);
+    let payload: {
+      activeReports?: DOEReport[];
+      deletedReports?: DOEReport[];
+      masterConfig?: Partial<BundledMasterConfig> | null;
+    } | null = null;
+
+    try {
+      const res = await fetch('/api/doe/state', {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          payload = await res.json();
+        }
+      }
+    } catch {
+      // Fallback to static seed below if /api/doe/state is unavailable
     }
-    const payload = await res.json();
-    const sqlActive: DOEReport[] = Array.isArray(payload?.activeReports)
-      ? payload.activeReports
-      : [];
+
+    const staticSeed = await loadStaticCloudSqlSeedOnce();
+    const sqlActive: DOEReport[] = [
+      ...(staticSeed.activeReports || []),
+      ...(Array.isArray(payload?.activeReports) ? payload!.activeReports! : []),
+    ];
     const sqlDeleted: DOEReport[] = Array.isArray(payload?.deletedReports)
-      ? payload.deletedReports
-      : [];
+      ? payload!.deletedReports!
+      : staticSeed.deletedReports || [];
     const sqlMaster: Partial<BundledMasterConfig> | null =
       payload?.masterConfig && typeof payload.masterConfig === 'object'
-        ? payload.masterConfig
-        : null;
+        ? { ...(staticSeed.masterConfig || {}), ...payload.masterConfig }
+        : staticSeed.masterConfig;
 
     const nextActiveMap = new Map<string, DOEReport>();
     for (const raw of sqlActive) {
