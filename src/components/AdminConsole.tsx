@@ -236,7 +236,15 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       const prev = countMap.get(d) || { active: 0, trash: 0 };
       countMap.set(d, { ...prev, trash: prev.trash + 1 });
     });
-    for (const targetDate of ['2026-11-05', '2026-11-04', '2026-11-03', '2026-11-02', '2026-11-01']) {
+    for (const targetDate of [
+      '2026-11-07',
+      '2026-11-06',
+      '2026-11-05',
+      '2026-11-04',
+      '2026-11-03',
+      '2026-11-02',
+      '2026-11-01',
+    ]) {
       if (!countMap.has(targetDate)) {
         countMap.set(targetDate, { active: 0, trash: 0 });
       }

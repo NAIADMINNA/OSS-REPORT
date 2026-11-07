@@ -608,17 +608,31 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
         ? { ...(staticSeed.masterConfig || {}), ...payload.masterConfig }
         : staticSeed.masterConfig;
 
-    const nextActiveMap = new Map<string, DOEReport>();
-    for (const raw of sqlActive) {
+    const sqlDeletedIds = new Set<string>();
+    const cleanDeletedList: DOEReport[] = [];
+    for (const raw of sqlDeleted) {
       const clean = sanitizeReport(raw);
       if (clean && clean.id) {
+        sqlDeletedIds.add(clean.id);
+      }
+    }
+
+    const nextActiveMap = new Map<string, DOEReport>();
+    // Preserve existing in-memory active reports (e.g., from real-time Firestore shards or recent saves)
+    sqlActiveReportsCache.forEach((existing, id) => {
+      if (existing && id && !sqlDeletedIds.has(id)) {
+        nextActiveMap.set(id, existing);
+      }
+    });
+    for (const raw of sqlActive) {
+      const clean = sanitizeReport(raw);
+      if (clean && clean.id && !sqlDeletedIds.has(clean.id)) {
         nextActiveMap.set(clean.id, pickNewerReport(nextActiveMap.get(clean.id), clean));
       }
     }
     sqlActiveReportsCache = nextActiveMap;
     hasLoadedAllBundleShards = true;
 
-    const cleanDeletedList: DOEReport[] = [];
     for (const raw of sqlDeleted) {
       const clean = sanitizeReport(raw);
       if (clean && clean.id && !nextActiveMap.has(clean.id)) {
@@ -828,11 +842,6 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
         };
         hasReceivedFirstMasterSnapshot = true;
         broadcastMasterState(false);
-
-        if (hasCompletedInitialSqlSync && !snapshot.metadata.fromCache && masterUnsubscribe) {
-          masterUnsubscribe();
-          masterUnsubscribe = null;
-        }
       }
     },
     (error) => {
@@ -989,6 +998,7 @@ export async function saveBulkReportsOnline(
         await setDoc(
           doc(db, REPORT_BUNDLES_COLLECTION, shardId),
           {
+            id: shardId,
             reportsMap,
             updatedAt: new Date().toISOString(),
           },
@@ -1364,21 +1374,8 @@ export async function deepScanAndRecoverAllReports(
   };
 }
 
-const FIRESTORE_DELTA_SYNC_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
-const SESSION_KEY_LAST_FS_SYNC = 'doe_firestore_delta_sync_ts_v1';
-
 function ensureFirestoreReportsSubscription(onError?: (err: unknown) => void) {
   if (firestoreReportsUnsubscribe) return;
-
-  try {
-    const lastSyncRaw = sessionStorage.getItem(SESSION_KEY_LAST_FS_SYNC);
-    if (lastSyncRaw && hasCompletedInitialSqlSync) {
-      const elapsed = Date.now() - Number(lastSyncRaw);
-      if (elapsed >= 0 && elapsed < FIRESTORE_DELTA_SYNC_COOLDOWN_MS) {
-        return;
-      }
-    }
-  } catch {}
 
   firestoreReportsUnsubscribe = onSnapshot(
     collection(db, REPORT_BUNDLES_COLLECTION),
@@ -1408,10 +1405,6 @@ function ensureFirestoreReportsSubscription(onError?: (err: unknown) => void) {
       hasLoadedAllBundleShards = true;
       broadcastActiveReports(snapshot.metadata.fromCache);
 
-      try {
-        sessionStorage.setItem(SESSION_KEY_LAST_FS_SYNC, String(Date.now()));
-      } catch {}
-
       // Automatically sync any reports present in Firestore (e.g. from Deployed Web App) into Cloud SQL
       if (deltaToSyncToSql.length > 0) {
         const SQL_CHUNK_SIZE = 100;
@@ -1423,13 +1416,6 @@ function ensureFirestoreReportsSubscription(onError?: (err: unknown) => void) {
             body: JSON.stringify({ reports: chunk, restoreDeleted: false }),
           }).catch(() => {});
         }
-      }
-
-      // Quota-Guard: Once Cloud SQL is active and initial Firestore delta is synced,
-      // detach the 24-document listener so idle tabs consume 0 Firestore read quota.
-      if (hasCompletedInitialSqlSync && !snapshot.metadata.fromCache && firestoreReportsUnsubscribe) {
-        firestoreReportsUnsubscribe();
-        firestoreReportsUnsubscribe = null;
       }
     },
     (error) => {
@@ -1485,28 +1471,55 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
 
   broadcastActiveReports(false);
 
+  let sqlOk = false;
+  let firestoreOk = false;
+  let lastError: unknown = null;
+
   // 1. Primary write to Cloud SQL PostgreSQL (unlimited daily reads/writes)
   const sqlPromise = fetch('/api/doe/reports', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ report: cleanReport }),
-  }).catch((err) => {
-    console.warn('Cloud SQL saveReportOnline warning:', err);
-  });
+  })
+    .then((res) => {
+      if (res.ok) sqlOk = true;
+    })
+    .catch((err) => {
+      lastError = err;
+      console.warn('Cloud SQL saveReportOnline warning:', err);
+    });
 
-  // 2. Single-shard write to Cloud Firestore report_bundles (no redundant legacy doc write)
-  const firestoreShardPromise = setDoc(
-    doc(db, REPORT_BUNDLES_COLLECTION, shardId),
-    {
-      reportsMap: { [sanitized.id]: cleanReport },
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  ).catch((err) => {
-    if (!isQuotaExceededError(err)) {
-      console.warn('Firestore saveReportOnline shard warning:', err);
-    }
-  });
+  // 2. Single-shard write to Cloud Firestore report_bundles (with automatic retry on transient network drop)
+  const writeShardToFirestore = () =>
+    setDoc(
+      doc(db, REPORT_BUNDLES_COLLECTION, shardId),
+      {
+        id: shardId,
+        reportsMap: { [sanitized.id]: cleanReport },
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+  const firestoreShardPromise = writeShardToFirestore()
+    .then(() => {
+      firestoreOk = true;
+    })
+    .catch(async (err) => {
+      if (!isQuotaExceededError(err)) {
+        try {
+          await new Promise((r) => setTimeout(r, 600));
+          await writeShardToFirestore();
+          firestoreOk = true;
+          return;
+        } catch (retryErr) {
+          lastError = retryErr;
+          console.warn('Firestore saveReportOnline shard warning:', retryErr);
+        }
+      } else {
+        lastError = err;
+      }
+    });
 
   // 3. Background sync to Google Sheets (non-blocking)
   if (masterDocCache.googleSheetsAutoSync !== false) {
@@ -1514,6 +1527,10 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
   }
 
   await Promise.all([sqlPromise, firestoreShardPromise]);
+
+  if (!sqlOk && !firestoreOk) {
+    throw lastError || new Error('Online report persistence failed');
+  }
 }
 
 export async function purgeGhostReportOnline(reportId: string): Promise<void> {
@@ -1546,6 +1563,7 @@ export async function purgeGhostReportOnline(reportId: string): Promise<void> {
     setDoc(
       doc(db, REPORT_BUNDLES_COLLECTION, shardId),
       {
+        id: shardId,
         reportsMap: { [reportId]: deleteField() },
         updatedAt: new Date().toISOString(),
       },
@@ -1601,6 +1619,7 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
     setDoc(
       doc(db, REPORT_BUNDLES_COLLECTION, shardId),
       {
+        id: shardId,
         reportsMap: { [report.id]: deleteField() },
         updatedAt: new Date().toISOString(),
       },
@@ -1645,6 +1664,7 @@ export async function restoreReportOnline(report: DOEReport): Promise<void> {
   const firestorePromise = setDoc(
     doc(db, REPORT_BUNDLES_COLLECTION, shardId),
     {
+      id: shardId,
       reportsMap: { [sanitized.id]: cleanReport },
       updatedAt: new Date().toISOString(),
     },
