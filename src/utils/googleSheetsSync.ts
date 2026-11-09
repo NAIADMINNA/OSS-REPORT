@@ -1,4 +1,5 @@
 import { DOEReport } from '../types/doe';
+import { DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL } from '../data/initialAdminData';
 import { sanitizeReport } from './doeUtils';
 
 export const STORAGE_KEY_GSHEETS_URL = 'doe_google_sheets_webhook_url_v1';
@@ -8,10 +9,13 @@ export function getStoredGoogleSheetsConfig(): {
   webhookUrl: string;
   autoSync: boolean;
 } {
-  let webhookUrl = '';
+  let webhookUrl = DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL;
   let autoSync = true;
   try {
-    webhookUrl = (localStorage.getItem(STORAGE_KEY_GSHEETS_URL) || '').trim();
+    const savedUrl = (localStorage.getItem(STORAGE_KEY_GSHEETS_URL) || '').trim();
+    if (savedUrl) {
+      webhookUrl = savedUrl;
+    }
     const rawAuto = localStorage.getItem(STORAGE_KEY_GSHEETS_AUTO);
     if (rawAuto !== null) {
       autoSync = rawAuto !== 'false';
@@ -386,7 +390,7 @@ export async function pullReportsFromGoogleSheets(
   try {
     const res = await fetch(
       `/api/doe/sheets-proxy?webhookUrl=${encodeURIComponent(cleanUrl)}`,
-      { method: 'GET', headers: { Accept: 'application/json' } }
+      { method: 'GET', cache: 'no-store', headers: { Accept: 'application/json' } }
     );
     if (res.ok) {
       const data = await res.json();
@@ -406,7 +410,7 @@ export async function pullReportsFromGoogleSheets(
   } catch {}
 
   try {
-    const directRes = await fetch(cleanUrl, { method: 'GET' });
+    const directRes = await fetch(cleanUrl, { method: 'GET', cache: 'no-store', redirect: 'follow' });
     if (directRes.ok) {
       const data = await directRes.json();
       if (Array.isArray(data?.reports)) {

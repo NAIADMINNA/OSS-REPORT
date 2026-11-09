@@ -272,12 +272,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   }, [reports, selectedReportId]);
 
-  // If today has 0 reports and user hasn't manually picked a date, automatically display the latest date that has reports
+  // If user hasn't manually picked a date, automatically display today (if today has reports)
+  // or the latest date that has reports (even if online reports arrive asynchronously after initial localStorage render)
   useEffect(() => {
     if (!hasManuallyChangedDateRef.current && reports.length > 0) {
       const todayHasReports = reports.some((r) => r.reportDate === todayStr);
-      if (!todayHasReports && selectedCycleKey === `single:${todayStr}` && latestDateWithReports !== todayStr) {
-        setSelectedCycleKey(`single:${latestDateWithReports}`);
+      const targetAutoKey = todayHasReports
+        ? `single:${todayStr}`
+        : `single:${latestDateWithReports}`;
+      if (selectedCycleKey !== targetAutoKey) {
+        setSelectedCycleKey(targetAutoKey);
       }
     }
   }, [reports, todayStr, latestDateWithReports, selectedCycleKey]);

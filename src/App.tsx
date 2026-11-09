@@ -640,6 +640,11 @@ export default function App() {
           deletedReportIdsRef.current = delIdSet;
           hasLoadedDeletedReportsRef.current = true;
           setDeletedReports(cleanDel);
+          if (delIdSet.size === 0) {
+            try {
+              localStorage.setItem(STORAGE_KEY_DELETED_REPORTS, '[]');
+            } catch {}
+          }
 
           setReports((prev) => {
             const filtered = delIdSet.size > 0 ? prev.filter((r) => !delIdSet.has(r.id)) : prev;
@@ -679,6 +684,34 @@ export default function App() {
           }
         });
         unsubs.push(unsubDelReports);
+
+        // 1.5 Automatically run silent multi-source deep scan on startup (Cloud SQL + Google Sheets + Firestore + IndexedDB)
+        // so all reports appear automatically without the user ever needing to click the manual Scan button
+        deepScanAndRecoverAllReports([], false)
+          .then((autoScan) => {
+            if (autoScan && autoScan.mergedReports && autoScan.mergedReports.length > 0) {
+              setReports((prev) => {
+                const delIds = hasLoadedDeletedReportsRef.current
+                  ? deletedReportIdsRef.current
+                  : new Set<string>();
+                const mergedMap = new Map<string, DOEReport>();
+                prev.forEach((r) => {
+                  if (r && r.id && !delIds.has(r.id)) {
+                    mergedMap.set(r.id, pickNewerReport(mergedMap.get(r.id), r));
+                  }
+                });
+                autoScan.mergedReports.forEach((r) => {
+                  if (r && r.id && !delIds.has(r.id)) {
+                    mergedMap.set(r.id, pickNewerReport(mergedMap.get(r.id), r));
+                  }
+                });
+                return Array.from(mergedMap.values()).sort((a, b) =>
+                  (b.reportDate || '').localeCompare(a.reportDate || '')
+                );
+              });
+            }
+          })
+          .catch(() => {});
 
         // 2. Subscribe to online reports immediately (Realtime push via onSnapshot)
         const unsubReports = subscribeReports((onlineReports, isFromCache) => {
@@ -742,12 +775,7 @@ export default function App() {
                     pendingUnsynced.forEach((r) => pendingSaveReportIdsRef.current.delete(r.id));
                     persistUnsyncedIds();
                   })
-                  .catch(console.warn)
-                  .finally(() => {
-                    pendingUnsynced.forEach((r) => {
-                      uploadedLocalReportIdsRef.current.delete(r.id);
-                    });
-                  });
+                  .catch(console.warn);
               }
             }
 
@@ -849,19 +877,30 @@ export default function App() {
               updatedStdToSave.length > 0 ||
               merged.some((m) => {
                 const std = stdMap.get(m.id);
+                const stdAdd = deduplicateCenterList(
+                  std?.additionalCenters || [],
+                  std?.centerName
+                );
+                const mAdd = deduplicateCenterList(
+                  m.additionalCenters || [],
+                  m.centerName
+                );
                 const isCustom =
                   !std ||
                   m.name !== std.name ||
                   m.centerName !== std.centerName ||
-                  (m.additionalCenters && m.additionalCenters.length > 0);
+                  JSON.stringify(mAdd) !== JSON.stringify(stdAdd);
                 if (!isCustom) return false;
                 const onl = onlineMap.get(m.id);
                 if (!onl) return true;
+                const onlAdd = deduplicateCenterList(
+                  onl.additionalCenters || [],
+                  onl.centerName
+                );
                 return (
                   onl.name !== m.name ||
                   onl.centerName !== m.centerName ||
-                  JSON.stringify(onl.additionalCenters || []) !==
-                    JSON.stringify(m.additionalCenters || [])
+                  JSON.stringify(onlAdd) !== JSON.stringify(mAdd)
                 );
               });
 

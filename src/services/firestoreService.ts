@@ -19,6 +19,7 @@ import {
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import {
   DEFAULT_CATEGORIES,
+  DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL,
   DEFAULT_QUEUE_METRICS,
   DEFAULT_REPORTERS,
   DEFAULT_SYSTEM_CONFIG,
@@ -32,6 +33,7 @@ import {
 import {
   deleteReportFromGoogleSheets,
   getStoredGoogleSheetsConfig,
+  pullReportsFromGoogleSheets,
   saveStoredGoogleSheetsConfig,
   syncReportToGoogleSheets,
 } from '../utils/googleSheetsSync';
@@ -96,7 +98,15 @@ const stdOfficeMap = new Map<string, EmploymentOffice>(
 function isOfficeCustomized(office: EmploymentOffice): boolean {
   const std = stdOfficeMap.get(office.id);
   if (!std) return true;
-  if (office.additionalCenters && office.additionalCenters.length > 0) return true;
+  const stdAdd = deduplicateCenterList(
+    std.additionalCenters || [],
+    std.centerName
+  );
+  const offAdd = deduplicateCenterList(
+    office.additionalCenters || [],
+    office.centerName
+  );
+  if (JSON.stringify(offAdd) !== JSON.stringify(stdAdd)) return true;
   return (
     office.name !== std.name ||
     office.centerName !== std.centerName ||
@@ -536,6 +546,7 @@ async function loadStaticCloudSqlSeedOnce(): Promise<{
   try {
     const res = await fetch('./doe_cloudsql_seed.json', {
       method: 'GET',
+      cache: 'no-store',
       headers: { Accept: 'application/json' },
     });
     if (res.ok) {
@@ -570,6 +581,65 @@ async function loadStaticCloudSqlSeedOnce(): Promise<{
   return cachedStaticSeed;
 }
 
+let lastClientSheetsPullMs = 0;
+let isClientPullingSheets = false;
+
+async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Promise<void> {
+  if (isClientPullingSheets) return;
+  const now = Date.now();
+  if (now - lastClientSheetsPullMs < 25000) return;
+
+  const storedCfg = getStoredGoogleSheetsConfig();
+  const webhookUrl = (
+    masterDocCache.googleSheetsWebhookUrl ||
+    storedCfg.webhookUrl ||
+    DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL ||
+    ''
+  ).trim();
+  if (!webhookUrl.startsWith('https://script.google.com/')) return;
+
+  isClientPullingSheets = true;
+  lastClientSheetsPullMs = now;
+  try {
+    const result = await pullReportsFromGoogleSheets(webhookUrl);
+    if (result.success && Array.isArray(result.reports) && result.reports.length > 0) {
+      const deltaToSql: DOEReport[] = [];
+      let changed = false;
+
+      for (const raw of result.reports) {
+        const clean = sanitizeReport(raw);
+        if (!clean || !clean.id || sqlDeletedIds.has(clean.id)) continue;
+        const existing = sqlActiveReportsCache.get(clean.id);
+        if (!existing || isReportStrictlyNewer(clean, existing)) {
+          sqlActiveReportsCache.set(clean.id, pickNewerReport(existing, clean));
+          deltaToSql.push(clean);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        broadcastActiveReports(false);
+      }
+
+      if (deltaToSql.length > 0) {
+        const CHUNK_SIZE = 100;
+        for (let i = 0; i < deltaToSql.length; i += CHUNK_SIZE) {
+          const chunk = deltaToSql.slice(i, i + CHUNK_SIZE);
+          fetch('/api/doe/reports/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reports: chunk, restoreDeleted: false }),
+          }).catch(() => {});
+        }
+      }
+    }
+  } catch {
+    // Non-fatal if offline
+  } finally {
+    isClientPullingSheets = false;
+  }
+}
+
 async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Promise<boolean> {
   if (isFetchingSqlState) return true;
   isFetchingSqlState = true;
@@ -583,6 +653,7 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
     try {
       const res = await fetch('/api/doe/state', {
         method: 'GET',
+        cache: 'no-store',
         headers: { Accept: 'application/json' },
       });
       if (res.ok) {
@@ -720,9 +791,10 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
       broadcastActiveReports(false);
     }
 
+    // Automatically pull live reports from Google Sheets (works even on Deployed Web App when Firestore is quota-exceeded)
+    syncClientFromGoogleSheetsIfDue(sqlDeletedIds).catch(() => {});
+
     hasCompletedInitialSqlSync = true;
-    // Allow re-checking local cache if any reports in IndexedDB/localStorage are still missing from Cloud SQL
-    hasMigratedReportBundlesInSession = false;
     migrateLegacyReportsToBundlesOnce(nextActiveMap, (migratedList) => {
       for (const r of migratedList) {
         sqlActiveReportsCache.set(r.id, r);
@@ -745,7 +817,7 @@ function ensureSqlPolling(onError?: (err: unknown) => void) {
       if (getActiveMasterListenerCount() > 0 || activeReportsListeners.size > 0) {
         fetchAndSyncCloudSqlState();
       }
-    }, 8000);
+    }, 20000);
   }
 }
 
@@ -1184,8 +1256,30 @@ export async function deepScanAndRecoverAllReports(
     console.warn('Deep scan Cloud SQL check warning:', err);
   }
 
-  // 1.5. Query Cloud Firestore report_bundles (24 shards only; legacy 938 docs are already migrated)
+  // 1.5. Query Google Sheets Backup & Cloud Firestore report_bundles
   const firestoreLegacyCount = 0;
+  try {
+    const storedCfg = getStoredGoogleSheetsConfig();
+    const webhookUrl = (
+      masterDocCache.googleSheetsWebhookUrl ||
+      storedCfg.webhookUrl ||
+      DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL ||
+      ''
+    ).trim();
+    if (webhookUrl.startsWith('https://script.google.com/')) {
+      const sheetsResult = await pullReportsFromGoogleSheets(webhookUrl);
+      if (sheetsResult.success && Array.isArray(sheetsResult.reports)) {
+        for (const raw of sheetsResult.reports) {
+          const clean = sanitizeReport(raw);
+          if (clean && clean.id) {
+            cloudSqlMap.set(clean.id, pickNewerReport(cloudSqlMap.get(clean.id), clean));
+            sqlActiveReportsCache.set(clean.id, clean);
+          }
+        }
+      }
+    }
+  } catch {}
+
   try {
     const bundleSnap = await getDocs(collection(db, REPORT_BUNDLES_COLLECTION));
     bundleSnap.forEach((docSnap) => {

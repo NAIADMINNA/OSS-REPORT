@@ -118,6 +118,9 @@ export const DEFAULT_REPORTERS: ReporterProfile[] = [
   },
 ];
 
+export const DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL =
+  'https://script.google.com/macros/s/AKfycbyMiKbkdTrInFBml_jU8z9caIjyQCTNxkYwH7jb1qFiXQLrERWTwS6e9wd_Iz5T8fG_GQ/exec';
+
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   reportTitle: 'รายงานผลการปฏิบัติงานศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว',
   reportSubtitle: 'EXECUTIVE SUMMARY REPORT • เรียน อธิบดี / ผู้บริหาร',
@@ -125,7 +128,7 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   departmentNameEn: 'DEPARTMENT OF EMPLOYMENT',
   customLogoUrl: null,
   adminPin: '0841543524',
-  googleSheetsWebhookUrl: '',
+  googleSheetsWebhookUrl: DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL,
   googleSheetsAutoSync: true,
 };
 

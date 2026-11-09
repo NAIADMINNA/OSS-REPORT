@@ -163,8 +163,111 @@ function enqueueBackgroundSqlSync(task: () => Promise<void>) {
   })();
 }
 
+const DEFAULT_GSHEETS_WEBHOOK_URL =
+  'https://script.google.com/macros/s/AKfycbyMiKbkdTrInFBml_jU8z9caIjyQCTNxkYwH7jb1qFiXQLrERWTwS6e9wd_Iz5T8fG_GQ/exec';
+
+let lastGoogleSheetsPullAtMs = 0;
+let isPullingFromGoogleSheets = false;
+
+async function syncFromGoogleSheetsIntoSqlIfDue(mirror: ServerMirrorState): Promise<boolean> {
+  if (isPullingFromGoogleSheets) return false;
+  const now = Date.now();
+  if (now - lastGoogleSheetsPullAtMs < 20000) return false;
+
+  const configuredUrl =
+    typeof mirror.masterConfig?.googleSheetsWebhookUrl === 'string' &&
+    mirror.masterConfig.googleSheetsWebhookUrl.trim().startsWith('https://script.google.com/')
+      ? mirror.masterConfig.googleSheetsWebhookUrl.trim()
+      : DEFAULT_GSHEETS_WEBHOOK_URL;
+
+  if (!configuredUrl) return false;
+
+  isPullingFromGoogleSheets = true;
+  lastGoogleSheetsPullAtMs = now;
+  let updatedAny = false;
+
+  try {
+    const res = await fetch(configuredUrl, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      redirect: 'follow',
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { reports?: DOEReport[] };
+      if (Array.isArray(data?.reports)) {
+        const deltaRows: typeof doeReports.$inferInsert[] = [];
+        const nowIso = new Date().toISOString();
+
+        for (const raw of data.reports) {
+          if (!raw || !raw.id || raw.id === 'report-test-123') continue;
+          const existingEntry = mirror.reports[raw.id];
+          if (existingEntry && existingEntry.isDeleted) continue;
+
+          const incomingMs = getReportTimestampMs(raw);
+          const existingMs = existingEntry ? getReportTimestampMs(existingEntry.report) : 0;
+
+          if (!existingEntry || incomingMs > existingMs) {
+            const winner = existingEntry
+              ? pickNewerReport(existingEntry.report, raw)
+              : raw;
+            mirror.reports[winner.id] = {
+              report: winner,
+              isDeleted: false,
+              updatedAtMs: Math.max(incomingMs, existingEntry?.updatedAtMs || 0, now),
+            };
+            deltaRows.push({
+              id: winner.id,
+              reportDate: winner.reportDate || '',
+              officeId: winner.officeId || '',
+              officeName: winner.officeName || '',
+              centerName: winner.centerName || '',
+              region: winner.region || 'กรุงเทพมหานคร',
+              payload: winner,
+              isDeleted: false,
+              updatedAt: winner.updatedAt || nowIso,
+            });
+            updatedAny = true;
+          }
+        }
+
+        if (deltaRows.length > 0) {
+          enqueueBackgroundSqlSync(async () => {
+            const BATCH_SIZE = 50;
+            for (let i = 0; i < deltaRows.length; i += BATCH_SIZE) {
+              const chunk = deltaRows.slice(i, i + BATCH_SIZE);
+              if (chunk.length === 0) continue;
+              await db
+                .insert(doeReports)
+                .values(chunk)
+                .onConflictDoUpdate({
+                  target: doeReports.id,
+                  set: {
+                    reportDate: sql`excluded.report_date`,
+                    officeId: sql`excluded.office_id`,
+                    officeName: sql`excluded.office_name`,
+                    centerName: sql`excluded.center_name`,
+                    region: sql`excluded.region`,
+                    payload: sql`excluded.payload`,
+                    isDeleted: sql`excluded.is_deleted`,
+                    updatedAt: sql`excluded.updated_at`,
+                  },
+                });
+            }
+          });
+        }
+      }
+    }
+  } catch {
+    // Non-fatal if offline or Google Apps Script temporarily busy
+  } finally {
+    isPullingFromGoogleSheets = false;
+  }
+
+  return updatedAny;
+}
+
 /**
- * Fetch all DOE reports (active and soft-deleted) from Cloud SQL + local mirror
+ * Fetch all DOE reports (active and soft-deleted) from Cloud SQL + Google Sheets + local mirror
  */
 export async function getAllReportsFromSql(): Promise<{
   activeReports: DOEReport[];
@@ -201,11 +304,13 @@ export async function getAllReportsFromSql(): Promise<{
         mirrorUpdated = true;
       }
     }
-    if (mirrorUpdated) {
-      saveMirror(mirror);
-    }
   } catch {
     // Serve seamlessly from mirror when Cloud SQL socket is reconnecting
+  }
+
+  const sheetsUpdated = await syncFromGoogleSheetsIntoSqlIfDue(mirror);
+  if (mirrorUpdated || sheetsUpdated) {
+    saveMirror(mirror);
   }
 
   const activeMap = new Map<string, DOEReport>();
