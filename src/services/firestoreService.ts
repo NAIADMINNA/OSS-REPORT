@@ -35,6 +35,7 @@ import {
   getStoredGoogleSheetsConfig,
   pullReportsFromGoogleSheets,
   saveStoredGoogleSheetsConfig,
+  syncBulkReportsToGoogleSheets,
   syncReportToGoogleSheets,
 } from '../utils/googleSheetsSync';
 
@@ -587,7 +588,7 @@ let isClientPullingSheets = false;
 async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Promise<void> {
   if (isClientPullingSheets) return;
   const now = Date.now();
-  if (now - lastClientSheetsPullMs < 25000) return;
+  if (now - lastClientSheetsPullMs < 20000) return;
 
   const storedCfg = getStoredGoogleSheetsConfig();
   const webhookUrl = (
@@ -602,17 +603,31 @@ async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Prom
   lastClientSheetsPullMs = now;
   try {
     const result = await pullReportsFromGoogleSheets(webhookUrl);
-    if (result.success && Array.isArray(result.reports) && result.reports.length > 0) {
+    if (result.success && Array.isArray(result.reports)) {
+      const sheetsMap = new Map<string, DOEReport>();
       const deltaToSql: DOEReport[] = [];
       let changed = false;
 
       for (const raw of result.reports) {
         const clean = sanitizeReport(raw);
         if (!clean || !clean.id || sqlDeletedIds.has(clean.id)) continue;
+        sheetsMap.set(clean.id, pickNewerReport(sheetsMap.get(clean.id), clean));
         const existing = sqlActiveReportsCache.get(clean.id);
         if (!existing || isReportStrictlyNewer(clean, existing)) {
           sqlActiveReportsCache.set(clean.id, pickNewerReport(existing, clean));
           deltaToSql.push(clean);
+          changed = true;
+        }
+      }
+
+      // Also include any reports from IndexedDB / localStorage that might not be in sqlActiveReportsCache yet
+      const localCached = await getLocalCachedReportsForBundleSync();
+      for (const localRep of localCached) {
+        if (!localRep || !localRep.id || sqlDeletedIds.has(localRep.id)) continue;
+        const existing = sqlActiveReportsCache.get(localRep.id);
+        if (!existing || isReportStrictlyNewer(localRep, existing)) {
+          sqlActiveReportsCache.set(localRep.id, pickNewerReport(existing, localRep));
+          deltaToSql.push(localRep);
           changed = true;
         }
       }
@@ -630,6 +645,22 @@ async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Prom
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reports: chunk, restoreDeleted: false }),
           }).catch(() => {});
+        }
+      }
+
+      // Two-Way Sync: Push any active reports present on this client (e.g. 1,080 on Deployed Web App)
+      // that are missing from Google Sheets (e.g. 1,078 in Sheets) up to Google Sheets automatically
+      if (masterDocCache.googleSheetsAutoSync !== false && sheetsMap.size > 0) {
+        const missingFromSheets: DOEReport[] = [];
+        sqlActiveReportsCache.forEach((clientRep, id) => {
+          if (!clientRep || !id || sqlDeletedIds.has(id) || id === 'report-test-123') return;
+          const inSheets = sheetsMap.get(id);
+          if (!inSheets || isReportStrictlyNewer(clientRep, inSheets)) {
+            missingFromSheets.push(clientRep);
+          }
+        });
+        if (missingFromSheets.length > 0) {
+          await syncBulkReportsToGoogleSheets(missingFromSheets, webhookUrl).catch(() => {});
         }
       }
     }
@@ -1083,6 +1114,20 @@ export async function saveBulkReportsOnline(
       }
     })
   );
+
+  // 3. Also sync bulk reports to Google Sheets so Deployed Web App and Dev App always share 100% of rescued/bulk reports
+  if (masterDocCache.googleSheetsAutoSync !== false) {
+    const storedCfg = getStoredGoogleSheetsConfig();
+    const webhookUrl = (
+      masterDocCache.googleSheetsWebhookUrl ||
+      storedCfg.webhookUrl ||
+      DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL ||
+      ''
+    ).trim();
+    if (webhookUrl.startsWith('https://script.google.com/')) {
+      syncBulkReportsToGoogleSheets(validReports, webhookUrl).catch(() => {});
+    }
+  }
 }
 
 let isMigratingReportBundles = false;
@@ -1258,20 +1303,23 @@ export async function deepScanAndRecoverAllReports(
 
   // 1.5. Query Google Sheets Backup & Cloud Firestore report_bundles
   const firestoreLegacyCount = 0;
+  const sheetsMap = new Map<string, DOEReport>();
+  let resolvedSheetsWebhookUrl = '';
   try {
     const storedCfg = getStoredGoogleSheetsConfig();
-    const webhookUrl = (
+    resolvedSheetsWebhookUrl = (
       masterDocCache.googleSheetsWebhookUrl ||
       storedCfg.webhookUrl ||
       DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL ||
       ''
     ).trim();
-    if (webhookUrl.startsWith('https://script.google.com/')) {
-      const sheetsResult = await pullReportsFromGoogleSheets(webhookUrl);
+    if (resolvedSheetsWebhookUrl.startsWith('https://script.google.com/')) {
+      const sheetsResult = await pullReportsFromGoogleSheets(resolvedSheetsWebhookUrl);
       if (sheetsResult.success && Array.isArray(sheetsResult.reports)) {
         for (const raw of sheetsResult.reports) {
           const clean = sanitizeReport(raw);
           if (clean && clean.id) {
+            sheetsMap.set(clean.id, pickNewerReport(sheetsMap.get(clean.id), clean));
             cloudSqlMap.set(clean.id, pickNewerReport(cloudSqlMap.get(clean.id), clean));
             sqlActiveReportsCache.set(clean.id, clean);
           }
@@ -1414,13 +1462,20 @@ export async function deepScanAndRecoverAllReports(
     saveReportsToIndexedDB(mergedReports).catch(() => {});
   }
 
-  // Sync any missing or newer reports to Cloud SQL PostgreSQL
+  // Sync any missing or newer reports to Cloud SQL PostgreSQL & Google Sheets
   const missingFromCloudList: DOEReport[] = [];
+  const missingFromSheetsList: DOEReport[] = [];
   for (const r of mergedReports) {
     const cloudVer = cloudSqlMap.get(r.id);
     if (!cloudVer || isReportStrictlyNewer(r, cloudVer) || rescuedIds.has(r.id)) {
       missingFromCloudList.push(r);
       rescuedIds.add(r.id);
+    }
+    if (sheetsMap.size > 0) {
+      const sheetVer = sheetsMap.get(r.id);
+      if (!sheetVer || isReportStrictlyNewer(r, sheetVer)) {
+        missingFromSheetsList.push(r);
+      }
     }
   }
 
@@ -1428,6 +1483,16 @@ export async function deepScanAndRecoverAllReports(
     await saveBulkReportsOnline(missingFromCloudList, includeTrash, includeTrash);
   } else if (includeTrash && (masterDocCache.bundledDeletedReports || []).length > 0) {
     await persistMasterConfigOnline({ bundledDeletedReports: [] }).catch(() => {});
+  }
+
+  if (
+    missingFromSheetsList.length > 0 &&
+    resolvedSheetsWebhookUrl.startsWith('https://script.google.com/') &&
+    masterDocCache.googleSheetsAutoSync !== false
+  ) {
+    await syncBulkReportsToGoogleSheets(missingFromSheetsList, resolvedSheetsWebhookUrl).catch(
+      () => {}
+    );
   }
 
   // Build breakdown by date
