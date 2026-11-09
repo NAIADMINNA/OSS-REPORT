@@ -3455,7 +3455,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                       )}
                     </div>
                     <p className="text-xs text-emerald-200/80 mt-0.5">
-                      บันทึกสำเนารายงานทุกฉบับลงตาราง Google Sheets ใน Google Drive ของคุณโดยอัตโนมัติ (เจ้าหน้าที่ทั้ง 85 จังหวัดไม่ต้องล็อกอิน Gmail)
+                      บันทึกสำเนารายงานทุกฉบับลงตาราง Google Sheets อัตโนมัติ พร้อมจัดเรียงแถวตาม <strong>วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ (แถวที่ 2)</strong> ทุกครั้งที่มีคนส่งรายงาน
                     </p>
                   </div>
                 </div>
@@ -3466,7 +3466,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <Code className="w-3.5 h-3.5" />
-                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'ดูวิธีตั้งค่า & คัดลอกโค้ด Apps Script (1 นาที)'}</span>
+                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'ดูวิธีตั้งค่า / อัปเดตโค้ดจัดเรียงวันที่ล่าสุดอยู่บนสุด'}</span>
                 </button>
               </div>
 
@@ -3474,13 +3474,13 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 <div className="bg-slate-950/80 rounded-xl p-4 border border-emerald-800/50 space-y-3 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-bold text-emerald-300">
-                      ขั้นตอนการสร้าง Google Sheets Webhook (ทำเพียงครั้งเดียว ใช้เวลา 1 นาที):
+                      โค้ด Google Apps Script (รุ่นจัดเรียงแถวตาม "วันที่รายงานล่าสุด" อยู่แถวบนสุดอัตโนมัติทุกครั้งที่มีคนส่งรายงาน):
                     </span>
                     <button
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
-                        onNotify('คัดลอกโค้ด Google Apps Script สำเร็จรูปเรียบร้อยแล้ว');
+                        onNotify('คัดลอกโค้ด Google Apps Script (รุ่นจัดเรียงวันที่ล่าสุดอยู่บนสุดอัตโนมัติ) เรียบร้อยแล้ว');
                       }}
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
@@ -3489,11 +3489,14 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     </button>
                   </div>
                   <ol className="list-decimal list-inside space-y-1.5 text-slate-300 leading-relaxed">
-                    <li>สร้างไฟล์ <strong>Google Sheets</strong> ใหม่ใน Google Drive ของคุณ แล้วไปที่เมนูด้านบน <strong>ส่วนขยาย (Extensions) &rarr; Apps Script</strong></li>
+                    <li>เปิดไฟล์ <strong>Google Sheets</strong> ของคุณ แล้วไปที่เมนูด้านบน <strong>ส่วนขยาย (Extensions) &rarr; Apps Script</strong></li>
                     <li>ลบโค้ดเดิมออกทั้งหมด กดปุ่ม <strong>"คัดลอกโค้ด Apps Script ทั้งหมด"</strong> ด้านบนไปวางแทนที่ แล้วกดไอคอนบันทึก (Save)</li>
-                    <li>กดปุ่มสีน้ำเงินมุมขวาบน <strong>ทำให้ใช้งานได้ (Deploy) &rarr; การทำให้ใช้งานได้รายการใหม่ (New deployment)</strong></li>
-                    <li>เลือกประเภทเป็น <strong>เว็บแอป (Web app)</strong> &bull; ช่อง <em>ผู้ที่มีสิทธิ์เข้าถึง (Who has access)</em> เลือกเป็น <strong>ทุกคน (Anyone)</strong> แล้วกด Deploy</li>
-                    <li>คัดลอก <strong>Web App URL</strong> (ที่ขึ้นต้นด้วย <code>https://script.google.com/macros/s/.../exec</code>) มาวางในช่องด้านล่างแล้วกดบันทึก</li>
+                    <li>
+                      หากเคยสร้าง URL ไว้แล้ว: กดปุ่มมุมขวาบน <strong>ทำให้ใช้งานได้ (Deploy) &rarr; จัดการการทำให้ใช้งานได้ (Manage deployments)</strong> &rarr; กดไอคอนรูปดินสอ (แก้ไข) &rarr; ช่องเวอร์ชันเลือก <strong>เวอร์ชันใหม่ (New version)</strong> แล้วกด Deploy (ได้ URL เดิม ไม่ต้องเปลี่ยน URL)
+                    </li>
+                    <li>
+                      หากติดตั้งใหม่ครั้งแรก: กด <strong>ทำให้ใช้งานได้ (Deploy) &rarr; การทำให้ใช้งานได้รายการใหม่ (New deployment)</strong> &rarr; เลือกประเภท <strong>เว็บแอป (Web app)</strong> &bull; ผู้มีสิทธิ์เข้าถึง <strong>ทุกคน (Anyone)</strong> แล้วคัดลอก Web App URL มาวางด้านล่าง
+                    </li>
                   </ol>
                 </div>
               )}

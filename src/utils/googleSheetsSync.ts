@@ -38,14 +38,14 @@ export function saveStoredGoogleSheetsConfig(webhookUrl: string, autoSync = true
  */
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  * ระบบสำรองและซิงค์ข้อมูลอัตโนมัติ (DOE Work Permit Reporting System -> Google Sheets)
- * วิธีติดตั้ง:
+ * รุ่นจัดเรียงแถวอัตโนมัติ: วันที่รายงานล่าสุด (YYYY-MM-DD) และรายการที่ส่งล่าสุดจะอยู่แถวบนสุด (แถวที่ 2) เสมอ
+ *
+ * วิธีติดตั้ง / อัปเดตโค้ด:
  * 1. เปิดไฟล์ Google Sheets ของคุณ -> เมนู "ส่วนขยาย (Extensions)" -> "Apps Script"
- * 2. ลบโค้ดเดิมออกทั้งหมด แล้ววางโค้ดชุดนี้ลงไป -> กดปุ่มบันทึก (ไอคอนแผ่นดิสก์)
- * 3. กดปุ่ม "ทำให้ใช้งานได้ (Deploy)" -> "การทำให้ใช้งานได้รายการใหม่ (New deployment)"
- * 4. เลือกประเภทเป็น "เว็บแอป (Web app)"
- *    - ดำเนินการในฐานะ (Execute as): "ฉัน (Me)"
- *    - ผู้ที่มีสิทธิ์เข้าถึง (Who has access): "ทุกคน (Anyone)"
- * 5. กด Deploy แล้วคัดลอก Web App URL (https://script.google.com/macros/s/.../exec) มาวางในหน้าตั้งค่าระบบ
+ * 2. ลบโค้ดเดิมออกทั้งหมด แล้ววางโค้ดชุดนี้ลงไป -> กดปุ่มบันทึก (ไอคอนแผ่นดิสก์ หรือ Ctrl+S)
+ * 3. กดปุ่ม "ทำให้ใช้งานได้ (Deploy)" -> "จัดการการทำให้ใช้งานได้ (Manage deployments)"
+ *    - กดไอคอนรูปดินสอ (แก้ไข/Edit) -> ช่องเวอร์ชัน (Version) เลือก "เวอร์ชันใหม่ (New version)" -> กด Deploy
+ *    (หรือหากติดตั้งครั้งแรก ให้เลือก "การทำให้ใช้งานได้รายการใหม่ (New deployment)" -> ประเภท "เว็บแอป (Web app)" -> ผู้มีสิทธิ์เข้าถึง "ทุกคน (Anyone)")
  */
 
 const SHEET_NAME = 'รายงานผลการปฏิบัติงาน_DOE';
@@ -132,6 +132,42 @@ function reportToRow(r) {
   ];
 }
 
+function extractSortDateKey(row) {
+  const cellVal = row[1];
+  if (cellVal instanceof Date && !isNaN(cellVal.getTime())) {
+    const y = cellVal.getFullYear();
+    const m = String(cellVal.getMonth() + 1).padStart(2, '0');
+    const d = String(cellVal.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  }
+  const rawStr = String(cellVal || '').trim();
+  if (/^\\d{4}-\\d{2}-\\d{2}/.test(rawStr)) {
+    return rawStr.slice(0, 10);
+  }
+  const rawJson = row[HEADERS.length - 1];
+  if (rawJson && String(rawJson).trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(String(rawJson));
+      if (parsed && parsed.reportDate) return String(parsed.reportDate).slice(0, 10);
+    } catch (e) {}
+  }
+  return rawStr;
+}
+
+function compareRowsNewestFirst(a, b) {
+  const dateA = extractSortDateKey(a);
+  const dateB = extractSortDateKey(b);
+  if (dateA !== dateB) {
+    return dateB.localeCompare(dateA); // วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ (Descending)
+  }
+  const timeA = String(a[26] || '');
+  const timeB = String(b[26] || '');
+  if (timeA !== timeB) {
+    return timeB.localeCompare(timeA); // หากวันที่รายงานวันเดียวกัน ให้รายการที่ส่ง/แก้ไขล่าสุดอยู่บนสุด
+  }
+  return String(a[4] || '').localeCompare(String(b[4] || ''));
+}
+
 function doPost(e) {
   const lock = LockService.getScriptLock();
   lock.waitLock(25000);
@@ -139,59 +175,70 @@ function doPost(e) {
     const sheet = getOrCreateSheet();
     const body = JSON.parse(e.postData.contents || '{}');
     const action = body.action || 'upsert_single';
-    const incomingList = action === 'upsert_bulk'
-      ? (Array.isArray(body.reports) ? body.reports : [])
-      : (body.report ? [body.report] : []);
 
     const lastRow = sheet.getLastRow();
-    const idToRowMap = {};
-    if (lastRow > 1) {
-      const idValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-      for (let i = 0; i < idValues.length; i++) {
-        const existingId = String(idValues[i][0] || '').trim();
-        if (existingId) {
-          idToRowMap[existingId] = i + 2;
-        }
+    const existingRows = lastRow > 1
+      ? sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues()
+      : [];
+
+    const idToIndexMap = {};
+    for (let i = 0; i < existingRows.length; i++) {
+      const existingId = String(existingRows[i][0] || '').trim();
+      if (existingId) {
+        idToIndexMap[existingId] = i;
       }
     }
 
     if (action === 'delete_single' && body.reportId) {
-      const targetRow = idToRowMap[String(body.reportId).trim()];
-      if (targetRow) {
-        sheet.deleteRow(targetRow);
+      const targetId = String(body.reportId).trim();
+      const targetIndex = idToIndexMap[targetId];
+      if (targetIndex !== undefined) {
+        sheet.deleteRow(targetIndex + 2);
       }
       return ContentService.createTextOutput(JSON.stringify({ ok: true, deleted: body.reportId }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    const newRows = [];
+    const incomingList = action === 'upsert_bulk'
+      ? (Array.isArray(body.reports) ? body.reports : [])
+      : (body.report ? [body.report] : []);
+
+    let insertedCount = 0;
     let updatedCount = 0;
 
     for (let i = 0; i < incomingList.length; i++) {
       const r = incomingList[i];
       if (!r || !r.id) continue;
       const rowData = reportToRow(r);
-      const existingRowIndex = idToRowMap[String(r.id).trim()];
-      if (existingRowIndex) {
-        sheet.getRange(existingRowIndex, 1, 1, rowData.length).setValues([rowData]);
+      const rid = String(r.id).trim();
+      const existingIdx = idToIndexMap[rid];
+      if (existingIdx !== undefined) {
+        existingRows[existingIdx] = rowData;
         updatedCount++;
       } else {
-        newRows.push(rowData);
-        idToRowMap[String(r.id).trim()] = -1;
+        idToIndexMap[rid] = existingRows.length;
+        existingRows.push(rowData);
+        insertedCount++;
       }
     }
 
-    if (newRows.length > 0) {
-      const startRow = sheet.getLastRow() + 1;
-      sheet.getRange(startRow, 1, newRows.length, HEADERS.length).setValues(newRows);
+    // จัดเรียงแถวทั้งหมดตาม "วันที่รายงาน (YYYY-MM-DD)" จากวันที่ล่าสุดไปเก่าสุด (แถวบนสุดคือวันที่ล่าสุดเสมอ)
+    existingRows.sort(compareRowsNewestFirst);
+    for (let i = 0; i < existingRows.length; i++) {
+      existingRows[i][1] = extractSortDateKey(existingRows[i]);
+    }
+
+    if (existingRows.length > 0) {
+      sheet.getRange(2, 1, existingRows.length, HEADERS.length).setValues(existingRows);
     }
 
     return ContentService.createTextOutput(
       JSON.stringify({
         ok: true,
-        inserted: newRows.length,
+        inserted: insertedCount,
         updated: updatedCount,
-        totalRows: Math.max(0, sheet.getLastRow() - 1)
+        sorted: 'reportDate_DESC',
+        totalRows: existingRows.length
       })
     ).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
@@ -211,7 +258,25 @@ function doGet() {
       return ContentService.createTextOutput(JSON.stringify({ ok: true, reports: [] }))
         .setMimeType(ContentService.MimeType.JSON);
     }
-    const data = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
+    const range = sheet.getRange(2, 1, lastRow - 1, HEADERS.length);
+    const data = range.getValues();
+
+    // ตรวจสอบว่าตารางเรียงตามวันที่รายงานล่าสุดอยู่บนสุดหรือยัง หากยังไม่เรียงให้จัดเรียงอัตโนมัติทันที
+    let needsSort = false;
+    for (let i = 0; i < data.length - 1; i++) {
+      if (compareRowsNewestFirst(data[i], data[i + 1]) > 0) {
+        needsSort = true;
+        break;
+      }
+    }
+    if (needsSort) {
+      data.sort(compareRowsNewestFirst);
+      for (let i = 0; i < data.length; i++) {
+        data[i][1] = extractSortDateKey(data[i]);
+      }
+      range.setValues(data);
+    }
+
     const reports = [];
     for (let i = 0; i < data.length; i++) {
       const rawJson = data[i][HEADERS.length - 1];
@@ -222,7 +287,7 @@ function doGet() {
       }
     }
     return ContentService.createTextOutput(
-      JSON.stringify({ ok: true, count: reports.length, reports: reports })
+      JSON.stringify({ ok: true, count: reports.length, sorted: true, reports: reports })
     ).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(
@@ -316,9 +381,14 @@ export async function syncBulkReportsToGoogleSheets(
     };
   }
 
-  const sorted = [...reports].sort((a, b) =>
-    (b.reportDate || '').localeCompare(a.reportDate || '')
-  );
+  const sorted = [...reports].sort((a, b) => {
+    const dateCmp = (b.reportDate || '').localeCompare(a.reportDate || '');
+    if (dateCmp !== 0) return dateCmp;
+    const timeA = a.updatedAt || a.createdAt || '';
+    const timeB = b.updatedAt || b.createdAt || '';
+    if (timeA !== timeB) return timeB.localeCompare(timeA);
+    return (a.officeId || '').localeCompare(b.officeId || '');
+  });
   const total = sorted.length;
   if (total === 0) {
     return { success: true, syncedCount: 0, message: 'ไม่มีข้อมูลรายงานให้ซิงค์' };
