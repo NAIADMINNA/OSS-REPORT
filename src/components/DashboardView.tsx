@@ -395,7 +395,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       } else if (filterEndDate) {
         matchDate = rDate <= filterEndDate;
       }
-      const matchRegion = selectedRegion === 'ทั้งหมด' || r.region === selectedRegion;
+      const isSpecialCenterReport =
+        r.region === 'เฉพาะกิจ' || (r.centerName || '').includes('เฉพาะกิจ');
+      const matchRegion =
+        selectedRegion === 'ทั้งหมด' ||
+        (selectedRegion === 'เฉพาะกิจ'
+          ? isSpecialCenterReport
+          : r.region === selectedRegion && !isSpecialCenterReport);
       const q = (searchQuery || '').toLowerCase().trim();
       const matchSearch =
         !q ||
@@ -424,15 +430,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return baseDateRegionReports.filter((r) => matchesCenterFilter(r, selectedCenterFilter));
   }, [baseDateRegionReports, selectedCenterFilter]);
 
-  // Group and sort reported list by region for the Province selector (deduplicated per officeId)
+  // Group and sort reported list by region for the Province selector (deduplicated per region + officeId so provinces with both standard & special centers appear in both groups)
   const groupedReportedList = useMemo(() => {
     const groups: Record<string, DOEReport[]> = {};
-    const seenOffices = new Set<string>();
+    const seenKeys = new Set<string>();
     for (const r of baseDateRegionReports) {
-      const officeKey = r.officeId || r.id;
-      if (seenOffices.has(officeKey)) continue;
-      seenOffices.add(officeKey);
-      const reg = r.region || 'อื่นๆ';
+      const isSpecial =
+        r.region === 'เฉพาะกิจ' || (r.centerName || '').includes('เฉพาะกิจ');
+      const reg = isSpecial ? 'เฉพาะกิจ' : r.region || 'อื่นๆ';
+      const dedupKey = isSpecial
+        ? `${reg}:${r.officeId || r.id}:${getCanonicalCenterKey(r.centerName) || r.centerName}`
+        : `${reg}:${r.officeId || r.id}`;
+      if (seenKeys.has(dedupKey)) continue;
+      seenKeys.add(dedupKey);
       if (!groups[reg]) groups[reg] = [];
       groups[reg].push(r);
     }
@@ -550,12 +560,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   }, [activeSelectedReport, baseDateRegionReports, offices]);
 
-  // Reports belonging to the selected office (filtered by selectedCenterFilter)
+  // Reports belonging to the selected office (filtered by selectedCenterFilter & special center status)
   const selectedOfficeReports = useMemo(() => {
     if (!selectedReportId || !activeSelectedReport) return [];
-    const matchingInFilter = reportedList.filter(
-      (r) => r.officeId === activeSelectedReport.officeId
-    );
+    const isActiveSpecial =
+      activeSelectedReport.region === 'เฉพาะกิจ' ||
+      (activeSelectedReport.centerName || '').includes('เฉพาะกิจ');
+    const matchingInFilter = reportedList.filter((r) => {
+      if (r.officeId !== activeSelectedReport.officeId) return false;
+      if (selectedCenterFilter === 'all') {
+        const rIsSpecial =
+          r.region === 'เฉพาะกิจ' || (r.centerName || '').includes('เฉพาะกิจ');
+        return rIsSpecial === isActiveSpecial;
+      }
+      return true;
+    });
     if (matchingInFilter.length > 0) return matchingInFilter;
     // If the user selected a center type that has 0 reports for this province in the active period, return empty stats for that province+center
     if (selectedCenterFilter !== 'all') {
@@ -575,9 +594,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const officeList = (offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES).filter(
       (o) => o.region !== 'ส่วนกลาง' && o.id !== 'doe-hq'
     );
-    const officesInRegion = officeList.filter(
-      (o) => selectedRegion === 'ทั้งหมด' || o.region === selectedRegion
-    );
+    const officesInRegion = officeList.filter((o) => {
+      if (selectedRegion === 'ทั้งหมด') return o.id !== 'central_foreign_workers';
+      if (selectedRegion === 'เฉพาะกิจ') {
+        return (
+          (o.centerName || '').includes('เฉพาะกิจ') ||
+          (o.additionalCenters || []).some((c) => c.includes('เฉพาะกิจ'))
+        );
+      }
+      return o.region === selectedRegion;
+    });
 
     // Unique office IDs that reported in the active filter
     const uniqueReportedOfficeIds = new Set(reportedList.map((r) => r.officeId));
@@ -847,11 +873,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Helper to build a DOEReport object for the infographic poster reflecting the active period / cycle
   const buildPosterReport = (
     mode: 'overview' | 'office',
-    targetOfficeId?: string
+    targetOfficeId?: string,
+    targetRegion?: string
   ): DOEReport => {
     const isMobileFilter =
       selectedCenterFilter === 'type:mobile' ||
       selectedRegion === 'เฉพาะกิจ' ||
+      targetRegion === 'เฉพาะกิจ' ||
       (selectedCenterFilter.startsWith('center:') &&
         isMobileUnitCenter(selectedCenterFilter.replace('center:', '')));
 
@@ -877,7 +905,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const isOverview = mode === 'overview' && !effectiveTargetOfficeId;
     const targetReports = isOverview
       ? reportedList
-      : reportedList.filter((r) => r.officeId === effectiveTargetOfficeId);
+      : reportedList.filter((r) => {
+          if (r.officeId !== effectiveTargetOfficeId) return false;
+          if (targetRegion && selectedCenterFilter === 'all') {
+            const rIsSpecial =
+              r.region === 'เฉพาะกิจ' || (r.centerName || '').includes('เฉพาะกิจ');
+            const targetIsSpecial = targetRegion === 'เฉพาะกิจ';
+            return rIsSpecial === targetIsSpecial;
+          }
+          return true;
+        });
 
     const targetOfficeObj =
       offices?.find((o) => o.id === effectiveTargetOfficeId) ||
@@ -1510,7 +1547,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     activeSelectedReport
                       ? groupedReportedList
                           .flatMap((g) => g.reports)
-                          .find((r) => r.officeId === activeSelectedReport.officeId)?.id ||
+                          .find((r) => {
+                            const rSpecial =
+                              r.region === 'เฉพาะกิจ' ||
+                              (r.centerName || '').includes('เฉพาะกิจ');
+                            const activeSpecial =
+                              activeSelectedReport.region === 'เฉพาะกิจ' ||
+                              (activeSelectedReport.centerName || '').includes('เฉพาะกิจ');
+                            return (
+                              r.officeId === activeSelectedReport.officeId &&
+                              rSpecial === activeSpecial
+                            );
+                          })?.id ||
                         selectedReportId ||
                         'all'
                       : 'all'
@@ -1523,13 +1571,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   className="w-full bg-transparent font-extrabold text-blue-950 focus:outline-hidden cursor-pointer max-w-[200px] truncate text-xs sm:text-sm leading-tight"
                 >
                   <option value="all">
-                    ดูภาพรวมทั้งหมด ({groupedReportedList.reduce((acc, g) => acc + g.reports.length, 0)} จังหวัด)
+                    ดูภาพรวมทั้งหมด ({groupedReportedList.reduce((acc, g) => acc + g.reports.length, 0)} แห่ง)
                   </option>
                   {groupedReportedList.map((group) => (
                     <optgroup key={group.region} label={group.regionLabel}>
                       {group.reports.map((r) => (
                         <option key={r.id} value={r.id}>
-                          {r.officeName}
+                          {group.region === 'เฉพาะกิจ' && r.centerName
+                            ? `${r.officeName} (${r.centerName.replace('ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว', '')})`
+                            : r.officeName}
                         </option>
                       ))}
                     </optgroup>
@@ -1624,7 +1674,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 onClick={() => {
                   const reportForPoster = buildPosterReport(
                     displayedStats.isDrilldown && activeSelectedReport ? 'office' : 'overview',
-                    activeSelectedReport?.officeId
+                    activeSelectedReport?.officeId,
+                    activeSelectedReport?.region
                   );
                   onSelectReport(reportForPoster);
                 }}
@@ -2327,9 +2378,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <button
                             onClick={() => {
                               const targetPoster = isCycleMode
-                                ? buildPosterReport('office', report.officeId)
-                                : selectedCenterFilter === 'type:mobile' || selectedRegion === 'เฉพาะกิจ'
-                                ? { ...report, centerName: MOBILE_UNIT_DEFAULT_LABEL }
+                                ? buildPosterReport('office', report.officeId, report.region)
+                                : selectedCenterFilter === 'type:mobile'
+                                ? { ...report, centerName: report.centerName || MOBILE_UNIT_DEFAULT_LABEL }
                                 : selectedCenterFilter.startsWith('center:')
                                 ? { ...report, centerName: selectedCenterFilter.replace('center:', '') }
                                 : report;

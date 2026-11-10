@@ -98,10 +98,19 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
     matchedOffice?.centerName ||
     '';
 
-  const region =
-    typeof r.region === 'string' && r.region.trim() && (r.region as string) !== 'ส่วนกลาง'
-      ? (r.region as DOEReport['region'])
-      : matchedOffice?.region || 'กรุงเทพมหานคร';
+  const isSpecialCenter =
+    centerName.includes('เฉพาะกิจ') ||
+    centerName.includes('วัดป้อมวิเชียร') ||
+    centerName.includes('ราชพฤกษ์') ||
+    rawOfficeName.includes('เฉพาะกิจ');
+
+  const region: DOEReport['region'] = isSpecialCenter
+    ? 'เฉพาะกิจ'
+    : matchedOffice && matchedOffice.region !== 'เฉพาะกิจ'
+    ? matchedOffice.region
+    : typeof r.region === 'string' && r.region.trim() && (r.region as string) !== 'ส่วนกลาง'
+    ? (r.region as DOEReport['region'])
+    : matchedOffice?.region || 'กรุงเทพมหานคร';
 
   const reportDateThaiStr =
     typeof r.reportDateThaiStr === 'string' && r.reportDateThaiStr.trim()

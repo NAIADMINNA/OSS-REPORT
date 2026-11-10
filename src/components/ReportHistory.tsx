@@ -362,8 +362,13 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
         (r.centerName || '').toLowerCase().includes(q) ||
         (r.reportDate || '').includes(q);
 
+      const isSpecialCenterReport =
+        r.region === 'เฉพาะกิจ' || (r.centerName || '').includes('เฉพาะกิจ');
       const matchesRegion =
-        selectedRegion === 'ทั้งหมด' || r.region === selectedRegion;
+        selectedRegion === 'ทั้งหมด' ||
+        (selectedRegion === 'เฉพาะกิจ'
+          ? isSpecialCenterReport
+          : r.region === selectedRegion && !isSpecialCenterReport);
 
       let matchesDate = true;
       if (selectedFolderDate !== 'ทั้งหมด') {
@@ -525,8 +530,16 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
       if (hasReport) return false;
 
       // Filter by region & search
+      const hasSpecialCenter =
+        office.region === 'เฉพาะกิจ' ||
+        (office.centerName && office.centerName.includes('เฉพาะกิจ')) ||
+        (office.additionalCenters &&
+          office.additionalCenters.some((c) => c.includes('เฉพาะกิจ')));
       const matchesRegion =
-        selectedRegion === 'ทั้งหมด' || office.region === selectedRegion;
+        selectedRegion === 'ทั้งหมด' ||
+        (selectedRegion === 'เฉพาะกิจ'
+          ? Boolean(hasSpecialCenter)
+          : office.region === selectedRegion);
       const q = (searchTerm || '').toLowerCase().trim();
       const matchesSearch =
         !q ||

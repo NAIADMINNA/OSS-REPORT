@@ -207,8 +207,13 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
         (r.reporterName || '').toLowerCase().includes(q) ||
         (r.region || '').toLowerCase().includes(q);
 
+      const isSpecialCenterReport =
+        r.region === 'เฉพาะกิจ' || (r.centerName || '').includes('เฉพาะกิจ');
       const matchRegion =
-        selectedRegion === 'ทั้งหมด' || r.region === selectedRegion;
+        selectedRegion === 'ทั้งหมด' ||
+        (selectedRegion === 'เฉพาะกิจ'
+          ? isSpecialCenterReport
+          : r.region === selectedRegion && !isSpecialCenterReport);
 
       let matchDate = true;
       if (selectedDate !== 'ทั้งหมด') {

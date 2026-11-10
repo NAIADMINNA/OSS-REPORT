@@ -478,16 +478,19 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       : validStdCenters.includes(formData.centerName)
       ? formData.centerName
       : validStdCenters[0] || formData.centerName;
+    const expectedRegion = expectedCenter.includes('เฉพาะกิจ')
+      ? 'เฉพาะกิจ'
+      : currentSelectedOffice.region;
     if (
       formData.officeName !== currentSelectedOffice.name ||
-      formData.region !== currentSelectedOffice.region ||
+      formData.region !== expectedRegion ||
       (!isMobileCenter && formData.centerName !== expectedCenter)
     ) {
       const updated = {
         ...formData,
         officeName: currentSelectedOffice.name,
         officeNameEn: currentSelectedOffice.nameEn || currentSelectedOffice.name,
-        region: currentSelectedOffice.region,
+        region: expectedRegion,
         centerName: expectedCenter,
       };
       setFormData(updated);
@@ -497,9 +500,13 @@ export const ReportForm: React.FC<ReportFormProps> = ({
 
   // Select a specific Standard Center or Mobile Unit slot
   const handleSelectCenterSlot = (targetCenterName: string) => {
+    const targetRegion = targetCenterName.includes('เฉพาะกิจ')
+      ? 'เฉพาะกิจ'
+      : currentSelectedOffice?.region || formData.region;
     const updated = {
       ...formData,
       centerName: targetCenterName,
+      region: targetRegion,
     };
     setFormData(updated);
     triggerPreview(updated);
@@ -730,13 +737,17 @@ export const ReportForm: React.FC<ReportFormProps> = ({
         ? MOBILE_UNIT_CENTER_NAME
         : office.centerName || 'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว';
 
+      const targetRegion = targetCenterName.includes('เฉพาะกิจ')
+        ? 'เฉพาะกิจ'
+        : office.region;
+
       const updated = {
         ...formData,
         officeId: office.id,
         officeName: office.name,
         officeNameEn: office.nameEn,
         centerName: targetCenterName,
-        region: office.region,
+        region: targetRegion,
       };
       setFormData(updated);
       triggerPreview(updated);
@@ -1126,8 +1137,15 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   // Filtered offices list for search and region
   const filteredOffices = useMemo(() => {
     return officeList.filter((o) => {
+      const hasSpecialCenter =
+        o.region === 'เฉพาะกิจ' ||
+        (o.centerName && o.centerName.includes('เฉพาะกิจ')) ||
+        (o.additionalCenters && o.additionalCenters.some((c) => c.includes('เฉพาะกิจ')));
       const matchRegion =
-        selectedRegionFilter === 'ทั้งหมด' || o.region === selectedRegionFilter;
+        selectedRegionFilter === 'ทั้งหมด' ||
+        (selectedRegionFilter === 'เฉพาะกิจ'
+          ? Boolean(hasSpecialCenter)
+          : o.region === selectedRegionFilter);
       const q = officeSearch.toLowerCase().trim();
       const matchSearch =
         !q ||
