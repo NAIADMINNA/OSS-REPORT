@@ -1,8 +1,8 @@
 import React from 'react';
 import { DOELogo } from './DOELogo';
-import { LayoutDashboard, FileEdit, FolderClock, ShieldCheck, FileText, BookOpen } from 'lucide-react';
+import { LayoutDashboard, BarChart3, FileEdit, FolderClock, ShieldCheck, FileText } from 'lucide-react';
 
-export type ActiveTab = 'dashboard' | 'form' | 'history' | 'notes' | 'admin' | 'manual';
+export type ActiveTab = 'dashboard' | 'insights' | 'form' | 'history' | 'notes' | 'admin' | 'manual';
 
 interface DOEHeaderProps {
   activeTab: ActiveTab;
@@ -92,7 +92,7 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
           <nav className="flex flex-wrap items-center gap-1.5 bg-white/15 backdrop-blur-md p-1.5 rounded-2xl border border-white/25 shadow-xs text-sm">
             <button
               onClick={() => onTabChange('dashboard')}
-              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
                 activeTab === 'dashboard'
                   ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
                   : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
@@ -100,6 +100,18 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
             >
               <LayoutDashboard className="w-4 h-4" />
               <span>แดชบอร์ดสรุปผล</span>
+            </button>
+
+            <button
+              onClick={() => onTabChange('insights')}
+              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                activeTab === 'insights'
+                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
+                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span>วิเคราะห์ข้อมูล</span>
             </button>
 
             <button

@@ -62,13 +62,22 @@ const THAI_MONTHS_FULL = [
 const MOBILE_UNIT_DEFAULT_LABEL =
   'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit)';
 
-function isMobileUnitCenter(centerName?: string, region?: string): boolean {
+const SPECIAL_CENTER_DEFAULT_LABEL =
+  'ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ';
+
+function isMobileUnitCenter(centerName?: string): boolean {
   const c = (centerName || '').toLowerCase();
+  return c.includes('mobile unit') || c.includes('เคลื่อนที่');
+}
+
+function isSpecialTaskCenter(centerName?: string, region?: string): boolean {
+  const raw = (centerName || '').trim();
+  if (isMobileUnitCenter(raw)) return false;
   return (
     region === 'เฉพาะกิจ' ||
-    c.includes('mobile unit') ||
-    c.includes('เคลื่อนที่') ||
-    c.includes('เฉพาะกิจ')
+    raw.includes('เฉพาะกิจ') ||
+    raw.includes('วัดป้อมวิเชียร') ||
+    raw.includes('ราชพฤกษ์')
   );
 }
 
@@ -383,8 +392,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   }, [selectedCycleKey, customStartDate, customEndDate]);
 
-  // Base reports matching Date, Region, and Search (before Center/Mobile Unit filter)
-  const baseDateRegionReports = useMemo(() => {
+  const officeRegionMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES).forEach((o) => {
+      map.set(o.id, o.region);
+    });
+    return map;
+  }, [offices]);
+
+  // Reports matching Date and Search (used to compute accurate Special/Mobile/Standard counts in #dashboard-center-filter)
+  const dateAndSearchReports = useMemo(() => {
     return reports.filter((r) => {
       const rDate = r.reportDate || '';
       let matchDate = true;
@@ -395,29 +412,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       } else if (filterEndDate) {
         matchDate = rDate <= filterEndDate;
       }
-      const isSpecialCenterReport =
-        r.region === 'เฉพาะกิจ' || (r.centerName || '').includes('เฉพาะกิจ');
-      const matchRegion =
-        selectedRegion === 'ทั้งหมด' ||
-        (selectedRegion === 'เฉพาะกิจ'
-          ? isSpecialCenterReport
-          : r.region === selectedRegion && !isSpecialCenterReport);
       const q = (searchQuery || '').toLowerCase().trim();
       const matchSearch =
         !q ||
         (r.officeName || '').toLowerCase().includes(q) ||
         (r.centerName || '').toLowerCase().includes(q) ||
         (r.reporterName || '').toLowerCase().includes(q);
-      return matchDate && matchRegion && matchSearch;
+      return matchDate && matchSearch;
     });
-  }, [reports, filterStartDate, filterEndDate, selectedRegion, searchQuery]);
+  }, [reports, filterStartDate, filterEndDate, searchQuery]);
+
+  // Base reports matching Date, Region, and Search
+  const baseDateRegionReports = useMemo(() => {
+    const isExplicitSpecialFilter =
+      selectedCenterFilter === 'type:special' ||
+      (selectedCenterFilter.startsWith('center:') &&
+        isSpecialTaskCenter(selectedCenterFilter.replace('center:', '')));
+
+    return dateAndSearchReports.filter((r) => {
+      const isSpecialCenterReport = isSpecialTaskCenter(r.centerName, r.region);
+      if (selectedRegion === 'ทั้งหมด') return true;
+      if (selectedRegion === 'เฉพาะกิจ') return isSpecialCenterReport;
+      if (isExplicitSpecialFilter) {
+        return (
+          isSpecialCenterReport &&
+          (r.region === selectedRegion || officeRegionMap.get(r.officeId) === selectedRegion)
+        );
+      }
+      return r.region === selectedRegion && !isSpecialCenterReport;
+    });
+  }, [dateAndSearchReports, selectedRegion, selectedCenterFilter, officeRegionMap]);
 
   // Helper to check if a report matches selectedCenterFilter
   const matchesCenterFilter = (r: DOEReport, filterVal: string): boolean => {
     if (!filterVal || filterVal === 'all') return true;
-    const isMob = isMobileUnitCenter(r.centerName, r.region);
+    const isMob = isMobileUnitCenter(r.centerName);
+    const isSpec = isSpecialTaskCenter(r.centerName, r.region);
+    if (filterVal === 'type:special') return isSpec;
     if (filterVal === 'type:mobile') return isMob;
-    if (filterVal === 'type:standard') return !isMob;
+    if (filterVal === 'type:standard') return !isMob && !isSpec;
     if (filterVal.startsWith('center:')) {
       const targetCenter = filterVal.replace('center:', '');
       return areSameCenterName(r.centerName, targetCenter);
@@ -425,7 +458,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return true;
   };
 
-  // 1. In Dashboard: ONLY show reported reports matching all active filters (including Center / Mobile Unit)
+  // 1. In Dashboard: ONLY show reported reports matching all active filters (including Center / Special / Mobile Unit)
   const reportedList = useMemo(() => {
     return baseDateRegionReports.filter((r) => matchesCenterFilter(r, selectedCenterFilter));
   }, [baseDateRegionReports, selectedCenterFilter]);
@@ -435,8 +468,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const groups: Record<string, DOEReport[]> = {};
     const seenKeys = new Set<string>();
     for (const r of baseDateRegionReports) {
-      const isSpecial =
-        r.region === 'เฉพาะกิจ' || (r.centerName || '').includes('เฉพาะกิจ');
+      const isSpecial = isSpecialTaskCenter(r.centerName, r.region);
       const reg = isSpecial ? 'เฉพาะกิจ' : r.region || 'อื่นๆ';
       const dedupKey = isSpecial
         ? `${reg}:${r.officeId || r.id}:${getCanonicalCenterKey(r.centerName) || r.centerName}`
@@ -469,33 +501,77 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     );
   }, [reportedList, baseDateRegionReports, selectedReportId, reports]);
 
-  // Available Centers / Mobile Unit options for the current selection (Province or Region/Overview)
+  // Available Centers / Special Center / Mobile Unit options for the current selection (Province or Region/Overview)
   const centerFilterOptions = useMemo(() => {
+    const officeListConfig = offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES;
+
+    // Include special center reports belonging to the active province/region so counts in #dashboard-center-filter are always accurate
     const scopedReports = activeSelectedReport
-      ? baseDateRegionReports.filter((r) => r.officeId === activeSelectedReport.officeId)
-      : baseDateRegionReports;
+      ? dateAndSearchReports.filter((r) => r.officeId === activeSelectedReport.officeId)
+      : dateAndSearchReports.filter((r) => {
+          if (selectedRegion === 'ทั้งหมด') return true;
+          if (selectedRegion === 'เฉพาะกิจ') return isSpecialTaskCenter(r.centerName, r.region);
+          if (isSpecialTaskCenter(r.centerName, r.region)) {
+            return (
+              r.region === selectedRegion || officeRegionMap.get(r.officeId) === selectedRegion
+            );
+          }
+          return r.region === selectedRegion;
+        });
 
     let standardCount = 0;
+    let specialCount = 0;
     let mobileCount = 0;
-    const centerMap = new Map<string, { name: string; count: number; isMobile: boolean }>();
+    const centerMap = new Map<
+      string,
+      { name: string; count: number; centerType: 'standard' | 'special' | 'mobile' }
+    >();
 
-    // If a specific province is selected, pre-populate its standard center, additional centers & Mobile Unit
+    // Pre-populate configured special centers matching active scope so users can always select them
+    officeListConfig.forEach((o) => {
+      if (activeSelectedReport && o.id !== activeSelectedReport.officeId) return;
+      if (
+        !activeSelectedReport &&
+        selectedRegion !== 'ทั้งหมด' &&
+        selectedRegion !== 'เฉพาะกิจ' &&
+        o.region !== selectedRegion
+      ) {
+        return;
+      }
+      const allConfiguredCenters = [o.centerName, ...(o.additionalCenters || [])];
+      allConfiguredCenters.forEach((c) => {
+        const cleanC = (c || '').trim();
+        if (cleanC && isSpecialTaskCenter(cleanC)) {
+          const key = getCanonicalCenterKey(cleanC) || cleanC;
+          if (!centerMap.has(key)) {
+            centerMap.set(key, {
+              name: cleanC,
+              count: 0,
+              centerType: 'special',
+            });
+          }
+        }
+      });
+    });
+
+    // If a specific province is selected, also pre-populate its standard center, additional centers & Mobile Unit
     if (activeSelectedReport) {
-      const officeConfig = (offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES).find(
-        (o) => o.id === activeSelectedReport.officeId
-      );
+      const officeConfig = officeListConfig.find((o) => o.id === activeSelectedReport.officeId);
       const stdCenterName =
         officeConfig?.centerName ||
-        (!isMobileUnitCenter(activeSelectedReport.centerName, activeSelectedReport.region)
+        (!isMobileUnitCenter(activeSelectedReport.centerName) &&
+        !isSpecialTaskCenter(activeSelectedReport.centerName, activeSelectedReport.region)
           ? activeSelectedReport.centerName
           : '');
       if (stdCenterName) {
         const key = getCanonicalCenterKey(stdCenterName) || stdCenterName;
-        centerMap.set(key, {
-          name: stdCenterName,
-          count: 0,
-          isMobile: false,
-        });
+        if (!centerMap.has(key)) {
+          centerMap.set(key, {
+            name: stdCenterName,
+            count: 0,
+            centerType: isSpecialTaskCenter(stdCenterName) ? 'special' : 'standard',
+          });
+        }
       }
       if (officeConfig?.additionalCenters) {
         officeConfig.additionalCenters.forEach((addC) => {
@@ -503,32 +579,46 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           if (cleanAdd) {
             const key = getCanonicalCenterKey(cleanAdd) || cleanAdd;
             if (!centerMap.has(key)) {
+              const cType: 'standard' | 'special' | 'mobile' = isSpecialTaskCenter(cleanAdd)
+                ? 'special'
+                : isMobileUnitCenter(cleanAdd)
+                ? 'mobile'
+                : 'standard';
               centerMap.set(key, {
                 name: cleanAdd,
                 count: 0,
-                isMobile: isMobileUnitCenter(cleanAdd, officeConfig.region),
+                centerType: cType,
               });
             }
           }
         });
       }
       const mobKey = getCanonicalCenterKey(MOBILE_UNIT_DEFAULT_LABEL) || MOBILE_UNIT_DEFAULT_LABEL;
-      centerMap.set(mobKey, {
-        name: MOBILE_UNIT_DEFAULT_LABEL,
-        count: 0,
-        isMobile: true,
-      });
+      if (!centerMap.has(mobKey)) {
+        centerMap.set(mobKey, {
+          name: MOBILE_UNIT_DEFAULT_LABEL,
+          count: 0,
+          centerType: 'mobile',
+        });
+      }
     }
 
     scopedReports.forEach((r) => {
-      const isMob = isMobileUnitCenter(r.centerName, r.region);
-      if (isMob) mobileCount += 1;
+      const isSpec = isSpecialTaskCenter(r.centerName, r.region);
+      const isMob = !isSpec && isMobileUnitCenter(r.centerName);
+      if (isSpec) specialCount += 1;
+      else if (isMob) mobileCount += 1;
       else standardCount += 1;
 
       const cName = (r.centerName || '').trim();
       if (cName) {
         const key = getCanonicalCenterKey(cName) || cName;
         const existing = centerMap.get(key);
+        const cType: 'standard' | 'special' | 'mobile' = isSpec
+          ? 'special'
+          : isMob
+          ? 'mobile'
+          : 'standard';
         if (existing) {
           existing.count += 1;
           if (
@@ -541,36 +631,52 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           centerMap.set(key, {
             name: cName,
             count: 1,
-            isMobile: isMob,
+            centerType: cType,
           });
         }
       }
     });
 
-    const distinctCenters = Array.from(centerMap.values()).sort((a, b) => {
-      if (a.isMobile !== b.isMobile) return a.isMobile ? 1 : -1;
-      return a.name.localeCompare(b.name, 'th');
-    });
+    const allEntries = Array.from(centerMap.values());
+    const specialCenters = allEntries
+      .filter((c) => c.centerType === 'special')
+      .sort((a, b) => a.name.localeCompare(b.name, 'th'));
+
+    const distinctCenters = allEntries
+      .filter((c) => c.centerType !== 'special')
+      .sort((a, b) => {
+        if (a.centerType !== b.centerType) return a.centerType === 'mobile' ? 1 : -1;
+        return a.name.localeCompare(b.name, 'th');
+      });
 
     return {
-      totalCount: scopedReports.length,
+      totalCount: activeSelectedReport ? scopedReports.length : baseDateRegionReports.length,
       standardCount,
+      specialCount,
       mobileCount,
+      specialCenters,
       distinctCenters,
     };
-  }, [activeSelectedReport, baseDateRegionReports, offices]);
+  }, [
+    activeSelectedReport,
+    dateAndSearchReports,
+    baseDateRegionReports.length,
+    selectedRegion,
+    officeRegionMap,
+    offices,
+  ]);
 
   // Reports belonging to the selected office (filtered by selectedCenterFilter & special center status)
   const selectedOfficeReports = useMemo(() => {
     if (!selectedReportId || !activeSelectedReport) return [];
-    const isActiveSpecial =
-      activeSelectedReport.region === 'เฉพาะกิจ' ||
-      (activeSelectedReport.centerName || '').includes('เฉพาะกิจ');
+    const isActiveSpecial = isSpecialTaskCenter(
+      activeSelectedReport.centerName,
+      activeSelectedReport.region
+    );
     const matchingInFilter = reportedList.filter((r) => {
       if (r.officeId !== activeSelectedReport.officeId) return false;
       if (selectedCenterFilter === 'all') {
-        const rIsSpecial =
-          r.region === 'เฉพาะกิจ' || (r.centerName || '').includes('เฉพาะกิจ');
+        const rIsSpecial = isSpecialTaskCenter(r.centerName, r.region);
         return rIsSpecial === isActiveSpecial;
       }
       return true;
@@ -594,14 +700,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const officeList = (offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES).filter(
       (o) => o.region !== 'ส่วนกลาง' && o.id !== 'doe-hq'
     );
+    const isFilteringSpecialOnly =
+      selectedRegion === 'เฉพาะกิจ' ||
+      selectedCenterFilter === 'type:special' ||
+      (selectedCenterFilter.startsWith('center:') &&
+        isSpecialTaskCenter(selectedCenterFilter.replace('center:', '')));
+
     const officesInRegion = officeList.filter((o) => {
-      if (selectedRegion === 'ทั้งหมด') return o.id !== 'central_foreign_workers';
-      if (selectedRegion === 'เฉพาะกิจ') {
-        return (
+      if (isFilteringSpecialOnly) {
+        const hasSpecial =
           (o.centerName || '').includes('เฉพาะกิจ') ||
-          (o.additionalCenters || []).some((c) => c.includes('เฉพาะกิจ'))
+          (o.additionalCenters || []).some((c) => c.includes('เฉพาะกิจ'));
+        if (!hasSpecial) return false;
+        return (
+          selectedRegion === 'ทั้งหมด' ||
+          selectedRegion === 'เฉพาะกิจ' ||
+          o.region === selectedRegion
         );
       }
+      if (selectedRegion === 'ทั้งหมด') return o.id !== 'central_foreign_workers';
       return o.region === selectedRegion;
     });
 
@@ -705,7 +822,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         customQueueSums,
       },
     };
-  }, [reportedList, selectedRegion, offices, categories]);
+  }, [reportedList, selectedRegion, selectedCenterFilter, offices, categories]);
 
   // 3. Compute Displayed Statistics (Shows single province if selected, or aggregate otherwise)
   const displayedStats = useMemo(() => {
@@ -774,6 +891,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       let resolvedCenterName = rep.centerName;
       if (selectedCenterFilter === 'type:mobile') {
         resolvedCenterName = MOBILE_UNIT_DEFAULT_LABEL;
+      } else if (selectedCenterFilter === 'type:special') {
+        if (!isSpecialTaskCenter(resolvedCenterName, rep.region)) {
+          const officeCfg = (offices && offices.length > 0 ? offices : EMPLOYMENT_OFFICES).find(
+            (o) => o.id === activeSelectedReport.officeId
+          );
+          const foundSpec = (officeCfg?.additionalCenters || []).find((c) =>
+            isSpecialTaskCenter(c)
+          );
+          resolvedCenterName = foundSpec || SPECIAL_CENTER_DEFAULT_LABEL;
+        }
       } else if (selectedCenterFilter.startsWith('center:')) {
         resolvedCenterName = selectedCenterFilter.replace('center:', '');
       }
@@ -812,11 +939,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       selectedRegion === 'ทั้งหมด'
         ? 'ภาพรวมทั้งประเทศ'
         : selectedRegion === 'เฉพาะกิจ'
-        ? 'รวมศูนย์เฉพาะกิจ'
+        ? SPECIAL_CENTER_DEFAULT_LABEL
         : selectedRegion;
 
     const centerSuffix =
-      selectedCenterFilter === 'type:mobile'
+      selectedCenterFilter === 'type:special'
+        ? selectedRegion === 'เฉพาะกิจ'
+          ? ''
+          : ` (${SPECIAL_CENTER_DEFAULT_LABEL})`
+        : selectedCenterFilter === 'type:mobile'
         ? ' (เฉพาะหน่วยบริการเคลื่อนที่ Mobile Unit)'
         : selectedCenterFilter === 'type:standard'
         ? ' (เฉพาะศูนย์บริการประจำสำนักงาน)'
@@ -827,14 +958,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return {
       isDrilldown: false,
       officeId: 'overview',
-      officeName: `${baseOverviewTitle}${centerSuffix}`,
+      officeName:
+        selectedCenterFilter === 'type:special' && selectedRegion === 'ทั้งหมด'
+          ? SPECIAL_CENTER_DEFAULT_LABEL
+          : `${baseOverviewTitle}${centerSuffix}`,
       centerName:
-        selectedCenterFilter === 'type:mobile'
+        selectedCenterFilter === 'type:special'
+          ? SPECIAL_CENTER_DEFAULT_LABEL
+          : selectedCenterFilter === 'type:mobile'
           ? MOBILE_UNIT_DEFAULT_LABEL
           : selectedCenterFilter.startsWith('center:')
           ? selectedCenterFilter.replace('center:', '')
           : selectedRegion === 'เฉพาะกิจ'
-          ? 'รวมศูนย์เฉพาะกิจ'
+          ? SPECIAL_CENTER_DEFAULT_LABEL
           : '',
       reportDate: activePeriodLabel,
       totalQueue: nationalStats.totalQueue,
@@ -868,6 +1004,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     selectedCenterFilter,
     activePeriodLabel,
     categories,
+    offices,
   ]);
 
   // Helper to build a DOEReport object for the infographic poster reflecting the active period / cycle
@@ -876,12 +1013,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     targetOfficeId?: string,
     targetRegion?: string
   ): DOEReport => {
-    const isMobileFilter =
-      selectedCenterFilter === 'type:mobile' ||
+    const isSpecialFilter =
+      selectedCenterFilter === 'type:special' ||
       selectedRegion === 'เฉพาะกิจ' ||
       targetRegion === 'เฉพาะกิจ' ||
       (selectedCenterFilter.startsWith('center:') &&
-        isMobileUnitCenter(selectedCenterFilter.replace('center:', '')));
+        isSpecialTaskCenter(selectedCenterFilter.replace('center:', '')));
+
+    const isMobileFilter =
+      !isSpecialFilter &&
+      (selectedCenterFilter === 'type:mobile' ||
+        (selectedCenterFilter.startsWith('center:') &&
+          isMobileUnitCenter(selectedCenterFilter.replace('center:', ''))));
 
     const explicitCenterName = selectedCenterFilter.startsWith('center:')
       ? selectedCenterFilter.replace('center:', '')
@@ -988,7 +1131,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     });
 
     const officeName = isOverview
-      ? isMobileFilter
+      ? isSpecialFilter
+        ? explicitCenterName || SPECIAL_CENTER_DEFAULT_LABEL
+        : isMobileFilter
         ? selectedRegion === 'ทั้งหมด' || selectedRegion === 'เฉพาะกิจ'
           ? 'หน่วยบริการใบอนุญาตทำงานของคนต่างด้าวแบบเคลื่อนที่ (Mobile Unit)'
           : `หน่วยบริการเคลื่อนที่ (Mobile Unit) (${selectedRegion})`
@@ -1000,19 +1145,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       : targetOfficeObj?.name || baseRep?.officeName || 'สำนักงานจัดหางาน';
 
     const officeNameEn = isOverview
-      ? isMobileFilter
+      ? isSpecialFilter
+        ? 'Foreign Workers Employment Center (Special Task Force)'
+        : isMobileFilter
         ? selectedRegion === 'ทั้งหมด' || selectedRegion === 'เฉพาะกิจ'
           ? 'Foreign Workers Employment Mobile Unit (National Overview)'
           : `Foreign Workers Employment Mobile Unit (${selectedRegion})`
         : selectedRegion === 'ทั้งหมด'
         ? 'Foreign Workers Employment Center (National Overview)'
-        : selectedRegion === 'เฉพาะกิจ'
-        ? 'Foreign Workers Employment Center (Special Task Force)'
         : `Foreign Workers Employment Center (${selectedRegion})`
       : targetOfficeObj?.nameEn || baseRep?.officeNameEn || 'Provincial Employment Office';
 
     const centerName = isOverview
-      ? isMobileFilter
+      ? isSpecialFilter
+        ? explicitCenterName || SPECIAL_CENTER_DEFAULT_LABEL
+        : isMobileFilter
         ? explicitCenterName || MOBILE_UNIT_DEFAULT_LABEL
         : explicitCenterName
         ? explicitCenterName
@@ -1022,9 +1169,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           : `ศูนย์บริการประจำสำนักงานในพื้นที่ ${selectedRegion}`
         : selectedRegion === 'ทั้งหมด'
         ? 'ภาพรวม 76 จังหวัด + กทม. 10 พื้นที่'
-        : selectedRegion === 'เฉพาะกิจ'
-        ? MOBILE_UNIT_DEFAULT_LABEL
         : `รวมสำนักงานจัดหางานในพื้นที่ ${selectedRegion}`
+      : isSpecialFilter
+      ? explicitCenterName || baseRep?.centerName || SPECIAL_CENTER_DEFAULT_LABEL
       : isMobileFilter
       ? explicitCenterName || MOBILE_UNIT_DEFAULT_LABEL
       : explicitCenterName
@@ -1588,12 +1735,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             </div>
 
-            {/* 4. Center / Mobile Unit Selector (ต่อจากการเลือกจังหวัด) */}
+            {/* 4. Center / Special Center / Mobile Unit Selector (ต่อจากการเลือกจังหวัด) */}
             <div
-              className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm shadow-2xs border transition-all min-w-[225px] flex-1 sm:flex-initial ${
-                selectedCenterFilter === 'type:mobile' ||
+              className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm shadow-2xs border transition-all min-w-[235px] flex-1 sm:flex-initial ${
+                selectedCenterFilter === 'type:special' ||
                 (selectedCenterFilter.startsWith('center:') &&
-                  isMobileUnitCenter(selectedCenterFilter.replace('center:', '')))
+                  isSpecialTaskCenter(selectedCenterFilter.replace('center:', '')))
+                  ? 'bg-gradient-to-r from-indigo-50 via-violet-50/60 to-indigo-50 border-indigo-300 ring-2 ring-indigo-200/60'
+                  : selectedCenterFilter === 'type:mobile' ||
+                    (selectedCenterFilter.startsWith('center:') &&
+                      isMobileUnitCenter(selectedCenterFilter.replace('center:', '')))
                   ? 'bg-gradient-to-r from-amber-50 via-orange-50/60 to-amber-50 border-amber-300 ring-2 ring-amber-200/60'
                   : selectedCenterFilter !== 'all'
                   ? 'bg-sky-50/90 border-sky-300 ring-2 ring-sky-200/50'
@@ -1602,18 +1753,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             >
               <div
                 className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
-                  selectedCenterFilter === 'type:mobile' ||
+                  selectedCenterFilter === 'type:special' ||
                   (selectedCenterFilter.startsWith('center:') &&
-                    isMobileUnitCenter(selectedCenterFilter.replace('center:', '')))
+                    isSpecialTaskCenter(selectedCenterFilter.replace('center:', '')))
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                    : selectedCenterFilter === 'type:mobile' ||
+                      (selectedCenterFilter.startsWith('center:') &&
+                        isMobileUnitCenter(selectedCenterFilter.replace('center:', '')))
                     ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
                     : selectedCenterFilter !== 'all'
                     ? 'bg-sky-600 text-white border-sky-600'
                     : 'bg-teal-50 text-teal-700 border-teal-100'
                 }`}
               >
-                {selectedCenterFilter === 'type:mobile' ||
+                {selectedCenterFilter === 'type:special' ||
                 (selectedCenterFilter.startsWith('center:') &&
-                  isMobileUnitCenter(selectedCenterFilter.replace('center:', ''))) ? (
+                  isSpecialTaskCenter(selectedCenterFilter.replace('center:', ''))) ? (
+                  <Building2 className="w-4 h-4" />
+                ) : selectedCenterFilter === 'type:mobile' ||
+                  (selectedCenterFilter.startsWith('center:') &&
+                    isMobileUnitCenter(selectedCenterFilter.replace('center:', ''))) ? (
                   <Truck className="w-4 h-4" />
                 ) : (
                   <MapPin className="w-4 h-4" />
@@ -1624,40 +1783,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   htmlFor="dashboard-center-filter"
                   className="block text-[10.5px] font-bold uppercase tracking-wider text-slate-400 leading-none mb-1"
                 >
-                  เลือกศูนย์ / Mobile Unit
+                  เลือกศูนย์ / เฉพาะกิจ / Mobile Unit
                 </label>
                 <select
                   id="dashboard-center-filter"
                   value={selectedCenterFilter}
                   onChange={(e) => setSelectedCenterFilter(e.target.value)}
-                  className="w-full bg-transparent font-extrabold text-blue-950 focus:outline-hidden cursor-pointer max-w-[230px] truncate text-xs sm:text-sm leading-tight"
+                  className="w-full bg-transparent font-extrabold text-blue-950 focus:outline-hidden cursor-pointer max-w-[240px] truncate text-xs sm:text-sm leading-tight"
                 >
                   <option value="all">
                     {activeSelectedReport
                       ? `รวมทุกศูนย์ของจังหวัดนี้ (${centerFilterOptions.totalCount} รายการ)`
-                      : `ทุกศูนย์บริการ + Mobile Unit (${centerFilterOptions.totalCount} รายการ)`}
+                      : `ทุกศูนย์บริการ + เฉพาะกิจ + Mobile Unit (${centerFilterOptions.totalCount} รายการ)`}
                   </option>
 
-                  <optgroup label="จำแนกตามรูปแบบบริการ (ศูนย์ประจำ vs Mobile Unit)">
+                  <optgroup label="จำแนกตามรูปแบบบริการ (ศูนย์ประจำ / เฉพาะกิจ / Mobile Unit)">
                     <option value="type:standard">
                       🏢 ศูนย์บริการประจำสำนักงาน ({centerFilterOptions.standardCount} รายการ)
+                    </option>
+                    <option value="type:special">
+                      🏛️ ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ ({centerFilterOptions.specialCount} รายการ)
                     </option>
                     <option value="type:mobile">
                       🚚 หน่วยบริการเคลื่อนที่ (Mobile Unit) ({centerFilterOptions.mobileCount} รายการ)
                     </option>
                   </optgroup>
 
+                  {centerFilterOptions.specialCenters.length > 0 && (
+                    <optgroup label="ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ (รายศูนย์)">
+                      {centerFilterOptions.specialCenters.map((c) => (
+                        <option key={c.name} value={`center:${c.name}`}>
+                          🏛️ {c.name} ({c.count} รายการ)
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+
                   {centerFilterOptions.distinctCenters.length > 0 && (
                     <optgroup
                       label={
                         activeSelectedReport
                           ? `รายชื่อศูนย์ของ ${activeSelectedReport.officeName}`
-                          : 'เลือกชื่อศูนย์บริการ / จุดบริการเฉพาะ'
+                          : 'เลือกชื่อศูนย์บริการประจำสำนักงาน / จุดบริการ'
                       }
                     >
                       {centerFilterOptions.distinctCenters.map((c) => (
                         <option key={c.name} value={`center:${c.name}`}>
-                          {c.isMobile ? '🚚' : '🏢'} {c.name} ({c.count} รายการ)
+                          {c.centerType === 'mobile' ? '🚚' : '🏢'} {c.name} ({c.count} รายการ)
                         </option>
                       ))}
                     </optgroup>

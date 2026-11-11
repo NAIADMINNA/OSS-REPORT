@@ -3455,7 +3455,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                       )}
                     </div>
                     <p className="text-xs text-emerald-200/80 mt-0.5">
-                      บันทึกสำเนารายงานทุกฉบับลงตาราง Google Sheets อัตโนมัติ พร้อมจัดเรียงแถวตาม <strong>วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ (แถวที่ 2)</strong> ทุกครั้งที่มีคนส่งรายงาน
+                      บันทึกสำเนารายงานทุกฉบับลง Google Sheets อัตโนมัติ จัดเรียง <strong>วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ (แถวที่ 2)</strong> และแยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น <code>ประจำเดือน_2569-11</code>)
                     </p>
                   </div>
                 </div>
@@ -3466,7 +3466,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <Code className="w-3.5 h-3.5" />
-                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'ดูวิธีตั้งค่า / อัปเดตโค้ดจัดเรียงวันที่ล่าสุดอยู่บนสุด'}</span>
+                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'ดูวิธีตั้งค่า / อัปเดตโค้ด (เรียงวันล่าสุด + แยกแท็บรายเดือน)'}</span>
                 </button>
               </div>
 
@@ -3474,13 +3474,13 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 <div className="bg-slate-950/80 rounded-xl p-4 border border-emerald-800/50 space-y-3 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-bold text-emerald-300">
-                      โค้ด Google Apps Script (รุ่นจัดเรียงแถวตาม "วันที่รายงานล่าสุด" อยู่แถวบนสุดอัตโนมัติทุกครั้งที่มีคนส่งรายงาน):
+                      โค้ด Google Apps Script รุ่นผู้บริหาร (เรียงวันที่ล่าสุดอยู่บนสุด + แยกแท็บเก็บประวัติรายเดือนอัตโนมัติ):
                     </span>
                     <button
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
-                        onNotify('คัดลอกโค้ด Google Apps Script (รุ่นจัดเรียงวันที่ล่าสุดอยู่บนสุดอัตโนมัติ) เรียบร้อยแล้ว');
+                        onNotify('คัดลอกโค้ด Google Apps Script (รุ่นเรียงวันล่าสุด + แยกแท็บรายเดือนอัตโนมัติ) เรียบร้อยแล้ว');
                       }}
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                     >

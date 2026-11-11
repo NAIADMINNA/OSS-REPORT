@@ -23,6 +23,7 @@ import {
 import { DOEHeader, ActiveTab } from './components/DOEHeader';
 import { ReportForm } from './components/ReportForm';
 import { DashboardView } from './components/DashboardView';
+import { ExecutiveInsightsView } from './components/ExecutiveInsightsView';
 import { ReportHistory } from './components/ReportHistory';
 import { DailyNotesTable } from './components/DailyNotesTable';
 import { InfographicPoster } from './components/InfographicPoster';
@@ -1896,6 +1897,16 @@ export default function App() {
             onViewPendingInHistory={() => setActiveTab('history')}
             offices={offices}
             resetSignal={dashboardResetSignal}
+          />
+        )}
+
+        {/* TAB 1.5: EXECUTIVE INSIGHTS (วิเคราะห์ข้อมูลและรายงานสรุปผู้บริหาร) */}
+        {activeTab === 'insights' && (
+          <ExecutiveInsightsView
+            reports={reports}
+            offices={offices}
+            categories={categories}
+            onSelectReportPoster={handleOpenPosterModal}
           />
         )}
 

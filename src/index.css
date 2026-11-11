@@ -51,12 +51,10 @@
     overflow: visible !important;
   }
 
-  /* Hide background elements, navigation, dashboard, toolbars, buttons during print */
+  /* Hide background elements, navigation, toolbars, and .no-print controls during print */
   header,
   nav,
   footer,
-  main,
-  button,
   .no-print,
   [data-no-print],
   .modal-top-bar,
@@ -64,8 +62,9 @@
     display: none !important;
   }
 
-  /* Hide root main content wrapper so only modal poster prints */
-  #root > div > main,
+  /* When PosterPreviewModal is open, hide main content wrapper so only the modal poster prints */
+  body:has(.poster-viewer-container) main,
+  body:has(.poster-viewer-container) #root > div > main,
   #root > div > header,
   #root > div > footer {
     display: none !important;

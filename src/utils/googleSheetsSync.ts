@@ -38,7 +38,9 @@ export function saveStoredGoogleSheetsConfig(webhookUrl: string, autoSync = true
  */
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  * ระบบสำรองและซิงค์ข้อมูลอัตโนมัติ (DOE Work Permit Reporting System -> Google Sheets)
- * รุ่นจัดเรียงแถวอัตโนมัติ: วันที่รายงานล่าสุด (YYYY-MM-DD) และรายการที่ส่งล่าสุดจะอยู่แถวบนสุด (แถวที่ 2) เสมอ
+ * รุ่นผู้บริหาร (Enterprise):
+ *   1) จัดเรียงแถวอัตโนมัติ: วันที่รายงานล่าสุด (YYYY-MM-DD) อยู่แถวบนสุด (แถวที่ 2) เสมอ
+ *   2) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") ควบคู่กับชีตรวมหลัก เพื่อให้เปิดไฟล์รวดเร็วแม้ข้อมูลเกิน 10,000 แถว
  *
  * วิธีติดตั้ง / อัปเดตโค้ด:
  * 1. เปิดไฟล์ Google Sheets ของคุณ -> เมนู "ส่วนขยาย (Extensions)" -> "Apps Script"
@@ -49,6 +51,7 @@ export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  */
 
 const SHEET_NAME = 'รายงานผลการปฏิบัติงาน_DOE';
+const ENABLE_MONTHLY_ARCHIVE_TABS = true; // ตั้งเป็น true เพื่อสร้างและซิงค์แท็บแยกตามเดือน พ.ศ. อัตโนมัติ
 
 const HEADERS = [
   'รหัสรายงาน (ID)',
@@ -81,21 +84,35 @@ const HEADERS = [
   'JSON_BACKUP (ห้ามลบ-ใช้กู้คืนระบบ)'
 ];
 
-function getOrCreateSheet() {
+function getOrCreateNamedSheet(targetName, headerBgColor) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAME);
+  let sheet = ss.getSheetByName(targetName);
   if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME);
+    sheet = ss.insertSheet(targetName);
   }
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(HEADERS);
     const headerRange = sheet.getRange(1, 1, 1, HEADERS.length);
-    headerRange.setBackground('#0f172a');
+    headerRange.setBackground(headerBgColor || '#0f172a');
     headerRange.setFontColor('#ffffff');
     headerRange.setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
   return sheet;
+}
+
+function getOrCreateSheet() {
+  return getOrCreateNamedSheet(SHEET_NAME, '#0f172a');
+}
+
+function getMonthlyTabNameFromDate(isoDateStr) {
+  const clean = String(isoDateStr || '').trim();
+  const match = clean.match(/^(\\d{4})-(\\d{2})/);
+  if (!match) return null;
+  let year = parseInt(match[1], 10);
+  const month = match[2];
+  const thaiYear = year < 2400 ? year + 543 : year;
+  return 'ประจำเดือน_' + thaiYear + '-' + month;
 }
 
 function reportToRow(r) {
@@ -168,6 +185,41 @@ function compareRowsNewestFirst(a, b) {
   return String(a[4] || '').localeCompare(String(b[4] || ''));
 }
 
+function syncMonthlyArchiveTabs(allSortedMasterRows, touchedMonthTabsMap) {
+  if (!ENABLE_MONTHLY_ARCHIVE_TABS) return;
+  const tabKeys = Object.keys(touchedMonthTabsMap || {});
+  if (tabKeys.length === 0) return;
+
+  const groupedByTab = {};
+  for (let i = 0; i < tabKeys.length; i++) {
+    groupedByTab[tabKeys[i]] = [];
+  }
+
+  for (let i = 0; i < allSortedMasterRows.length; i++) {
+    const row = allSortedMasterRows[i];
+    const dateKey = extractSortDateKey(row);
+    const tabName = getMonthlyTabNameFromDate(dateKey);
+    if (tabName && groupedByTab[tabName] !== undefined) {
+      groupedByTab[tabName].push(row);
+    }
+  }
+
+  for (let i = 0; i < tabKeys.length; i++) {
+    const tabName = tabKeys[i];
+    const monthRows = groupedByTab[tabName] || [];
+    const mSheet = getOrCreateNamedSheet(tabName, '#1e3a8a');
+    const prevLastRow = mSheet.getLastRow();
+    if (monthRows.length > 0) {
+      mSheet.getRange(2, 1, monthRows.length, HEADERS.length).setValues(monthRows);
+      if (prevLastRow > monthRows.length + 1) {
+        mSheet.deleteRows(monthRows.length + 2, prevLastRow - (monthRows.length + 1));
+      }
+    } else if (prevLastRow > 1) {
+      mSheet.deleteRows(2, prevLastRow - 1);
+    }
+  }
+}
+
 function doPost(e) {
   const lock = LockService.getScriptLock();
   lock.waitLock(25000);
@@ -189,11 +241,18 @@ function doPost(e) {
       }
     }
 
+    const touchedMonthTabs = {};
+
     if (action === 'delete_single' && body.reportId) {
       const targetId = String(body.reportId).trim();
       const targetIndex = idToIndexMap[targetId];
       if (targetIndex !== undefined) {
+        const oldDate = extractSortDateKey(existingRows[targetIndex]);
+        const oldTab = getMonthlyTabNameFromDate(oldDate);
+        if (oldTab) touchedMonthTabs[oldTab] = true;
         sheet.deleteRow(targetIndex + 2);
+        existingRows.splice(targetIndex, 1);
+        syncMonthlyArchiveTabs(existingRows, touchedMonthTabs);
       }
       return ContentService.createTextOutput(JSON.stringify({ ok: true, deleted: body.reportId }))
         .setMimeType(ContentService.MimeType.JSON);
@@ -210,9 +269,15 @@ function doPost(e) {
       const r = incomingList[i];
       if (!r || !r.id) continue;
       const rowData = reportToRow(r);
+      const newTab = getMonthlyTabNameFromDate(r.reportDate);
+      if (newTab) touchedMonthTabs[newTab] = true;
+
       const rid = String(r.id).trim();
       const existingIdx = idToIndexMap[rid];
       if (existingIdx !== undefined) {
+        const prevDate = extractSortDateKey(existingRows[existingIdx]);
+        const prevTab = getMonthlyTabNameFromDate(prevDate);
+        if (prevTab) touchedMonthTabs[prevTab] = true;
         existingRows[existingIdx] = rowData;
         updatedCount++;
       } else {
@@ -232,12 +297,16 @@ function doPost(e) {
       sheet.getRange(2, 1, existingRows.length, HEADERS.length).setValues(existingRows);
     }
 
+    // ซิงค์แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น ประจำเดือน_2569-11)
+    syncMonthlyArchiveTabs(existingRows, touchedMonthTabs);
+
     return ContentService.createTextOutput(
       JSON.stringify({
         ok: true,
         inserted: insertedCount,
         updated: updatedCount,
         sorted: 'reportDate_DESC',
+        monthlyArchiveSynced: Object.keys(touchedMonthTabs),
         totalRows: existingRows.length
       })
     ).setMimeType(ContentService.MimeType.JSON);
