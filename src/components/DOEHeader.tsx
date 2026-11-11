@@ -89,98 +89,158 @@ export const DOEHeader: React.FC<DOEHeaderProps> = ({
           </div>
 
           {/* Navigation Tabs */}
-          <nav className="flex flex-wrap items-center gap-1.5 bg-white/15 backdrop-blur-md p-1.5 rounded-2xl border border-white/25 shadow-xs text-sm">
+          <nav
+            aria-label="เมนูหลักของระบบ"
+            className="flex flex-wrap items-center gap-1 bg-slate-950/35 backdrop-blur-md p-1.5 rounded-2xl border border-white/20 shadow-inner text-sm"
+          >
             <button
+              type="button"
+              aria-current={activeTab === 'dashboard' ? 'page' : undefined}
               onClick={() => onTabChange('dashboard')}
-              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
+              className={`group relative px-3.5 py-2 min-h-[40px] rounded-[10px] font-bold transition-all duration-150 flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 active:scale-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-300 ${
                 activeTab === 'dashboard'
-                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
-                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
+                  ? 'bg-white text-slate-950 shadow-sm after:content-[""] after:absolute after:bottom-1 after:left-3.5 after:right-3.5 after:h-[2.5px] after:rounded-full after:bg-blue-600'
+                  : 'text-sky-50/90 hover:text-white hover:bg-white/12'
               }`}
             >
-              <LayoutDashboard className="w-4 h-4" />
+              <LayoutDashboard
+                className={`w-4 h-4 shrink-0 transition-colors duration-150 ${
+                  activeTab === 'dashboard'
+                    ? 'text-blue-700'
+                    : 'text-sky-200 group-hover:text-amber-300'
+                }`}
+              />
               <span>แดชบอร์ดสรุปผล</span>
             </button>
 
             <button
+              type="button"
+              aria-current={activeTab === 'insights' ? 'page' : undefined}
               onClick={() => onTabChange('insights')}
-              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
+              className={`group relative px-3.5 py-2 min-h-[40px] rounded-[10px] font-bold transition-all duration-150 flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 active:scale-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-300 ${
                 activeTab === 'insights'
-                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
-                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
+                  ? 'bg-white text-slate-950 shadow-sm after:content-[""] after:absolute after:bottom-1 after:left-3.5 after:right-3.5 after:h-[2.5px] after:rounded-full after:bg-emerald-600'
+                  : 'text-sky-50/90 hover:text-white hover:bg-white/12'
               }`}
             >
-              <BarChart3 className="w-4 h-4" />
+              <BarChart3
+                className={`w-4 h-4 shrink-0 transition-colors duration-150 ${
+                  activeTab === 'insights'
+                    ? 'text-emerald-700'
+                    : 'text-emerald-300 group-hover:text-amber-300'
+                }`}
+              />
               <span>วิเคราะห์ข้อมูล</span>
             </button>
 
+            <span
+              aria-hidden="true"
+              className="hidden sm:block w-px h-5 bg-white/18 mx-0.5 shrink-0"
+            />
+
             <button
+              type="button"
+              aria-current={activeTab === 'form' ? 'page' : undefined}
               onClick={() => onTabChange('form')}
-              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`group relative px-3.5 py-2 min-h-[40px] rounded-[10px] font-bold transition-all duration-150 flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 active:scale-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-300 ${
                 activeTab === 'form'
-                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
-                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
+                  ? 'bg-white text-slate-950 shadow-sm after:content-[""] after:absolute after:bottom-1 after:left-3.5 after:right-3.5 after:h-[2.5px] after:rounded-full after:bg-indigo-600'
+                  : 'text-sky-50/90 hover:text-white hover:bg-white/12'
               }`}
             >
-              <FileEdit className="w-4 h-4" />
+              <FileEdit
+                className={`w-4 h-4 shrink-0 transition-colors duration-150 ${
+                  activeTab === 'form'
+                    ? 'text-indigo-700'
+                    : 'text-sky-200 group-hover:text-amber-300'
+                }`}
+              />
               <span>แบบฟอร์มรายงาน</span>
             </button>
 
             <button
+              type="button"
+              aria-current={activeTab === 'history' ? 'page' : undefined}
               onClick={() => onTabChange('history')}
-              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`group relative px-3.5 py-2 min-h-[40px] rounded-[10px] font-bold transition-all duration-150 flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 active:scale-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-300 ${
                 activeTab === 'history'
-                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
-                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
+                  ? 'bg-white text-slate-950 shadow-sm after:content-[""] after:absolute after:bottom-1 after:left-3.5 after:right-3.5 after:h-[2.5px] after:rounded-full after:bg-sky-600'
+                  : 'text-sky-50/90 hover:text-white hover:bg-white/12'
               }`}
             >
-              <FolderClock className="w-4 h-4" />
+              <FolderClock
+                className={`w-4 h-4 shrink-0 transition-colors duration-150 ${
+                  activeTab === 'history'
+                    ? 'text-sky-700'
+                    : 'text-sky-200 group-hover:text-amber-300'
+                }`}
+              />
               <span>ประวัติรายงาน</span>
-              <span className={`text-xs px-2 py-0.5 rounded-full font-mono font-bold ${
-                activeTab === 'history' ? 'bg-blue-100 text-blue-900' : 'bg-white/20 text-white'
-              }`}>
-                {reportCount}
+              <span
+                className={`pl-2 border-l text-xs font-mono font-extrabold tabular-nums ${
+                  activeTab === 'history'
+                    ? 'border-slate-300 text-blue-800'
+                    : 'border-white/25 text-amber-200'
+                }`}
+              >
+                {reportCount.toLocaleString()}
               </span>
             </button>
 
             <button
+              type="button"
+              aria-current={activeTab === 'notes' ? 'page' : undefined}
               onClick={() => onTabChange('notes')}
-              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`group relative px-3.5 py-2 min-h-[40px] rounded-[10px] font-bold transition-all duration-150 flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 active:scale-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-300 ${
                 activeTab === 'notes'
-                  ? 'bg-white text-blue-900 shadow-sm ring-1 ring-white/80 text-sm'
-                  : 'text-white/90 hover:text-white hover:bg-white/15 text-sm'
+                  ? 'bg-white text-slate-950 shadow-sm after:content-[""] after:absolute after:bottom-1 after:left-3.5 after:right-3.5 after:h-[2.5px] after:rounded-full after:bg-amber-500'
+                  : 'text-sky-50/90 hover:text-white hover:bg-white/12'
               }`}
             >
-              <FileText className="w-4 h-4" />
+              <FileText
+                className={`w-4 h-4 shrink-0 transition-colors duration-150 ${
+                  activeTab === 'notes'
+                    ? 'text-amber-700'
+                    : 'text-sky-200 group-hover:text-amber-300'
+                }`}
+              />
               <span>หมายเหตุ / บันทึกเพิ่มเติม</span>
               {notesCount !== undefined && notesCount > 0 && (
                 <span
-                  className={`text-xs px-2 py-0.5 rounded-full font-mono font-bold ${
+                  className={`pl-2 border-l text-xs font-mono font-extrabold tabular-nums ${
                     activeTab === 'notes'
-                      ? 'bg-blue-100 text-blue-900'
-                      : 'bg-amber-400 text-slate-950 shadow-2xs'
+                      ? 'border-slate-300 text-amber-800'
+                      : 'border-white/25 text-amber-300'
                   }`}
                 >
-                  {notesCount}
+                  {notesCount.toLocaleString()}
                 </span>
               )}
             </button>
 
+            <span
+              aria-hidden="true"
+              className="hidden sm:block w-px h-5 bg-white/18 mx-0.5 shrink-0"
+            />
+
             <button
+              type="button"
+              aria-current={activeTab === 'admin' ? 'page' : undefined}
               onClick={() => onTabChange('admin')}
-              className={`px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              className={`group relative px-3.5 py-2 min-h-[40px] rounded-[10px] font-bold transition-all duration-150 flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 active:scale-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-300 ${
                 activeTab === 'admin'
-                  ? 'bg-amber-400 text-slate-950 shadow-sm ring-1 ring-amber-300 font-extrabold text-sm'
+                  ? 'bg-amber-400 text-slate-950 shadow-sm font-extrabold'
                   : isAdmin
-                  ? 'bg-amber-400/20 text-amber-200 border border-amber-300/40 hover:bg-amber-400/30 text-sm font-bold'
-                  : 'text-amber-200 hover:text-white hover:bg-white/15 text-sm font-semibold'
+                  ? 'bg-amber-400/20 text-amber-200 hover:bg-amber-400/30 hover:text-white'
+                  : 'text-amber-200/95 hover:text-amber-100 hover:bg-amber-400/15'
               }`}
             >
-              <ShieldCheck className="w-4 h-4" />
-              <span>สิทธิ์ Admin</span>
-              {isAdmin && (
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-xs" title="เข้าสู่ระบบสิทธิ์ Admin แล้ว" />
-              )}
+              <ShieldCheck
+                className={`w-4 h-4 shrink-0 transition-colors duration-150 ${
+                  activeTab === 'admin' ? 'text-slate-950' : 'text-amber-300'
+                }`}
+              />
+              <span>{isAdmin ? 'สิทธิ์ Admin · เปิด' : 'สิทธิ์ Admin'}</span>
             </button>
           </nav>
         </div>

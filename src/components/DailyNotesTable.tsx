@@ -69,6 +69,7 @@ interface DailyNotesTableProps {
   isAdmin?: boolean;
   adminPin?: string;
   onAdminAuthenticated?: () => void;
+  resetSignal?: number;
 }
 
 interface DailyNoteFolder {
@@ -84,6 +85,7 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
   isAdmin = false,
   adminPin = '0841543524',
   onAdminAuthenticated,
+  resetSignal = 0,
 }) => {
   const searchInputId = useId();
   const [searchTerm, setSearchTerm] = useState('');
@@ -95,8 +97,18 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
 
   // Track which month is expanded into daily folders (by default collapsed into month names)
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
-  // Track which daily folders are collapsed inside an expanded month
-  const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({});
+  // Track which daily folders are expanded inside an expanded month (by default collapsed)
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+
+  // Reset to collapsed view whenever the user selects the Daily Notes menu tab
+  useEffect(() => {
+    if (resetSignal > 0) {
+      setExpandedMonths({});
+      setExpandedDates({});
+      setSelectedDate('ทั้งหมด');
+      setIsDateDropdownOpen(false);
+    }
+  }, [resetSignal]);
 
   // Custom dropdown state for Date Filter
   const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
@@ -180,20 +192,6 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
 
     return Array.from(map.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
   }, [allFolderStats]);
-
-  // Auto-expand month folders by default when month groups load so all daily folders are immediately visible
-  React.useEffect(() => {
-    if (allMonthGroups.length > 0) {
-      setExpandedMonths((prev) => {
-        if (Object.keys(prev).length > 0) return prev;
-        const next: Record<string, boolean> = {};
-        allMonthGroups.forEach((m) => {
-          next[m.monthKey] = true;
-        });
-        return next;
-      });
-    }
-  }, [allMonthGroups]);
 
   // Filtered reports list (supports 'ทั้งหมด', 'month:YYYY-MM', or 'YYYY-MM-DD')
   const filteredReports = useMemo(() => {
@@ -310,14 +308,36 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
   }, [reports]);
 
   const toggleMonth = (monthKey: string) => {
-    setExpandedMonths((prev) => ({
-      ...prev,
-      [monthKey]: !prev[monthKey],
-    }));
+    const isCurrentlyOpen =
+      Boolean(expandedMonths[monthKey]) ||
+      selectedDate === `month:${monthKey}` ||
+      (selectedDate !== 'ทั้งหมด' &&
+        !selectedDate.startsWith('month:') &&
+        selectedDate.startsWith(monthKey));
+
+    if (isCurrentlyOpen) {
+      setExpandedMonths((prev) => ({
+        ...prev,
+        [monthKey]: false,
+      }));
+      if (
+        selectedDate === `month:${monthKey}` ||
+        (selectedDate !== 'ทั้งหมด' &&
+          !selectedDate.startsWith('month:') &&
+          selectedDate.startsWith(monthKey))
+      ) {
+        setSelectedDate('ทั้งหมด');
+      }
+    } else {
+      setExpandedMonths((prev) => ({
+        ...prev,
+        [monthKey]: true,
+      }));
+    }
   };
 
   const toggleFolder = (date: string) => {
-    setCollapsedDates((prev) => ({
+    setExpandedDates((prev) => ({
       ...prev,
       [date]: !prev[date],
     }));
@@ -328,13 +348,24 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
     allMonthGroups.forEach((m) => {
       allM[m.monthKey] = true;
     });
+    const allD: Record<string, boolean> = {};
+    allFolderStats.forEach((f) => {
+      allD[f.date] = true;
+    });
     setExpandedMonths(allM);
-    setCollapsedDates({});
+    setExpandedDates(allD);
   };
 
   const collapseAllFolders = () => {
     setExpandedMonths({});
+    setExpandedDates({});
+    setSelectedDate('ทั้งหมด');
   };
+
+  const isCollapsedView =
+    selectedDate === 'ทั้งหมด' &&
+    !Object.values(expandedMonths).some(Boolean) &&
+    !searchTerm.trim();
 
   const selectedDateDisplayLabel = useMemo(() => {
     if (selectedDate === 'ทั้งหมด') {
@@ -502,6 +533,7 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
                 onClick={() => {
                   setSelectedDate('ทั้งหมด');
                   setExpandedMonths({});
+                  setExpandedDates({});
                 }}
                 className="text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-lg border border-blue-200 transition-colors cursor-pointer"
               >
@@ -666,10 +698,11 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
                         key={folder.date}
                         type="button"
                         onClick={() => {
-                          setSelectedDate(
-                            isSelected ? `month:${mGroup.monthKey}` : folder.date
-                          );
-                          setCollapsedDates((prev) => ({ ...prev, [folder.date]: false }));
+                          const nextSelected = isSelected ? `month:${mGroup.monthKey}` : folder.date;
+                          setSelectedDate(nextSelected);
+                          if (!isSelected) {
+                            setExpandedDates((prev) => ({ ...prev, [folder.date]: true }));
+                          }
                         }}
                         className={`shrink-0 px-3 py-2 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2 ${
                           isSelected
@@ -907,14 +940,14 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
                                   type="button"
                                   onClick={() => {
                                     setSelectedDate(dItem.date);
-                                    setExpandedMonths((prev) => ({
-                                      ...prev,
-                                      [mGroup.monthKey]: true,
-                                    }));
-                                    setCollapsedDates((prev) => ({
-                                      ...prev,
-                                      [dItem.date]: false,
-                                    }));
+                                      setExpandedMonths((prev) => ({
+                                        ...prev,
+                                        [mGroup.monthKey]: true,
+                                      }));
+                                      setExpandedDates((prev) => ({
+                                        ...prev,
+                                        [dItem.date]: true,
+                                      }));
                                     setIsDateDropdownOpen(false);
                                   }}
                                   className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex items-center justify-between gap-2 transition-colors cursor-pointer ${
@@ -966,20 +999,29 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
               <button
                 type="button"
-                onClick={expandAllFolders}
-                className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg hover:bg-white text-slate-700 transition-colors cursor-pointer flex items-center gap-1"
-                title="กางออกดูโฟลเดอร์รายวันในทุกเดือน"
+                onClick={collapseAllFolders}
+                className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  isCollapsedView
+                    ? 'bg-white text-blue-900 shadow-2xs ring-1 ring-slate-200/90'
+                    : 'hover:bg-white/70 text-slate-600'
+                }`}
+                title="ยุบรวมเป็นชื่อเดือนทั้งหมด"
               >
-                <ChevronsUpDown className="w-3.5 h-3.5 text-blue-600" />
-                <span>กางรายวันทั้งหมด</span>
+                <Folder className={`w-3.5 h-3.5 ${isCollapsedView ? 'text-amber-500' : 'text-slate-400'}`} />
+                <span>ยุบรวมเป็นรายเดือน</span>
               </button>
               <button
                 type="button"
-                onClick={collapseAllFolders}
-                className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg hover:bg-white text-slate-700 transition-colors cursor-pointer"
-                title="ยุบรวมเป็นชื่อเดือนทั้งหมด"
+                onClick={expandAllFolders}
+                className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  !isCollapsedView
+                    ? 'bg-white text-blue-900 shadow-2xs ring-1 ring-slate-200/90'
+                    : 'hover:bg-white/70 text-slate-600'
+                }`}
+                title="กางออกดูโฟลเดอร์รายวันในทุกเดือน"
               >
-                ยุบรวมเป็นรายเดือน
+                <ChevronsUpDown className={`w-3.5 h-3.5 ${!isCollapsedView ? 'text-blue-600' : 'text-slate-400'}`} />
+                <span>กางรายวันทั้งหมด</span>
               </button>
             </div>
           )}
@@ -1123,7 +1165,9 @@ export const DailyNotesTable: React.FC<DailyNotesTableProps> = ({
                 {isMonthExpanded && (
                   <div className="p-3 sm:p-4 bg-slate-50/70 space-y-4">
                     {monthGroup.folders.map((folder) => {
-                      const isCollapsed = Boolean(collapsedDates[folder.date]);
+                      const isCollapsed = !(
+                        Boolean(expandedDates[folder.date]) || Boolean(searchTerm.trim())
+                      );
                       const isThisFolderCopied = copiedFolderDate === folder.date;
 
                       return (

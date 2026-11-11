@@ -95,6 +95,7 @@ interface ReportHistoryProps {
   onDuplicateReport: (report: DOEReport) => void;
   onOpenLineModal: (report: DOEReport) => void;
   onNewReport: (preselectedOfficeId?: string) => void;
+  resetSignal?: number;
 }
 
 interface DailyReportFolder {
@@ -121,6 +122,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
   onDuplicateReport,
   onOpenLineModal,
   onNewReport,
+  resetSignal = 0,
 }) => {
   const searchInputId = useId();
   const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
@@ -192,7 +194,17 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
   const [selectedRegion, setSelectedRegion] = useState('ทั้งหมด');
   const [selectedFolderDate, setSelectedFolderDate] = useState('ทั้งหมด');
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
-  const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({});
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+
+  // Reset to collapsed view whenever the user selects the History menu tab
+  useEffect(() => {
+    if (resetSignal > 0) {
+      setExpandedMonths({});
+      setExpandedDates({});
+      setSelectedFolderDate('ทั้งหมด');
+      setIsDateDropdownOpen(false);
+    }
+  }, [resetSignal]);
 
   // Custom dropdown state for Date Filters (Reported & Pending)
   const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
@@ -283,20 +295,6 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
 
     return Array.from(map.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
   }, [allFolderStats]);
-
-  // Auto-expand month folders by default when month groups load so all daily folders are immediately visible
-  React.useEffect(() => {
-    if (allMonthGroups.length > 0) {
-      setExpandedMonths((prev) => {
-        if (Object.keys(prev).length > 0) return prev;
-        const next: Record<string, boolean> = {};
-        allMonthGroups.forEach((m) => {
-          next[m.monthKey] = true;
-        });
-        return next;
-      });
-    }
-  }, [allMonthGroups]);
 
   // Available distinct dates from reports
   const availableDates = useMemo(() => {
@@ -472,14 +470,36 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
   }, [dailyReportFolders]);
 
   const toggleMonth = (monthKey: string) => {
-    setExpandedMonths((prev) => ({
-      ...prev,
-      [monthKey]: !prev[monthKey],
-    }));
+    const isCurrentlyOpen =
+      Boolean(expandedMonths[monthKey]) ||
+      selectedFolderDate === `month:${monthKey}` ||
+      (selectedFolderDate !== 'ทั้งหมด' &&
+        !selectedFolderDate.startsWith('month:') &&
+        selectedFolderDate.startsWith(monthKey));
+
+    if (isCurrentlyOpen) {
+      setExpandedMonths((prev) => ({
+        ...prev,
+        [monthKey]: false,
+      }));
+      if (
+        selectedFolderDate === `month:${monthKey}` ||
+        (selectedFolderDate !== 'ทั้งหมด' &&
+          !selectedFolderDate.startsWith('month:') &&
+          selectedFolderDate.startsWith(monthKey))
+      ) {
+        setSelectedFolderDate('ทั้งหมด');
+      }
+    } else {
+      setExpandedMonths((prev) => ({
+        ...prev,
+        [monthKey]: true,
+      }));
+    }
   };
 
   const toggleFolder = (date: string) => {
-    setCollapsedDates((prev) => ({
+    setExpandedDates((prev) => ({
       ...prev,
       [date]: !prev[date],
     }));
@@ -490,13 +510,24 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
     allMonthGroups.forEach((m) => {
       allM[m.monthKey] = true;
     });
+    const allD: Record<string, boolean> = {};
+    allFolderStats.forEach((f) => {
+      allD[f.date] = true;
+    });
     setExpandedMonths(allM);
-    setCollapsedDates({});
+    setExpandedDates(allD);
   };
 
   const collapseAllFolders = () => {
     setExpandedMonths({});
+    setExpandedDates({});
+    setSelectedFolderDate('ทั้งหมด');
   };
+
+  const isCollapsedView =
+    selectedFolderDate === 'ทั้งหมด' &&
+    !Object.values(expandedMonths).some(Boolean) &&
+    !searchTerm.trim();
 
   const selectedFolderDateDisplayLabel = useMemo(() => {
     if (selectedFolderDate === 'ทั้งหมด') {
@@ -969,7 +1000,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                 setSelectedFolderDate(auditCheckDate);
                 const meta = getMonthMetaFromIsoDate(auditCheckDate);
                 setExpandedMonths((prev) => ({ ...prev, [meta.monthKey]: true }));
-                setCollapsedDates((prev) => ({ ...prev, [auditCheckDate]: false }));
+                setExpandedDates((prev) => ({ ...prev, [auditCheckDate]: true }));
               }}
               className={`flex-1 min-w-[175px] px-3.5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 border ${
                 activeHistoryTab === 'reported' && selectedFolderDate === auditCheckDate
@@ -1020,6 +1051,7 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                 onClick={() => {
                   setSelectedFolderDate('ทั้งหมด');
                   setExpandedMonths({});
+                  setExpandedDates({});
                 }}
                 className="text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg border border-blue-200 transition-colors cursor-pointer"
               >
@@ -1184,10 +1216,11 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                         key={folder.date}
                         type="button"
                         onClick={() => {
-                          setSelectedFolderDate(
-                            isSelected ? `month:${mGroup.monthKey}` : folder.date
-                          );
-                          setCollapsedDates((prev) => ({ ...prev, [folder.date]: false }));
+                          const nextSelected = isSelected ? `month:${mGroup.monthKey}` : folder.date;
+                          setSelectedFolderDate(nextSelected);
+                          if (!isSelected) {
+                            setExpandedDates((prev) => ({ ...prev, [folder.date]: true }));
+                          }
                         }}
                         className={`shrink-0 px-3 py-2 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2 ${
                           isSelected
@@ -1472,14 +1505,14 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                                   onClick={() => {
                                     if (activeHistoryTab === 'reported') {
                                       setSelectedFolderDate(dItem.date);
-                                      setExpandedMonths((prev) => ({
-                                        ...prev,
-                                        [mGroup.monthKey]: true,
-                                      }));
-                                      setCollapsedDates((prev) => ({
-                                        ...prev,
-                                        [dItem.date]: false,
-                                      }));
+                                        setExpandedMonths((prev) => ({
+                                          ...prev,
+                                          [mGroup.monthKey]: true,
+                                        }));
+                                        setExpandedDates((prev) => ({
+                                          ...prev,
+                                          [dItem.date]: true,
+                                        }));
                                     } else {
                                       setPendingCheckDate(dItem.date);
                                     }
@@ -1523,20 +1556,29 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
               <button
                 type="button"
-                onClick={expandAllFolders}
-                className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-white text-slate-700 transition-colors cursor-pointer flex items-center gap-1"
-                title="กางออกดูโฟลเดอร์รายวันในทุกเดือน"
+                onClick={collapseAllFolders}
+                className={`text-xs font-bold px-2.5 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  isCollapsedView
+                    ? 'bg-white text-blue-900 shadow-2xs ring-1 ring-slate-200/90'
+                    : 'hover:bg-white/70 text-slate-600'
+                }`}
+                title="ยุบรวมเป็นชื่อเดือนทั้งหมด"
               >
-                <ChevronsUpDown className="w-3.5 h-3.5 text-blue-600" />
-                <span>กางรายวันทั้งหมด</span>
+                <Folder className={`w-3.5 h-3.5 ${isCollapsedView ? 'text-amber-500' : 'text-slate-400'}`} />
+                <span>ยุบรวมเป็นรายเดือน</span>
               </button>
               <button
                 type="button"
-                onClick={collapseAllFolders}
-                className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-white text-slate-700 transition-colors cursor-pointer"
-                title="ยุบรวมเป็นชื่อเดือนทั้งหมด"
+                onClick={expandAllFolders}
+                className={`text-xs font-bold px-2.5 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  !isCollapsedView
+                    ? 'bg-white text-blue-900 shadow-2xs ring-1 ring-slate-200/90'
+                    : 'hover:bg-white/70 text-slate-600'
+                }`}
+                title="กางออกดูโฟลเดอร์รายวันในทุกเดือน"
               >
-                ยุบรวมเป็นรายเดือน
+                <ChevronsUpDown className={`w-3.5 h-3.5 ${!isCollapsedView ? 'text-blue-600' : 'text-slate-400'}`} />
+                <span>กางรายวันทั้งหมด</span>
               </button>
             </div>
           )}
@@ -1695,7 +1737,9 @@ export const ReportHistory: React.FC<ReportHistoryProps> = ({
                   {isMonthExpanded && (
                     <div className="p-3 sm:p-4 bg-slate-50/70 space-y-4">
                       {monthGroup.folders.map((folder) => {
-                        const isCollapsed = Boolean(collapsedDates[folder.date]);
+                        const isCollapsed = !(
+                          Boolean(expandedDates[folder.date]) || Boolean(searchTerm.trim())
+                        );
 
                         return (
                           <div

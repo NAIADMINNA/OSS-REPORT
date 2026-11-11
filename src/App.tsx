@@ -1821,6 +1821,8 @@ export default function App() {
   };
 
   const [dashboardResetSignal, setDashboardResetSignal] = useState(0);
+  const [historyResetSignal, setHistoryResetSignal] = useState(0);
+  const [notesResetSignal, setNotesResetSignal] = useState(0);
 
   // Switch tabs safely, ensuring form opens as a clean blank template if not editing
   const handleTabChange = (tab: ActiveTab) => {
@@ -1830,6 +1832,12 @@ export default function App() {
         setCurrentReport(blank);
         setLivePreviewReport(blank);
       }
+    }
+    if (tab === 'history') {
+      setHistoryResetSignal((prev) => prev + 1);
+    }
+    if (tab === 'notes') {
+      setNotesResetSignal((prev) => prev + 1);
     }
     setActiveTab(tab);
   };
@@ -2045,6 +2053,7 @@ export default function App() {
             onDuplicateReport={handleDuplicateReport}
             onOpenLineModal={handleOpenLineModal}
             onNewReport={handleNewReport}
+            resetSignal={historyResetSignal}
           />
         )}
 
@@ -2055,6 +2064,7 @@ export default function App() {
             isAdmin={isAdmin}
             adminPin={systemConfig.adminPin || '0841543524'}
             onAdminAuthenticated={handleAdminAuthenticated}
+            resetSignal={notesResetSignal}
           />
         )}
 
