@@ -6,6 +6,7 @@ import {
   ReportCategory,
   ReporterProfile,
   SystemConfig,
+  SystemIssueReply,
   SystemIssueReport,
 } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
@@ -65,6 +66,7 @@ import {
   Check,
   RefreshCw,
   BookOpen,
+  Send,
 } from 'lucide-react';
 import { ActiveTab } from './DOEHeader';
 import { SystemManualView } from './SystemManualView';
@@ -274,8 +276,110 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     }
     return [];
   });
-  const [issueFilterStatus, setIssueFilterStatus] = useState<'all' | 'pending' | 'resolved'>('all');
+  const [issueFilterStatus, setIssueFilterStatus] = useState<
+    'all' | 'pending' | 'in_progress' | 'resolved'
+  >('all');
   const [issueSearchQuery, setIssueSearchQuery] = useState('');
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [openReplyBoxIds, setOpenReplyBoxIds] = useState<Record<string, boolean>>({});
+  const [sendingReplyId, setSendingReplyId] = useState<string | null>(null);
+
+  const getNormalizedIssueReplies = (issue: SystemIssueReport): SystemIssueReply[] => {
+    if (Array.isArray(issue.replies) && issue.replies.length > 0) {
+      return issue.replies;
+    }
+    if (issue.adminReply && issue.adminReply.trim()) {
+      return [
+        {
+          id: `legacy-reply-${issue.id}`,
+          sender: 'admin',
+          senderName: 'ผู้ดูแลระบบ',
+          message: issue.adminReply.trim(),
+          createdAt: issue.adminReplyAt || issue.updatedAt || issue.createdAt,
+        },
+      ];
+    }
+    return [];
+  };
+
+  const handleSendAdminReply = async (
+    issue: SystemIssueReport,
+    targetStatus?: 'pending' | 'in_progress' | 'resolved'
+  ) => {
+    const rawText = (replyDrafts[issue.id] || '').trim();
+    if (!rawText) {
+      onNotify('กรุณาพิมพ์ข้อความตอบกลับก่อนกดส่ง');
+      return;
+    }
+
+    setSendingReplyId(issue.id);
+    try {
+      const nowIso = new Date().toISOString();
+      const existingReplies = getNormalizedIssueReplies(issue);
+      const newReply: SystemIssueReply = {
+        id: `reply-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        sender: 'admin',
+        senderName: 'ผู้ดูแลระบบส่วนกลาง',
+        message: rawText.slice(0, 2000),
+        createdAt: nowIso,
+      };
+      const nextReplies = [...existingReplies, newReply].slice(-50);
+      const resolvedNextStatus =
+        targetStatus || (issue.status === 'pending' ? 'in_progress' : issue.status);
+
+      const updated: SystemIssueReport = {
+        ...issue,
+        status: resolvedNextStatus,
+        adminReply: newReply.message,
+        adminReplyAt: nowIso,
+        updatedAt: nowIso,
+        replies: nextReplies,
+      };
+
+      setReportedIssues((prev) => {
+        const next = prev.map((i) => (i.id === issue.id ? updated : i));
+        try {
+          localStorage.setItem('doe_assistant_reported_issues_v1', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+      setReplyDrafts((prev) => ({ ...prev, [issue.id]: '' }));
+
+      await reportSystemIssueOnline(updated);
+      onNotify(
+        resolvedNextStatus === 'resolved'
+          ? `ส่งข้อความตอบกลับและปิดงาน "${issue.title}" เรียบร้อยแล้ว (ซิงก์ไปยังหุ่นยนต์ทันที)`
+          : `ส่งข้อความตอบกลับไปยังหุ่นยนต์ NAIJEABKUB เรียบร้อยแล้ว`
+      );
+    } finally {
+      setSendingReplyId(null);
+    }
+  };
+
+  const handleDeleteIssueReply = async (issue: SystemIssueReport, replyId: string) => {
+    const nowIso = new Date().toISOString();
+    const remainingReplies = getNormalizedIssueReplies(issue).filter((r) => r.id !== replyId);
+    const latestAdmin = [...remainingReplies].reverse().find((r) => r.sender === 'admin');
+
+    const updated: SystemIssueReport = {
+      ...issue,
+      adminReply: latestAdmin ? latestAdmin.message : '',
+      adminReplyAt: latestAdmin ? latestAdmin.createdAt : '',
+      updatedAt: nowIso,
+      replies: remainingReplies,
+    };
+
+    setReportedIssues((prev) => {
+      const next = prev.map((i) => (i.id === issue.id ? updated : i));
+      try {
+        localStorage.setItem('doe_assistant_reported_issues_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    await reportSystemIssueOnline(updated);
+    onNotify('ลบข้อความตอบกลับเรียบร้อยแล้ว');
+  };
 
   // Subscribe to live issues (authoritative from Cloud Firestore so resolutions & deletions sync across all clients)
   useEffect(() => {
@@ -2846,6 +2950,9 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 <span className="px-3 py-1 bg-rose-100 text-rose-800 rounded-xl font-bold border border-rose-200">
                   รอดำเนินการ: {reportedIssues.filter((i) => i.status === 'pending').length}
                 </span>
+                <span className="px-3 py-1 bg-sky-100 text-sky-800 rounded-xl font-bold border border-sky-200">
+                  กำลังดำเนินการ: {reportedIssues.filter((i) => i.status === 'in_progress').length}
+                </span>
                 <span className="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-xl font-bold border border-emerald-200">
                   แก้ไขแล้ว: {reportedIssues.filter((i) => i.status === 'resolved').length}
                 </span>
@@ -2920,7 +3027,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
             {/* Filter and Search Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-bold">
+              <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-bold">
                 <button
                   type="button"
                   onClick={() => setIssueFilterStatus('all')}
@@ -2942,6 +3049,17 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   }`}
                 >
                   รอดำเนินการ ({reportedIssues.filter((i) => i.status === 'pending').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIssueFilterStatus('in_progress')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                    issueFilterStatus === 'in_progress'
+                      ? 'bg-sky-600 text-white shadow-2xs'
+                      : 'text-sky-700 hover:bg-sky-50'
+                  }`}
+                >
+                  กำลังดำเนินการ ({reportedIssues.filter((i) => i.status === 'in_progress').length})
                 </button>
                 <button
                   type="button"
@@ -2976,33 +3094,57 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 if (issueFilterStatus !== 'all' && issue.status !== issueFilterStatus) return false;
                 if (!issueSearchQuery.trim()) return true;
                 const q = issueSearchQuery.toLowerCase();
+                const repliesText = getNormalizedIssueReplies(issue)
+                  .map((r) => r.message.toLowerCase())
+                  .join(' ');
                 return (
                   issue.title.toLowerCase().includes(q) ||
                   issue.description.toLowerCase().includes(q) ||
                   (issue.officeName && issue.officeName.toLowerCase().includes(q)) ||
-                  (issue.reporterContact && issue.reporterContact.toLowerCase().includes(q))
+                  (issue.reporterContact && issue.reporterContact.toLowerCase().includes(q)) ||
+                  repliesText.includes(q)
                 );
               })
               .map((issue) => {
                 const isPending = issue.status === 'pending';
+                const isInProgress = issue.status === 'in_progress';
+                const isResolved = issue.status === 'resolved';
+                const issueReplies = getNormalizedIssueReplies(issue);
+                const isReplyOpen =
+                  openReplyBoxIds[issue.id] !== undefined
+                    ? openReplyBoxIds[issue.id]
+                    : !isResolved;
+                const draftValue = replyDrafts[issue.id] || '';
+                const isSendingThis = sendingReplyId === issue.id;
+
                 return (
                   <div
                     key={issue.id}
-                    className={`bg-white rounded-2xl p-4 border transition-all shadow-xs space-y-3 ${
-                      isPending ? 'border-rose-200 hover:border-rose-300' : 'border-slate-200 opacity-80'
+                    className={`bg-white rounded-2xl p-4 sm:p-5 border transition-all shadow-xs space-y-3.5 ${
+                      isPending
+                        ? 'border-rose-200 hover:border-rose-300'
+                        : isInProgress
+                        ? 'border-sky-200 hover:border-sky-300'
+                        : 'border-slate-200'
                     }`}
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="space-y-1 max-w-2xl">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
                               isPending
-                                ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
-                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                ? 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse'
+                                : isInProgress
+                                ? 'bg-sky-100 text-sky-800 border-sky-300'
+                                : 'bg-emerald-100 text-emerald-800 border-emerald-300'
                             }`}
                           >
-                            {isPending ? '🚨 รอดำเนินการ' : '✅ แก้ไขเรียบร้อยแล้ว'}
+                            {isPending
+                              ? '🚨 รอดำเนินการ'
+                              : isInProgress
+                              ? '⏳ กำลังดำเนินการ'
+                              : '✅ แก้ไขเรียบร้อยแล้ว'}
                           </span>
                           <span className="text-xs font-mono font-bold text-slate-400">
                             #{issue.id}
@@ -3021,6 +3163,12 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                           <span className="text-xs text-sky-800 font-bold bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200">
                             🏛️ {issue.officeName || 'ไม่ระบุสำนักงาน'}
                           </span>
+                          {issueReplies.length > 0 && (
+                            <span className="text-[11px] text-indigo-800 font-bold bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200 flex items-center gap-1">
+                              <MessageCircle className="w-3 h-3 text-indigo-600" />
+                              <span>โต้ตอบ {issueReplies.length} ข้อความ</span>
+                            </span>
+                          )}
                         </div>
 
                         <h5 className="font-extrabold text-sm sm:text-base text-slate-900 font-['Prompt'] pt-0.5">
@@ -3028,12 +3176,34 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                         </h5>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOpenReplyBoxIds((prev) => ({
+                              ...prev,
+                              [issue.id]: !isReplyOpen,
+                            }))
+                          }
+                          className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                            isReplyOpen
+                              ? 'bg-indigo-50 text-indigo-800 border-indigo-300'
+                              : 'bg-white hover:bg-indigo-50 text-indigo-700 border-indigo-200'
+                          }`}
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>{isReplyOpen ? 'ซ่อนกล่องตอบกลับ' : 'พิมพ์ข้อความตอบกลับ'}</span>
+                        </button>
+
                         <button
                           type="button"
                           onClick={async () => {
-                            const nextStatus = issue.status === 'resolved' ? 'pending' : 'resolved';
-                            const updated: SystemIssueReport = { ...issue, status: nextStatus };
+                            const nextStatus = isResolved ? 'pending' : 'resolved';
+                            const updated: SystemIssueReport = {
+                              ...issue,
+                              status: nextStatus,
+                              updatedAt: new Date().toISOString(),
+                            };
                             setReportedIssues((prev) => {
                               const next = prev.map((i) => (i.id === issue.id ? updated : i));
                               try {
@@ -3052,13 +3222,13 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                             );
                           }}
                           className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs ${
-                            isPending
+                            !isResolved
                               ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
                               : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
                           }`}
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>{isPending ? 'ทำเครื่องหมายว่าแก้ไขแล้ว' : 'เปลี่ยนเป็นรอดำเนินการ'}</span>
+                          <span>{!isResolved ? 'ทำเครื่องหมายว่าแก้ไขแล้ว' : 'เปลี่ยนเป็นรอดำเนินการ'}</span>
                         </button>
 
                         <button
@@ -3097,12 +3267,150 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                       </div>
                     </div>
 
-                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 text-xs text-slate-800 leading-relaxed whitespace-pre-wrap font-sans">
+                    {/* Original Issue Description */}
+                    <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 text-xs text-slate-800 leading-relaxed whitespace-pre-wrap font-sans">
                       {issue.description}
                     </div>
 
+                    {/* Two-Way Conversation Thread */}
+                    {issueReplies.length > 0 && (
+                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3.5 space-y-2.5">
+                        <div className="flex items-center justify-between text-[11px] font-extrabold text-indigo-950 font-['Prompt']">
+                          <span className="flex items-center gap-1.5">
+                            <MessageCircle className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>ประวัติข้อความโต้ตอบกับผู้แจ้ง ({issueReplies.length} ข้อความ)</span>
+                          </span>
+                          <span className="text-[10px] font-semibold text-indigo-600">
+                            ซิงก์แสดงผลบนหุ่นยนต์ NAIJEABKUB แบบเรียลไทม์
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          {issueReplies.map((rep) => {
+                            const isFromAdmin = rep.sender === 'admin';
+                            return (
+                              <div
+                                key={rep.id}
+                                className={`p-3 rounded-xl border text-xs space-y-1 ${
+                                  isFromAdmin
+                                    ? 'bg-white border-indigo-200 shadow-2xs ml-0 sm:mr-6'
+                                    : 'bg-amber-50/90 border-amber-200 ml-0 sm:ml-6'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span
+                                    className={`font-bold text-[11px] flex items-center gap-1.5 ${
+                                      isFromAdmin ? 'text-indigo-900' : 'text-amber-950'
+                                    }`}
+                                  >
+                                    <span>
+                                      {isFromAdmin
+                                        ? `🛡️ ${rep.senderName || 'ผู้ดูแลระบบส่วนกลาง'}`
+                                        : `🏛️ ${rep.senderName || 'เจ้าหน้าที่ผู้แจ้ง'}`}
+                                    </span>
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-slate-400">
+                                      {new Date(rep.createdAt).toLocaleString('th-TH')}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteIssueReply(issue, rep.id)}
+                                      className="text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                                      title="ลบข้อความนี้"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <p className="text-slate-800 whitespace-pre-wrap leading-relaxed">
+                                  {rep.message}
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Admin Reply Composer */}
+                    {isReplyOpen && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5 font-['Prompt']">
+                            <Send className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>พิมพ์ข้อความตอบกลับ / แจ้งวิธีแก้ไข / อัปเดตความคืบหน้า</span>
+                          </label>
+                          <span className="text-[10.5px] text-slate-500">
+                            ข้อความจะไปแสดงในหน้าต่างหุ่นยนต์ของเจ้าหน้าที่ทันที
+                          </span>
+                        </div>
+
+                        {/* Quick Preset Reply Chips */}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {[
+                            'รับเรื่องแล้ว กำลังดำเนินการตรวจสอบและแก้ไขให้ครับ',
+                            'ดำเนินการแก้ไขเรียบร้อยแล้ว กรุณารีเฟรชหน้าเว็บและทดสอบใช้งานอีกครั้งครับ',
+                            'ตรวจสอบฐานข้อมูลแล้ว ข้อมูลซิงก์ครบถ้วน สามารถใช้งานต่อได้ตามปกติครับ',
+                            'รบกวนตรวจสอบสัญญาณอินเทอร์เน็ตและลองกดบันทึกข้อมูลใหม่อีกครั้งครับ',
+                          ].map((preset) => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() =>
+                                setReplyDrafts((prev) => ({
+                                  ...prev,
+                                  [issue.id]: prev[issue.id]
+                                    ? `${prev[issue.id].trim()}\n${preset}`
+                                    : preset,
+                                }))
+                              }
+                              className="text-[10.5px] font-semibold px-2.5 py-1 rounded-lg bg-white hover:bg-indigo-50 text-slate-700 hover:text-indigo-800 border border-slate-200 hover:border-indigo-300 transition-colors cursor-pointer"
+                            >
+                              + {preset}
+                            </button>
+                          ))}
+                        </div>
+
+                        <textarea
+                          rows={2}
+                          value={draftValue}
+                          onChange={(e) =>
+                            setReplyDrafts((prev) => ({
+                              ...prev,
+                              [issue.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="พิมพ์คำแนะนำ วิธีแก้ปัญหา หรือแจ้งความคืบหน้าให้ผู้แจ้งทราบ..."
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500 font-medium text-slate-800 leading-relaxed"
+                        />
+
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            disabled={isSendingThis || !draftValue.trim()}
+                            onClick={() => handleSendAdminReply(issue, 'in_progress')}
+                            className="text-xs font-bold px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>ส่งข้อความตอบกลับ (กำลังดำเนินการ)</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={isSendingThis || !draftValue.trim()}
+                            onClick={() => handleSendAdminReply(issue, 'resolved')}
+                            className="text-xs font-bold px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>ส่งข้อความพร้อมปิดงาน (แก้ไขแล้ว)</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100 gap-2">
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 flex-wrap">
                         {issue.reporterContact && (
                           <span>
                             📞 ผู้แจ้ง/เบอร์ติดต่อ: <b>{issue.reporterContact}</b>

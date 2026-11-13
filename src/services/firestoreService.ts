@@ -187,6 +187,58 @@ function saveDeletedIssueIds() {
   } catch {}
 }
 
+function getIssueLastModifiedMs(issue?: SystemIssueReport | null): number {
+  if (!issue) return 0;
+  const ts = issue.updatedAt || issue.adminReplyAt || issue.createdAt || '';
+  const parsed = ts ? Date.parse(ts) : 0;
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function mergeSystemIssuesList(
+  cachedList: SystemIssueReport[],
+  incomingList: SystemIssueReport[],
+  incomingIsAuthoritativeArray: boolean
+): SystemIssueReport[] {
+  const validIncoming = (incomingList || []).filter(
+    (i) => i && i.id && i.title && !deletedIssueIds.has(i.id)
+  );
+  const validCached = (cachedList || []).filter(
+    (i) => i && i.id && i.title && !deletedIssueIds.has(i.id)
+  );
+
+  if (!incomingIsAuthoritativeArray && validIncoming.length === 0) {
+    return validCached;
+  }
+
+  const incomingMap = new Map<string, SystemIssueReport>();
+  validIncoming.forEach((item) => {
+    incomingMap.set(item.id, item);
+  });
+
+  const nowMs = Date.now();
+  const mergedMap = new Map<string, SystemIssueReport>(incomingMap);
+
+  for (const cachedItem of validCached) {
+    const remoteItem = incomingMap.get(cachedItem.id);
+    if (remoteItem) {
+      const cachedMs = getIssueLastModifiedMs(cachedItem);
+      const remoteMs = getIssueLastModifiedMs(remoteItem);
+      const cachedRepliesLen = Array.isArray(cachedItem.replies) ? cachedItem.replies.length : 0;
+      const remoteRepliesLen = Array.isArray(remoteItem.replies) ? remoteItem.replies.length : 0;
+      if (cachedMs > remoteMs || (cachedMs === remoteMs && cachedRepliesLen > remoteRepliesLen)) {
+        mergedMap.set(cachedItem.id, cachedItem);
+      }
+    } else if (!incomingIsAuthoritativeArray || nowMs - getIssueLastModifiedMs(cachedItem) < 12000) {
+      // Keep very recently created/updated local issue that may still be in flight
+      mergedMap.set(cachedItem.id, cachedItem);
+    }
+  }
+
+  return Array.from(mergedMap.values()).sort(
+    (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')
+  );
+}
+
 function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
   let localOffices: EmploymentOffice[] = EMPLOYMENT_OFFICES.filter(isOfficeCustomized);
   let localDelOffices: EmploymentOffice[] = [];
@@ -774,8 +826,11 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
             : (parseArrayField<DOEReport>(sqlMaster.bundledDeletedReports) || []).filter(
                 (r) => r && r.id && !nextActiveMap.has(r.id)
               ),
-        bundledIssues:
-          parsedIssues.length > 0 ? parsedIssues : masterDocCache.bundledIssues || [],
+        bundledIssues: mergeSystemIssuesList(
+          masterDocCache.bundledIssues || [],
+          parsedIssues,
+          Array.isArray(sqlMaster.bundledIssues)
+        ),
       };
     } else {
       masterDocCache = {
@@ -940,8 +995,11 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
           bundledDeletedReports: (
             parseArrayField<DOEReport>(rawData.bundledDeletedReports) || []
           ).filter((r) => r && r.id && !activeIds.has(r.id)),
-          bundledIssues:
-            parsedIssues.length > 0 ? parsedIssues : masterDocCache.bundledIssues || [],
+          bundledIssues: mergeSystemIssuesList(
+            masterDocCache.bundledIssues || [],
+            parsedIssues,
+            Array.isArray(rawData.bundledIssues)
+          ),
         };
         hasReceivedFirstMasterSnapshot = true;
         broadcastMasterState(false);
@@ -2192,11 +2250,15 @@ export async function reportSystemIssueOnline(issue: SystemIssueReport): Promise
   deletedIssueIds.delete(issue.id);
   saveDeletedIssueIds();
 
-  const cleanIssue = cleanForFirestore(issue);
+  const stampedIssue: SystemIssueReport = {
+    ...issue,
+    updatedAt: issue.updatedAt || new Date().toISOString(),
+  };
+  const cleanIssue = cleanForFirestore(stampedIssue);
   const currentList = (masterDocCache.bundledIssues || []).filter(
     (i) => i && i.id && !deletedIssueIds.has(i.id)
   );
-  const existingIdx = currentList.findIndex((i) => i.id === issue.id);
+  const existingIdx = currentList.findIndex((i) => i.id === cleanIssue.id);
   let next: SystemIssueReport[];
   if (existingIdx >= 0) {
     next = [...currentList];

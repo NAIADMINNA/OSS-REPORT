@@ -100,6 +100,14 @@ export interface SystemConfig {
   googleSheetsAutoSync?: boolean; // เปิด/ปิดการซิงค์อัตโนมัติลง Google Sheets
 }
 
+export interface SystemIssueReply {
+  id: string;
+  sender: 'admin' | 'reporter';
+  senderName?: string;
+  message: string;
+  createdAt: string;
+}
+
 export interface SystemIssueReport {
   id: string;
   issueType: 'sync' | 'printer' | 'data' | 'queue' | 'other';
@@ -109,5 +117,9 @@ export interface SystemIssueReport {
   reporterContact?: string;
   status: 'pending' | 'in_progress' | 'resolved';
   createdAt: string;
+  updatedAt?: string;
+  adminReply?: string;
+  adminReplyAt?: string;
+  replies?: SystemIssueReply[];
   clientInfo?: string;
 }

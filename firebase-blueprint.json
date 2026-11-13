@@ -209,7 +209,7 @@
     },
     "SystemIssueReport": {
       "title": "SystemIssueReport",
-      "description": "User-reported system issue or trouble ticket",
+      "description": "User-reported system issue or trouble ticket with two-way admin and reporter replies",
       "type": "object",
       "properties": {
         "id": { "type": "string", "description": "Issue ID" },
@@ -218,8 +218,12 @@
         "description": { "type": "string", "description": "Detailed description" },
         "officeName": { "type": "string", "description": "Reporting office name" },
         "reporterContact": { "type": "string", "description": "Reporter contact info" },
-        "status": { "type": "string", "description": "Resolution status" },
-        "createdAt": { "type": "string", "description": "Creation timestamp" }
+        "status": { "type": "string", "description": "Resolution status (pending, in_progress, resolved)" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp" },
+        "adminReply": { "type": "string", "description": "Latest admin response or resolution message" },
+        "adminReplyAt": { "type": "string", "description": "Timestamp of latest admin reply" },
+        "replies": { "type": "array", "description": "Chronological two-way conversation messages between admin and reporter" }
       },
       "required": ["id", "issueType", "title"]
     },
