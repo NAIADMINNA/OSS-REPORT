@@ -1177,7 +1177,11 @@ export default function App() {
     const removed = offices.filter((o) => !updatedOffices.some((u) => u.id === o.id));
     if (removed.length > 0) {
       removed.forEach((r) => deletedOfficeIdsRef.current.add(r.id));
-      setDeletedOffices((prev) => [...removed, ...prev.filter((d) => !removed.some((r) => r.id === d.id))]);
+      setDeletedOffices((prev) => {
+        const nextDel = [...removed, ...prev.filter((d) => !removed.some((r) => r.id === d.id))];
+        safeSetLocalStorage(STORAGE_KEY_DELETED_OFFICES, JSON.stringify(nextDel));
+        return nextDel;
+      });
       removed.forEach((o) => deleteOfficeOnline(o).catch(console.warn));
     }
 
@@ -1192,6 +1196,7 @@ export default function App() {
       saveOfficeOnline(o).catch(console.warn);
     });
     setOffices(updatedOffices);
+    safeSetLocalStorage(STORAGE_KEY_OFFICES, JSON.stringify(updatedOffices));
 
     // Sync currentReport & livePreviewReport if a new office was added or current office was edited
     if (addedOffices.length === 1 && !isEditingExistingReport) {
@@ -1302,6 +1307,7 @@ export default function App() {
 
   const handleUpdateCategories = (updatedCategories: ReportCategory[]) => {
     setCategories(updatedCategories);
+    safeSetLocalStorage(STORAGE_KEY_CATEGORIES, JSON.stringify(updatedCategories));
     saveAllCategoriesOnline(updatedCategories).catch(console.warn);
   };
 
@@ -1313,11 +1319,13 @@ export default function App() {
 
   const handleUpdateReporters = (updatedReporters: ReporterProfile[]) => {
     setReporters(updatedReporters);
+    safeSetLocalStorage(STORAGE_KEY_REPORTERS, JSON.stringify(updatedReporters));
     saveAllReportersOnline(updatedReporters).catch(console.warn);
   };
 
   const handleUpdateSystemConfig = (updatedConfig: SystemConfig) => {
     setSystemConfig(updatedConfig);
+    safeSetLocalStorage(STORAGE_KEY_CONFIG, JSON.stringify(updatedConfig));
     saveSystemConfigOnline(updatedConfig).catch(console.warn);
   };
 

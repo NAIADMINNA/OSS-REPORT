@@ -19,6 +19,145 @@ interface ServerMirrorState {
 
 let memoryMirror: ServerMirrorState | null = null;
 
+function parseIsoMs(val: unknown): number {
+  if (!val) return 0;
+  const parsed = Date.parse(String(val));
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function getSectionTimestampMs(
+  cfg: Record<string, unknown> | null | undefined,
+  sectionKey: string
+): number {
+  if (!cfg) return 0;
+  return parseIsoMs(cfg[sectionKey]) || parseIsoMs(cfg.updatedAt);
+}
+
+function mergeMasterConfigRecords(
+  base: Record<string, unknown> | null,
+  incoming: Record<string, unknown> | null
+): { merged: Record<string, unknown>; baseHadNewerData: boolean } {
+  if (!base && !incoming) return { merged: {}, baseHadNewerData: false };
+  if (!base) return { merged: { ...(incoming || {}) }, baseHadNewerData: false };
+  if (!incoming) return { merged: { ...base }, baseHadNewerData: true };
+
+  let baseHadNewerData = false;
+  const baseUpdatedMs = parseIsoMs(base.updatedAt);
+  const incomingUpdatedMs = parseIsoMs(incoming.updatedAt);
+
+  // Start with the newer top-level config for scalar fields
+  const baseConfigMs = getSectionTimestampMs(base, 'configUpdatedAt');
+  const incomingConfigMs = getSectionTimestampMs(incoming, 'configUpdatedAt');
+  const useIncomingScalars = incomingConfigMs >= baseConfigMs;
+  if (!useIncomingScalars) {
+    baseHadNewerData = true;
+  }
+
+  const merged: Record<string, unknown> = useIncomingScalars
+    ? { ...base, ...incoming }
+    : { ...incoming, ...base };
+
+  // Helper to pick the newer section array by its dedicated timestamp
+  const pickSection = (arrayKey: string, tsKey: string) => {
+    const baseArr = Array.isArray(base[arrayKey]) ? (base[arrayKey] as unknown[]) : [];
+    const incArr = Array.isArray(incoming[arrayKey]) ? (incoming[arrayKey] as unknown[]) : [];
+    const baseDedicatedMs = parseIsoMs(base[tsKey]);
+    const incDedicatedMs = parseIsoMs(incoming[tsKey]);
+    const baseMs = baseDedicatedMs || baseUpdatedMs;
+    const incMs = incDedicatedMs || incomingUpdatedMs;
+
+    if (incArr.length === 0 && baseArr.length > 0) {
+      merged[arrayKey] = baseArr;
+      if (base[tsKey]) merged[tsKey] = base[tsKey];
+      baseHadNewerData = true;
+      return;
+    }
+    if (baseArr.length === 0 && incArr.length > 0) {
+      merged[arrayKey] = incArr;
+      if (incoming[tsKey]) merged[tsKey] = incoming[tsKey];
+      return;
+    }
+
+    // If base has a dedicated section timestamp and incoming lacks one, never let an unrelated
+    // top-level updatedAt clobber this section.
+    if (baseDedicatedMs > 0 && incDedicatedMs === 0) {
+      merged[arrayKey] = baseArr;
+      if (base[tsKey]) merged[tsKey] = base[tsKey];
+      baseHadNewerData = true;
+      return;
+    }
+
+    if (incDedicatedMs > 0 && baseDedicatedMs === 0) {
+      merged[arrayKey] = incArr;
+      merged[tsKey] = incoming[tsKey];
+      return;
+    }
+
+    if (baseMs > incMs) {
+      merged[arrayKey] = baseArr;
+      if (base[tsKey]) merged[tsKey] = base[tsKey];
+      baseHadNewerData = true;
+    } else if (incArr.length > 0) {
+      merged[arrayKey] = incArr;
+      if (incoming[tsKey]) merged[tsKey] = incoming[tsKey];
+    }
+  };
+
+  pickSection('bundledCategories', 'categoriesUpdatedAt');
+  pickSection('bundledQueueMetrics', 'queueMetricsUpdatedAt');
+  pickSection('bundledReporters', 'reportersUpdatedAt');
+
+  // Protect offices & service centers (bundledOffices + bundledDeletedOffices) with officesUpdatedAt
+  const baseOfficesDedicatedMs = parseIsoMs(base.officesUpdatedAt);
+  const incOfficesDedicatedMs = parseIsoMs(incoming.officesUpdatedAt);
+  const baseOfficesMs = baseOfficesDedicatedMs || baseUpdatedMs;
+  const incOfficesMs = incOfficesDedicatedMs || incomingUpdatedMs;
+
+  const baseOfficesArr = Array.isArray(base.bundledOffices) ? (base.bundledOffices as unknown[]) : [];
+  const incOfficesArr = Array.isArray(incoming.bundledOffices) ? (incoming.bundledOffices as unknown[]) : [];
+  const baseDelOfficesArr = Array.isArray(base.bundledDeletedOffices)
+    ? (base.bundledDeletedOffices as unknown[])
+    : [];
+  const incDelOfficesArr = Array.isArray(incoming.bundledDeletedOffices)
+    ? (incoming.bundledDeletedOffices as unknown[])
+    : [];
+
+  if (baseOfficesDedicatedMs > 0 && incOfficesDedicatedMs === 0) {
+    merged.bundledOffices = baseOfficesArr;
+    merged.bundledDeletedOffices = baseDelOfficesArr;
+    merged.officesUpdatedAt = base.officesUpdatedAt;
+    baseHadNewerData = true;
+  } else if (incOfficesDedicatedMs > 0 && baseOfficesDedicatedMs === 0) {
+    merged.bundledOffices = incOfficesArr;
+    merged.bundledDeletedOffices = incDelOfficesArr;
+    merged.officesUpdatedAt = incoming.officesUpdatedAt;
+  } else if (baseOfficesMs > incOfficesMs) {
+    merged.bundledOffices = baseOfficesArr;
+    merged.bundledDeletedOffices = baseDelOfficesArr;
+    if (base.officesUpdatedAt) merged.officesUpdatedAt = base.officesUpdatedAt;
+    baseHadNewerData = true;
+  } else if (incOfficesArr.length > 0 || incDelOfficesArr.length > 0) {
+    merged.bundledOffices = incOfficesArr;
+    merged.bundledDeletedOffices = incDelOfficesArr;
+    if (incoming.officesUpdatedAt) merged.officesUpdatedAt = incoming.officesUpdatedAt;
+  }
+
+  // Preserve the newest updatedAt & configUpdatedAt
+  const newestUpdatedMs = Math.max(baseUpdatedMs, incomingUpdatedMs);
+  if (newestUpdatedMs > 0) {
+    merged.updatedAt = new Date(newestUpdatedMs).toISOString();
+  }
+  const newestConfigMs = Math.max(parseIsoMs(base.configUpdatedAt), parseIsoMs(incoming.configUpdatedAt));
+  if (newestConfigMs > 0) {
+    merged.configUpdatedAt = new Date(newestConfigMs).toISOString();
+  }
+  if (baseUpdatedMs > incomingUpdatedMs) {
+    baseHadNewerData = true;
+  }
+
+  return { merged, baseHadNewerData };
+}
+
 function loadMirror(): ServerMirrorState {
   if (memoryMirror) return memoryMirror;
   const mergedReports: Record<
@@ -48,10 +187,10 @@ function loadMirror(): ServerMirrorState {
             }
           }
           if (parsed.masterConfig && typeof parsed.masterConfig === 'object') {
-            mergedMasterConfig = {
-              ...(mergedMasterConfig || {}),
-              ...(parsed.masterConfig as Record<string, unknown>),
-            };
+            mergedMasterConfig = mergeMasterConfigRecords(
+              mergedMasterConfig,
+              parsed.masterConfig as Record<string, unknown>
+            ).merged;
           }
         }
       }
@@ -617,11 +756,33 @@ export async function getMasterStateFromSql(): Promise<Record<string, unknown> |
           ? JSON.parse(rows[0].payload)
           : rows[0].payload;
       if (payload && typeof payload === 'object') {
-        mirror.masterConfig = {
-          ...(mirror.masterConfig || {}),
-          ...(payload as Record<string, unknown>),
-        };
+        const { merged, baseHadNewerData } = mergeMasterConfigRecords(
+          mirror.masterConfig,
+          payload as Record<string, unknown>
+        );
+        mirror.masterConfig = merged;
         saveMirror(mirror);
+
+        // If local server mirror had strictly newer edits (e.g., from a queued write), sync back to Cloud SQL
+        if (baseHadNewerData) {
+          const syncIso = String(merged.updatedAt || new Date().toISOString());
+          enqueueBackgroundSqlSync(async () => {
+            await db
+              .insert(doeMasterState)
+              .values({
+                id: MASTER_CONFIG_ID,
+                payload: merged,
+                updatedAt: syncIso,
+              })
+              .onConflictDoUpdate({
+                target: doeMasterState.id,
+                set: {
+                  payload: merged,
+                  updatedAt: syncIso,
+                },
+              });
+          });
+        }
       }
     }
   } catch {
@@ -637,12 +798,48 @@ export async function upsertMasterStateInSql(
   partialPayload: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   const mirror = loadMirror();
-  const nowIso = new Date().toISOString();
-  const merged: Record<string, unknown> = {
-    ...(mirror.masterConfig || {}),
+  const prevUpdatedMs = parseIsoMs(mirror.masterConfig?.updatedAt);
+  const incomingUpdatedMs = parseIsoMs(partialPayload.updatedAt);
+  const nowIso = new Date(
+    Math.max(Date.now(), prevUpdatedMs + 1, incomingUpdatedMs)
+  ).toISOString();
+
+  const stampedIncoming: Record<string, unknown> = {
     ...partialPayload,
     updatedAt: nowIso,
   };
+  if (
+    Array.isArray(partialPayload.bundledCategories) &&
+    !partialPayload.categoriesUpdatedAt &&
+    !parseIsoMs(mirror.masterConfig?.categoriesUpdatedAt)
+  ) {
+    stampedIncoming.categoriesUpdatedAt = nowIso;
+  }
+  if (
+    Array.isArray(partialPayload.bundledQueueMetrics) &&
+    !partialPayload.queueMetricsUpdatedAt &&
+    !parseIsoMs(mirror.masterConfig?.queueMetricsUpdatedAt)
+  ) {
+    stampedIncoming.queueMetricsUpdatedAt = nowIso;
+  }
+  if (
+    Array.isArray(partialPayload.bundledReporters) &&
+    !partialPayload.reportersUpdatedAt &&
+    !parseIsoMs(mirror.masterConfig?.reportersUpdatedAt)
+  ) {
+    stampedIncoming.reportersUpdatedAt = nowIso;
+  }
+  if (
+    (Array.isArray(partialPayload.bundledOffices) ||
+      Array.isArray(partialPayload.bundledDeletedOffices)) &&
+    !partialPayload.officesUpdatedAt &&
+    !parseIsoMs(mirror.masterConfig?.officesUpdatedAt)
+  ) {
+    stampedIncoming.officesUpdatedAt = nowIso;
+  }
+
+  const { merged } = mergeMasterConfigRecords(mirror.masterConfig, stampedIncoming);
+  merged.updatedAt = nowIso;
   mirror.masterConfig = merged;
   saveMirror(mirror);
 

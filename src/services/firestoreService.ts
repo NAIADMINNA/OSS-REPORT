@@ -89,8 +89,72 @@ interface BundledMasterConfig extends SystemConfig {
   bundledReporters?: (ReporterProfile & { sortOrder?: number })[];
   bundledDeletedReports?: DOEReport[];
   bundledIssues?: SystemIssueReport[];
+  officesUpdatedAt?: string;
+  categoriesUpdatedAt?: string;
+  queueMetricsUpdatedAt?: string;
+  reportersUpdatedAt?: string;
+  configUpdatedAt?: string;
   updatedAt?: string;
 }
+
+const STORAGE_KEY_MASTER_TIMESTAMPS = 'doe_master_section_timestamps_v1';
+
+interface MasterSectionTimestamps {
+  officesUpdatedAt?: string;
+  categoriesUpdatedAt?: string;
+  queueMetricsUpdatedAt?: string;
+  reportersUpdatedAt?: string;
+  configUpdatedAt?: string;
+  updatedAt?: string;
+}
+
+function parseIsoMs(val?: string | null): number {
+  if (!val) return 0;
+  const parsed = Date.parse(String(val));
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function nextMonotonicIsoTimestamp(...existingIsos: (string | undefined)[]): string {
+  let maxMs = 0;
+  for (const iso of existingIsos) {
+    const ms = parseIsoMs(iso);
+    if (ms > maxMs) maxMs = ms;
+  }
+  return new Date(Math.max(Date.now(), maxMs + 1)).toISOString();
+}
+
+function loadMasterSectionTimestamps(): MasterSectionTimestamps {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_MASTER_TIMESTAMPS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as MasterSectionTimestamps;
+      }
+    }
+  } catch {}
+  return {};
+}
+
+function saveMasterSectionTimestamps(cfg: Partial<BundledMasterConfig>) {
+  try {
+    const next: MasterSectionTimestamps = {
+      officesUpdatedAt: cfg.officesUpdatedAt,
+      categoriesUpdatedAt: cfg.categoriesUpdatedAt,
+      queueMetricsUpdatedAt: cfg.queueMetricsUpdatedAt,
+      reportersUpdatedAt: cfg.reportersUpdatedAt,
+      configUpdatedAt: cfg.configUpdatedAt,
+      updatedAt: cfg.updatedAt,
+    };
+    localStorage.setItem(STORAGE_KEY_MASTER_TIMESTAMPS, JSON.stringify(next));
+  } catch {}
+}
+
+let hasLocalSavedOffices = false;
+let hasLocalSavedCategories = false;
+let hasLocalSavedQueueMetrics = false;
+let hasLocalSavedReporters = false;
+let hasLocalSavedConfig = false;
 
 const stdOfficeMap = new Map<string, EmploymentOffice>(
   EMPLOYMENT_OFFICES.map((o) => [o.id, o])
@@ -263,6 +327,7 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
         if (Array.isArray(parsed)) {
           const customLocal = parsed.filter((o) => o && o.id && isOfficeCustomized(o));
           localOffices = mergeTwoOfficeLists(localOffices, customLocal);
+          if (customLocal.length > 0) hasLocalSavedOffices = true;
         }
       }
     } catch {}
@@ -295,6 +360,7 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
         const parsed = JSON.parse(rawCats);
         if (Array.isArray(parsed) && parsed.length > 0) {
           localCats = parsed.map((c: ReportCategory, idx: number) => ({ ...c, sortOrder: idx }));
+          hasLocalSavedCategories = true;
           break;
         }
       }
@@ -311,6 +377,7 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
             ...m,
             sortOrder: idx,
           }));
+          hasLocalSavedQueueMetrics = true;
           break;
         }
       }
@@ -327,6 +394,7 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
             ...r,
             sortOrder: idx,
           }));
+          hasLocalSavedReporters = true;
           break;
         }
       }
@@ -340,6 +408,7 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
         const parsed = JSON.parse(rawCfg);
         if (parsed && parsed.reportTitle) {
           localConfig = { ...DEFAULT_SYSTEM_CONFIG, ...parsed };
+          hasLocalSavedConfig = true;
           break;
         }
       }
@@ -369,6 +438,8 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
     }
   } catch {}
 
+  const savedTimestamps = loadMasterSectionTimestamps();
+
   return {
     ...localConfig,
     migrationVersion: CURRENT_MIGRATION_VERSION,
@@ -379,10 +450,241 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
     bundledReporters: localReps,
     bundledDeletedReports: localDelReports,
     bundledIssues: localIssues,
+    officesUpdatedAt: savedTimestamps.officesUpdatedAt,
+    categoriesUpdatedAt: savedTimestamps.categoriesUpdatedAt,
+    queueMetricsUpdatedAt: savedTimestamps.queueMetricsUpdatedAt,
+    reportersUpdatedAt: savedTimestamps.reportersUpdatedAt,
+    configUpdatedAt: savedTimestamps.configUpdatedAt,
+    updatedAt: savedTimestamps.updatedAt,
   };
 }
 
 let masterDocCache: BundledMasterConfig = loadInitialMasterCacheFromLocalStorage();
+
+function mergeIncomingMasterConfig(
+  current: BundledMasterConfig,
+  incoming: Partial<BundledMasterConfig>,
+  options: {
+    isLiveRemote: boolean;
+    cleanDeletedList?: DOEReport[];
+    activeIds: Set<string>;
+  }
+): { next: BundledMasterConfig; localHasNewerSections: boolean } {
+  const { isLiveRemote, cleanDeletedList, activeIds } = options;
+  let localHasNewerSections = false;
+
+  const pickSectionArray = <T>(
+    localArr: T[] | undefined,
+    localTs: string | undefined,
+    hasLocalSaved: boolean,
+    remoteArr: unknown,
+    remoteTs: string | undefined,
+    remoteFallbackTs: string | undefined,
+    storageKey: string
+  ): { list: T[] | undefined; ts: string | undefined } => {
+    const parsedRemote = parseArrayField<T>(remoteArr);
+    const localMs = parseIsoMs(localTs);
+    const remoteDedicatedMs = parseIsoMs(remoteTs);
+    const remoteMs = remoteDedicatedMs || parseIsoMs(remoteFallbackTs);
+
+    if (parsedRemote.length === 0) {
+      if (localArr && localArr.length > 0 && localMs > 0) {
+        localHasNewerSections = true;
+      }
+      return { list: localArr, ts: localTs };
+    }
+
+    // Static seed fallback must NEVER clobber user-saved local data or a newer local timestamp
+    if (!isLiveRemote) {
+      if (localMs > 0 && localMs >= remoteMs) {
+        return { list: localArr, ts: localTs };
+      }
+      if (hasLocalSaved && localArr && localArr.length > 0) {
+        return { list: localArr, ts: localTs };
+      }
+    }
+
+    // Live remote (Cloud SQL API or Firestore): compare timestamps strictly
+    if (localMs > 0 && remoteDedicatedMs === 0) {
+      // Local has a dedicated section timestamp while remote lacks one (e.g., older snapshot or unrelated update)
+      localHasNewerSections = true;
+      return { list: localArr, ts: localTs };
+    }
+
+    if (localMs > 0 && localMs > remoteMs) {
+      localHasNewerSections = true;
+      return { list: localArr, ts: localTs };
+    }
+
+    // Equal timestamps: keep current local state
+    if (localMs > 0 && remoteMs > 0 && localMs === remoteMs) {
+      return { list: localArr, ts: localTs };
+    }
+
+    // Accept remote when remote is strictly newer, OR when local had no timestamp yet
+    if (remoteMs > localMs || localMs === 0) {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(parsedRemote));
+      } catch {}
+      return { list: parsedRemote, ts: remoteDedicatedMs > 0 ? remoteTs : localTs };
+    }
+
+    return { list: localArr, ts: localTs };
+  };
+
+  const catsPick = pickSectionArray(
+    current.bundledCategories,
+    current.categoriesUpdatedAt,
+    hasLocalSavedCategories,
+    incoming.bundledCategories,
+    incoming.categoriesUpdatedAt,
+    incoming.updatedAt,
+    'doe_work_permit_categories_v1'
+  );
+
+  const qmPick = pickSectionArray(
+    current.bundledQueueMetrics,
+    current.queueMetricsUpdatedAt,
+    hasLocalSavedQueueMetrics,
+    incoming.bundledQueueMetrics,
+    incoming.queueMetricsUpdatedAt,
+    incoming.updatedAt,
+    'doe_work_permit_queue_metrics_v1'
+  );
+
+  const repsPick = pickSectionArray(
+    current.bundledReporters,
+    current.reportersUpdatedAt,
+    hasLocalSavedReporters,
+    incoming.bundledReporters,
+    incoming.reportersUpdatedAt,
+    incoming.updatedAt,
+    'doe_work_permit_reporters_v1'
+  );
+
+  // Scalar system config fields (reportTitle, reportSubtitle, adminPin, etc.)
+  const localCfgMs = parseIsoMs(current.configUpdatedAt);
+  const remoteCfgTs = incoming.configUpdatedAt || incoming.updatedAt;
+  const remoteCfgMs = parseIsoMs(remoteCfgTs);
+  let acceptRemoteConfig = false;
+  if (isLiveRemote) {
+    if (localCfgMs > 0 && localCfgMs > remoteCfgMs) {
+      localHasNewerSections = true;
+      acceptRemoteConfig = false;
+    } else if (remoteCfgMs > localCfgMs || localCfgMs === 0) {
+      acceptRemoteConfig = true;
+    }
+  } else {
+    acceptRemoteConfig = !hasLocalSavedConfig && localCfgMs === 0;
+  }
+
+  const parsedIssues = parseArrayField<SystemIssueReport>(incoming.bundledIssues).filter(
+    (i) => i && i.id && !deletedIssueIds.has(i.id)
+  );
+
+  const nextDeletedReports =
+    cleanDeletedList && cleanDeletedList.length > 0
+      ? cleanDeletedList
+      : (parseArrayField<DOEReport>(incoming.bundledDeletedReports) || []).filter(
+          (r) => r && r.id && !activeIds.has(r.id)
+        );
+
+  const mergedUpdatedMs = Math.max(parseIsoMs(current.updatedAt), parseIsoMs(incoming.updatedAt));
+
+  // Offices & Service Centers (bundledOffices + bundledDeletedOffices) protected by officesUpdatedAt
+  const incomingOfficesList = parseArrayField<EmploymentOffice>(incoming.bundledOffices);
+  const incomingDelOfficesList = parseArrayField<EmploymentOffice>(
+    incoming.bundledDeletedOffices
+  ).filter((o) => o && o.id !== 'central_foreign_workers');
+  const localOfficesMs = parseIsoMs(current.officesUpdatedAt);
+  const remoteOfficesDedicatedMs = parseIsoMs(incoming.officesUpdatedAt);
+  const remoteOfficesMs = remoteOfficesDedicatedMs || parseIsoMs(incoming.updatedAt);
+
+  let nextOffices = current.bundledOffices || [];
+  let nextDelOffices = current.bundledDeletedOffices || [];
+  let nextOfficesTs = current.officesUpdatedAt;
+
+  if (!isLiveRemote) {
+    // Static seed fallback: never overwrite local edits; only merge missing baseline items if local isn't timestamped
+    if (localOfficesMs > 0 || hasLocalSavedOffices) {
+      nextOffices = mergeTwoOfficeLists(incomingOfficesList, current.bundledOffices || []);
+      nextDelOffices = current.bundledDeletedOffices || [];
+    } else {
+      nextOffices = mergeTwoOfficeLists(current.bundledOffices || [], incomingOfficesList);
+      nextDelOffices =
+        (current.bundledDeletedOffices && current.bundledDeletedOffices.length > 0)
+          ? current.bundledDeletedOffices
+          : incomingDelOfficesList;
+    }
+  } else if (
+    localOfficesMs > 0 &&
+    (remoteOfficesDedicatedMs === 0 || localOfficesMs > remoteOfficesMs)
+  ) {
+    // Local offices/centers edit is strictly newer than remote
+    localHasNewerSections = true;
+    nextOffices = current.bundledOffices || [];
+    nextDelOffices = current.bundledDeletedOffices || [];
+  } else if (remoteOfficesDedicatedMs > localOfficesMs) {
+    // Remote has a strictly newer dedicated offices edit (add/edit/delete center or office)
+    nextOffices =
+      localOfficesMs === 0
+        ? mergeTwoOfficeLists(current.bundledOffices || [], incomingOfficesList)
+        : incomingOfficesList;
+    nextDelOffices = incomingDelOfficesList;
+    nextOfficesTs = incoming.officesUpdatedAt;
+  } else if (localOfficesMs === 0) {
+    // Legacy initial merge when neither side has officesUpdatedAt yet
+    nextOffices = mergeTwoOfficeLists(current.bundledOffices || [], incomingOfficesList);
+    nextDelOffices = incomingDelOfficesList;
+  }
+
+  const next: BundledMasterConfig = {
+    ...current,
+    ...(acceptRemoteConfig
+      ? {
+          reportTitle: incoming.reportTitle || current.reportTitle,
+          reportSubtitle: incoming.reportSubtitle ?? current.reportSubtitle,
+          departmentNameTh: incoming.departmentNameTh || current.departmentNameTh,
+          departmentNameEn: incoming.departmentNameEn ?? current.departmentNameEn,
+          customLogoUrl:
+            incoming.customLogoUrl !== undefined ? incoming.customLogoUrl : current.customLogoUrl,
+          adminPin: incoming.adminPin || current.adminPin,
+          googleSheetsWebhookUrl:
+            incoming.googleSheetsWebhookUrl !== undefined && incoming.googleSheetsWebhookUrl !== ''
+              ? incoming.googleSheetsWebhookUrl
+              : current.googleSheetsWebhookUrl,
+          googleSheetsAutoSync:
+            incoming.googleSheetsAutoSync !== undefined
+              ? incoming.googleSheetsAutoSync
+              : current.googleSheetsAutoSync,
+          configUpdatedAt: remoteCfgTs || current.configUpdatedAt,
+        }
+      : {}),
+    migrationVersion: incoming.migrationVersion ?? current.migrationVersion ?? CURRENT_MIGRATION_VERSION,
+    bundledOffices: nextOffices,
+    bundledDeletedOffices: nextDelOffices,
+    officesUpdatedAt: nextOfficesTs,
+    bundledCategories: catsPick.list,
+    categoriesUpdatedAt: catsPick.ts,
+    bundledQueueMetrics: qmPick.list,
+    queueMetricsUpdatedAt: qmPick.ts,
+    bundledReporters: repsPick.list,
+    reportersUpdatedAt: repsPick.ts,
+    bundledDeletedReports:
+      nextDeletedReports.length > 0 || isLiveRemote
+        ? nextDeletedReports
+        : (current.bundledDeletedReports || []).filter((r) => r && r.id && !activeIds.has(r.id)),
+    bundledIssues: mergeSystemIssuesList(
+      current.bundledIssues || [],
+      parsedIssues,
+      isLiveRemote && Array.isArray(incoming.bundledIssues)
+    ),
+    updatedAt: mergedUpdatedMs > 0 ? new Date(mergedUpdatedMs).toISOString() : current.updatedAt,
+  };
+
+  saveMasterSectionTimestamps(next);
+  return { next, localHasNewerSections };
+}
 
 // Subscriber sets for multiplexed single-listener updates
 const officesListeners = new Set<(data: EmploymentOffice[]) => void>();
@@ -757,10 +1059,10 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
     const sqlDeleted: DOEReport[] = Array.isArray(payload?.deletedReports)
       ? payload!.deletedReports!
       : staticSeed.deletedReports || [];
-    const sqlMaster: Partial<BundledMasterConfig> | null =
-      payload?.masterConfig && typeof payload.masterConfig === 'object'
-        ? { ...(staticSeed.masterConfig || {}), ...payload.masterConfig }
-        : staticSeed.masterConfig;
+    const isLiveSqlMaster = Boolean(payload?.masterConfig && typeof payload.masterConfig === 'object');
+    const sqlMaster: Partial<BundledMasterConfig> | null = isLiveSqlMaster
+      ? payload!.masterConfig!
+      : staticSeed.masterConfig;
 
     const sqlDeletedIds = new Set<string>();
     const cleanDeletedList: DOEReport[] = [];
@@ -795,43 +1097,22 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
     }
 
     if (sqlMaster) {
-      const parsedIssues = parseArrayField<SystemIssueReport>(sqlMaster.bundledIssues).filter(
-        (i) => i && i.id && !deletedIssueIds.has(i.id)
-      );
-      masterDocCache = {
-        ...masterDocCache,
-        ...sqlMaster,
-        bundledOffices: mergeTwoOfficeLists(
-          masterDocCache.bundledOffices || [],
-          parseArrayField<EmploymentOffice>(sqlMaster.bundledOffices)
-        ),
-        bundledDeletedOffices: parseArrayField<EmploymentOffice>(
-          sqlMaster.bundledDeletedOffices
-        ).filter((o) => o && o.id !== 'central_foreign_workers'),
-        bundledCategories:
-          Array.isArray(sqlMaster.bundledCategories) && sqlMaster.bundledCategories.length > 0
-            ? sqlMaster.bundledCategories
-            : masterDocCache.bundledCategories,
-        bundledQueueMetrics:
-          Array.isArray(sqlMaster.bundledQueueMetrics) && sqlMaster.bundledQueueMetrics.length > 0
-            ? sqlMaster.bundledQueueMetrics
-            : masterDocCache.bundledQueueMetrics,
-        bundledReporters:
-          Array.isArray(sqlMaster.bundledReporters) && sqlMaster.bundledReporters.length > 0
-            ? sqlMaster.bundledReporters
-            : masterDocCache.bundledReporters,
-        bundledDeletedReports:
-          cleanDeletedList.length > 0
-            ? cleanDeletedList
-            : (parseArrayField<DOEReport>(sqlMaster.bundledDeletedReports) || []).filter(
-                (r) => r && r.id && !nextActiveMap.has(r.id)
-              ),
-        bundledIssues: mergeSystemIssuesList(
-          masterDocCache.bundledIssues || [],
-          parsedIssues,
-          Array.isArray(sqlMaster.bundledIssues)
-        ),
-      };
+      const activeIdSet = new Set<string>(nextActiveMap.keys());
+      const { next, localHasNewerSections } = mergeIncomingMasterConfig(masterDocCache, sqlMaster, {
+        isLiveRemote: isLiveSqlMaster,
+        cleanDeletedList,
+        activeIds: activeIdSet,
+      });
+      masterDocCache = next;
+
+      // If client has strictly newer local edits (e.g., added category while SQL was catching up), push back to SQL
+      if (isLiveSqlMaster && localHasNewerSections) {
+        fetch('/api/doe/master-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config: cleanForFirestore(masterDocCache) }),
+        }).catch(() => {});
+      }
     } else {
       masterDocCache = {
         ...masterDocCache,
@@ -911,25 +1192,87 @@ async function persistMasterConfigOnline(
   partialUpdate: Partial<BundledMasterConfig>,
   _markMigrated = false
 ): Promise<void> {
+  const nowIso = nextMonotonicIsoTimestamp(
+    masterDocCache.updatedAt,
+    masterDocCache.officesUpdatedAt,
+    masterDocCache.categoriesUpdatedAt,
+    masterDocCache.queueMetricsUpdatedAt,
+    masterDocCache.reportersUpdatedAt,
+    masterDocCache.configUpdatedAt
+  );
+
+  const stampedUpdate: Partial<BundledMasterConfig> = { ...partialUpdate };
+  if (
+    Array.isArray(partialUpdate.bundledOffices) ||
+    Array.isArray(partialUpdate.bundledDeletedOffices)
+  ) {
+    stampedUpdate.officesUpdatedAt = partialUpdate.officesUpdatedAt || nowIso;
+    hasLocalSavedOffices = true;
+  }
+  if (Array.isArray(partialUpdate.bundledCategories)) {
+    stampedUpdate.categoriesUpdatedAt = partialUpdate.categoriesUpdatedAt || nowIso;
+    hasLocalSavedCategories = true;
+    try {
+      localStorage.setItem(
+        'doe_work_permit_categories_v1',
+        JSON.stringify(partialUpdate.bundledCategories)
+      );
+    } catch {}
+  }
+  if (Array.isArray(partialUpdate.bundledQueueMetrics)) {
+    stampedUpdate.queueMetricsUpdatedAt = partialUpdate.queueMetricsUpdatedAt || nowIso;
+    hasLocalSavedQueueMetrics = true;
+    try {
+      localStorage.setItem(
+        'doe_work_permit_queue_metrics_v1',
+        JSON.stringify(partialUpdate.bundledQueueMetrics)
+      );
+    } catch {}
+  }
+  if (Array.isArray(partialUpdate.bundledReporters)) {
+    stampedUpdate.reportersUpdatedAt = partialUpdate.reportersUpdatedAt || nowIso;
+    hasLocalSavedReporters = true;
+    try {
+      localStorage.setItem(
+        'doe_work_permit_reporters_v1',
+        JSON.stringify(partialUpdate.bundledReporters)
+      );
+    } catch {}
+  }
+  if (
+    partialUpdate.reportTitle !== undefined ||
+    partialUpdate.reportSubtitle !== undefined ||
+    partialUpdate.departmentNameTh !== undefined ||
+    partialUpdate.departmentNameEn !== undefined ||
+    partialUpdate.customLogoUrl !== undefined ||
+    partialUpdate.adminPin !== undefined ||
+    partialUpdate.googleSheetsWebhookUrl !== undefined ||
+    partialUpdate.googleSheetsAutoSync !== undefined
+  ) {
+    stampedUpdate.configUpdatedAt = partialUpdate.configUpdatedAt || nowIso;
+    hasLocalSavedConfig = true;
+  }
+
   masterDocCache = {
     ...masterDocCache,
-    ...partialUpdate,
+    ...stampedUpdate,
     reportTitle:
-      partialUpdate.reportTitle ||
+      stampedUpdate.reportTitle ||
       masterDocCache.reportTitle ||
       DEFAULT_SYSTEM_CONFIG.reportTitle,
     departmentNameTh:
-      partialUpdate.departmentNameTh ||
+      stampedUpdate.departmentNameTh ||
       masterDocCache.departmentNameTh ||
       DEFAULT_SYSTEM_CONFIG.departmentNameTh,
     adminPin:
-      partialUpdate.adminPin ||
+      stampedUpdate.adminPin ||
       masterDocCache.adminPin ||
       DEFAULT_SYSTEM_CONFIG.adminPin,
     migrationVersion: CURRENT_MIGRATION_VERSION,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso,
   };
 
+  saveMasterSectionTimestamps(masterDocCache);
   broadcastMasterState(false);
 
   // 1. Primary write to Cloud SQL (PostgreSQL)
@@ -966,41 +1309,12 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
     (snapshot) => {
       if (snapshot.exists()) {
         const rawData = snapshot.data() as Partial<BundledMasterConfig>;
-        const parsedIssues = parseArrayField<SystemIssueReport>(rawData.bundledIssues).filter(
-          (i) => i && i.id && !deletedIssueIds.has(i.id)
-        );
         const activeIds = getActiveReportIdsInBundles();
-        masterDocCache = {
-          ...masterDocCache,
-          ...rawData,
-          bundledOffices: mergeTwoOfficeLists(
-            masterDocCache.bundledOffices || [],
-            parseArrayField<EmploymentOffice>(rawData.bundledOffices)
-          ),
-          bundledDeletedOffices: parseArrayField<EmploymentOffice>(
-            rawData.bundledDeletedOffices
-          ).filter((o) => o && o.id !== 'central_foreign_workers'),
-          bundledCategories:
-            Array.isArray(rawData.bundledCategories) && rawData.bundledCategories.length > 0
-              ? rawData.bundledCategories
-              : masterDocCache.bundledCategories,
-          bundledQueueMetrics:
-            Array.isArray(rawData.bundledQueueMetrics) && rawData.bundledQueueMetrics.length > 0
-              ? rawData.bundledQueueMetrics
-              : masterDocCache.bundledQueueMetrics,
-          bundledReporters:
-            Array.isArray(rawData.bundledReporters) && rawData.bundledReporters.length > 0
-              ? rawData.bundledReporters
-              : masterDocCache.bundledReporters,
-          bundledDeletedReports: (
-            parseArrayField<DOEReport>(rawData.bundledDeletedReports) || []
-          ).filter((r) => r && r.id && !activeIds.has(r.id)),
-          bundledIssues: mergeSystemIssuesList(
-            masterDocCache.bundledIssues || [],
-            parsedIssues,
-            Array.isArray(rawData.bundledIssues)
-          ),
-        };
+        const { next } = mergeIncomingMasterConfig(masterDocCache, rawData, {
+          isLiveRemote: true,
+          activeIds,
+        });
+        masterDocCache = next;
         hasReceivedFirstMasterSnapshot = true;
         broadcastMasterState(false);
       }
