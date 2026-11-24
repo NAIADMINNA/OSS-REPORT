@@ -37,6 +37,7 @@ import {
   pullReportsFromGoogleSheets,
   saveStoredGoogleSheetsConfig,
   syncBulkReportsToGoogleSheets,
+  syncMasterConfigToGoogleSheets,
   syncReportToGoogleSheets,
   syncSchemaToGoogleSheets,
 } from '../utils/googleSheetsSync';
@@ -49,6 +50,18 @@ const CONFIG_DOC_ID = 'main_config';
 const CURRENT_MIGRATION_VERSION = 8;
 
 let hasLoggedQuotaNotice = false;
+const STORAGE_KEY_FIRESTORE_WRITE_BLOCK_UNTIL = 'doe_fs_write_quota_block_until_v1';
+let firestoreWriteBlockedUntilMs = (() => {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY_FIRESTORE_WRITE_BLOCK_UNTIL);
+    const parsed = raw ? Number(raw) : 0;
+    return Number.isFinite(parsed) && parsed > Date.now() ? parsed : 0;
+  } catch {
+    return 0;
+  }
+})();
+let lastFirestoreRepairPushMs = 0;
+let lastSheetsMasterPushSignature = '';
 
 export function isQuotaExceededError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error || '');
@@ -56,19 +69,36 @@ export function isQuotaExceededError(error: unknown): boolean {
   return (
     code === 'resource-exhausted' ||
     msg.includes('Quota limit exceeded') ||
-    msg.includes('Quota exceeded')
+    msg.includes('Quota exceeded') ||
+    msg.includes('RESOURCE_EXHAUSTED')
   );
+}
+
+export function isFirestoreWriteQuotaBlocked(): boolean {
+  return Date.now() < firestoreWriteBlockedUntilMs;
+}
+
+function markFirestoreWriteQuotaExceeded() {
+  // Pause redundant Firestore writes for 30 minutes (or until next session/day) while Cloud SQL + Google Sheets handle sync seamlessly
+  firestoreWriteBlockedUntilMs = Date.now() + 30 * 60 * 1000;
+  try {
+    sessionStorage.setItem(
+      STORAGE_KEY_FIRESTORE_WRITE_BLOCK_UNTIL,
+      String(firestoreWriteBlockedUntilMs)
+    );
+  } catch {}
+  if (!hasLoggedQuotaNotice) {
+    hasLoggedQuotaNotice = true;
+    console.info(
+      'ℹ️ Cloud Firestore daily free write quota reached. Automatically routing sync through Cloud SQL & Google Sheets.'
+    );
+  }
 }
 
 function logStreamStatus(streamName: string, error: unknown, onError?: (err: unknown) => void) {
   if (onError) onError(error);
   if (isQuotaExceededError(error)) {
-    if (!hasLoggedQuotaNotice) {
-      hasLoggedQuotaNotice = true;
-      console.info(
-        'ℹ️ Cloud Firestore daily free read quota reached. Operating seamlessly with LocalStorage cache until daily quota reset.'
-      );
-    }
+    markFirestoreWriteQuotaExceeded();
     return;
   }
   console.warn(`Firestore ${streamName} stream status:`, error);
@@ -1158,6 +1188,63 @@ async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Prom
           ).catch(() => {});
         }
       }
+
+      // Two-Way Master Config Sync via Google Sheets ("ตั้งค่าระบบ_DOE")
+      // Keeps categories, queue metrics, offices, highlights, and mascot replies in sync between Dev & Deployed even when Firestore daily write quota is hit
+      const incomingSheetMaster = result.masterConfig as Partial<BundledMasterConfig> | null | undefined;
+      if (incomingSheetMaster && typeof incomingSheetMaster === 'object') {
+        const activeIdSet = new Set<string>(sqlActiveReportsCache.keys());
+        const beforeSig = JSON.stringify({
+          c: masterDocCache.bundledCategories?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
+          q: masterDocCache.bundledQueueMetrics?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
+          o: masterDocCache.bundledOffices?.length,
+          i: masterDocCache.bundledIssues?.length,
+          cu: masterDocCache.categoriesUpdatedAt,
+          qu: masterDocCache.queueMetricsUpdatedAt,
+        });
+        const { next, localHasNewerSections } = mergeIncomingMasterConfig(
+          masterDocCache,
+          incomingSheetMaster,
+          { isLiveRemote: true, activeIds: activeIdSet }
+        );
+        masterDocCache = next;
+        const afterSig = JSON.stringify({
+          c: masterDocCache.bundledCategories?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
+          q: masterDocCache.bundledQueueMetrics?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
+          o: masterDocCache.bundledOffices?.length,
+          i: masterDocCache.bundledIssues?.length,
+          cu: masterDocCache.categoriesUpdatedAt,
+          qu: masterDocCache.queueMetricsUpdatedAt,
+        });
+        if (afterSig !== beforeSig) {
+          broadcastMasterState(false);
+          fetch('/api/doe/master-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: omitUndefinedForFirestore(masterDocCache) }),
+          }).catch(() => {});
+        }
+        if (localHasNewerSections && masterDocCache.googleSheetsAutoSync !== false) {
+          const pushSig = `${masterDocCache.categoriesUpdatedAt || ''}|${masterDocCache.queueMetricsUpdatedAt || ''}|${masterDocCache.officesUpdatedAt || ''}|${masterDocCache.configUpdatedAt || ''}|${masterDocCache.bundledCategories?.length || 0}`;
+          if (pushSig !== lastSheetsMasterPushSignature) {
+            lastSheetsMasterPushSignature = pushSig;
+            syncMasterConfigToGoogleSheets(
+              omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>,
+              webhookUrl
+            ).catch(() => {});
+          }
+        }
+      } else if (masterDocCache.googleSheetsAutoSync !== false) {
+        // First-time seed of masterConfig into Google Sheets "ตั้งค่าระบบ_DOE" tab
+        const pushSig = `seed|${masterDocCache.categoriesUpdatedAt || ''}|${masterDocCache.bundledCategories?.length || 0}|${masterDocCache.bundledOffices?.length || 0}`;
+        if (pushSig !== lastSheetsMasterPushSignature && (masterDocCache.bundledCategories?.length || 0) > 0) {
+          lastSheetsMasterPushSignature = pushSig;
+          syncMasterConfigToGoogleSheets(
+            omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>,
+            webhookUrl
+          ).catch(() => {});
+        }
+      }
     }
   } catch {
     // Non-fatal if offline
@@ -1444,19 +1531,91 @@ async function persistMasterConfigOnline(
     }
   });
 
-  // 2. Dual-write partial section update to Cloud Firestore so Shared/Deployed Web App & real-time clients stay in sync
+  // 2. Dual-write partial section update to Cloud Firestore (skipped automatically if daily free write quota is exceeded)
   const docRef = doc(db, CONFIG_COLLECTION, CONFIG_DOC_ID);
-  const firestorePromise = setDoc(docRef, partialWirePayload, {
-    merge: true,
-  }).catch((error) => {
-    if (isQuotaExceededError(error)) {
-      logStreamStatus('system_config_write', error);
-      return;
-    }
-    handleFirestoreError(error, OperationType.WRITE, `${CONFIG_COLLECTION}/${CONFIG_DOC_ID}`);
-  });
+  const firestorePromise = isFirestoreWriteQuotaBlocked()
+    ? Promise.resolve()
+    : setDoc(docRef, partialWirePayload, {
+        merge: true,
+      }).catch((error) => {
+        if (isQuotaExceededError(error)) {
+          markFirestoreWriteQuotaExceeded();
+          return;
+        }
+        handleFirestoreError(error, OperationType.WRITE, `${CONFIG_COLLECTION}/${CONFIG_DOC_ID}`);
+      });
 
-  await Promise.all([sqlPromise, firestorePromise]);
+  // 3. Two-Way Google Sheets Master Config Sync (keeps Dev & Deployed Web App 100% aligned even when Firestore daily write quota is full)
+  const shouldSyncMasterToSheets =
+    masterDocCache.googleSheetsAutoSync !== false &&
+    (Array.isArray(partialUpdate.bundledCategories) ||
+      Array.isArray(partialUpdate.bundledQueueMetrics) ||
+      Array.isArray(partialUpdate.bundledOffices) ||
+      Array.isArray(partialUpdate.bundledDeletedOffices) ||
+      Array.isArray(partialUpdate.bundledReporters) ||
+      Array.isArray(partialUpdate.bundledIssues) ||
+      stampedUpdate.configUpdatedAt !== undefined);
+
+  const sheetsMasterPromise = shouldSyncMasterToSheets
+    ? (async () => {
+        const storedCfg = getStoredGoogleSheetsConfig();
+        const webhookUrl = (
+          masterDocCache.googleSheetsWebhookUrl ||
+          storedCfg.webhookUrl ||
+          DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL ||
+          ''
+        ).trim();
+        if (webhookUrl.startsWith('https://script.google.com/')) {
+          const compactMaster = {
+            ...(omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>),
+          };
+          delete compactMaster.bundledDeletedReports;
+          await syncMasterConfigToGoogleSheets(compactMaster, webhookUrl);
+        }
+      })().catch(() => {})
+    : Promise.resolve();
+
+  await Promise.all([sqlPromise, firestorePromise, sheetsMasterPromise]);
+}
+
+export async function syncMasterConfigNowToGoogleSheets(
+  explicitWebhookUrl?: string
+): Promise<boolean> {
+  const storedCfg = getStoredGoogleSheetsConfig();
+  const webhookUrl = (
+    explicitWebhookUrl ||
+    masterDocCache.googleSheetsWebhookUrl ||
+    storedCfg.webhookUrl ||
+    DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL ||
+    ''
+  ).trim();
+  if (!webhookUrl.startsWith('https://script.google.com/')) return false;
+  const compactMaster = {
+    ...(omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>),
+  };
+  delete compactMaster.bundledDeletedReports;
+  return syncMasterConfigToGoogleSheets(compactMaster, webhookUrl);
+}
+
+export async function applyPulledMasterConfigFromSheets(
+  incomingMasterConfig: Record<string, unknown> | null | undefined
+): Promise<boolean> {
+  if (!incomingMasterConfig || typeof incomingMasterConfig !== 'object') return false;
+  const activeIdSet = new Set<string>(sqlActiveReportsCache.keys());
+  const { next } = mergeIncomingMasterConfig(
+    masterDocCache,
+    incomingMasterConfig as Partial<BundledMasterConfig>,
+    { isLiveRemote: true, activeIds: activeIdSet }
+  );
+  masterDocCache = next;
+  saveMasterSectionTimestamps(masterDocCache);
+  broadcastMasterState(false);
+  fetch('/api/doe/master-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: omitUndefinedForFirestore(masterDocCache) }),
+  }).catch(() => {});
+  return true;
 }
 
 function ensureMasterSubscription(onError?: (err: unknown) => void) {
@@ -1478,8 +1637,14 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
         hasReceivedFirstMasterSnapshot = true;
         broadcastMasterState(false);
 
-        // If local cache had strictly newer edits (e.g. added category/status) than Firestore snapshot, push back to Firestore
-        if (localHasNewerSections) {
+        // If local cache had strictly newer edits than Firestore snapshot, push back to Firestore (throttled & quota-safe)
+        const nowMs = Date.now();
+        if (
+          localHasNewerSections &&
+          !isFirestoreWriteQuotaBlocked() &&
+          nowMs - lastFirestoreRepairPushMs > 60000
+        ) {
+          lastFirestoreRepairPushMs = nowMs;
           const repairPayload = omitUndefinedForFirestore({
             bundledCategories: masterDocCache.bundledCategories,
             deletedCategoryIds: masterDocCache.deletedCategoryIds,
@@ -1494,7 +1659,9 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
             adminPin: masterDocCache.adminPin || DEFAULT_SYSTEM_CONFIG.adminPin,
             updatedAt: masterDocCache.updatedAt || new Date().toISOString(),
           });
-          setDoc(docRef, repairPayload, { merge: true }).catch(() => {});
+          setDoc(docRef, repairPayload, { merge: true }).catch((err) => {
+            if (isQuotaExceededError(err)) markFirestoreWriteQuotaExceeded();
+          });
         }
       }
     },
@@ -1635,36 +1802,12 @@ export async function saveBulkReportsOnline(
     }
   }
 
-  // 2. Dual-write to Cloud Firestore report_bundles shards
-  const byShard = new Map<string, Record<string, DOEReport>>();
+  // 2. Update in-memory shard cache only (Quota Saver: bulk imports/restores persist via Cloud SQL + Google Sheets without burning 24+ Firestore daily write units!)
   for (const r of validReports) {
     const shardId = getBundleIdForReportId(r.id);
-    const group = byShard.get(shardId) || {};
-    group[r.id] = r;
-    byShard.set(shardId, group);
     const cachedShard = liveBundleShardsCache.get(shardId) || {};
     liveBundleShardsCache.set(shardId, { ...cachedShard, [r.id]: r });
   }
-
-  await Promise.all(
-    Array.from(byShard.entries()).map(async ([shardId, reportsMap]) => {
-      try {
-        await setDoc(
-          doc(db, REPORT_BUNDLES_COLLECTION, shardId),
-          {
-            id: shardId,
-            reportsMap,
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      } catch (err) {
-        if (!isQuotaExceededError(err)) {
-          console.warn('Firestore shard bulk sync warning:', shardId, err);
-        }
-      }
-    })
-  );
 
   // 3. Also sync bulk reports to Google Sheets so Deployed Web App and Dev App always share 100% of rescued/bulk reports
   if (masterDocCache.googleSheetsAutoSync !== false) {
@@ -2210,7 +2353,7 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
       console.warn('Cloud SQL saveReportOnline warning:', err);
     });
 
-  // 2. Single-shard write to Cloud Firestore report_bundles (with automatic retry on transient network drop)
+  // 2. Single-shard write to Cloud Firestore report_bundles (Quota Saver: skip if daily free write quota is exceeded)
   const writeShardToFirestore = () =>
     setDoc(
       doc(db, REPORT_BUNDLES_COLLECTION, shardId),
@@ -2222,40 +2365,53 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
       { merge: true }
     );
 
-  const firestoreShardPromise = writeShardToFirestore()
-    .then(() => {
-      firestoreOk = true;
-    })
-    .catch(async (err) => {
-      if (!isQuotaExceededError(err)) {
-        try {
-          await new Promise((r) => setTimeout(r, 600));
-          await writeShardToFirestore();
+  const firestoreShardPromise = isFirestoreWriteQuotaBlocked()
+    ? Promise.resolve()
+    : writeShardToFirestore()
+        .then(() => {
           firestoreOk = true;
-          return;
-        } catch (retryErr) {
-          lastError = retryErr;
-          console.warn('Firestore saveReportOnline shard warning:', retryErr);
-        }
-      } else {
-        lastError = err;
-      }
-    });
+        })
+        .catch(async (err) => {
+          if (isQuotaExceededError(err)) {
+            markFirestoreWriteQuotaExceeded();
+            lastError = err;
+            return;
+          }
+          try {
+            await new Promise((r) => setTimeout(r, 600));
+            await writeShardToFirestore();
+            firestoreOk = true;
+            return;
+          } catch (retryErr) {
+            if (isQuotaExceededError(retryErr)) {
+              markFirestoreWriteQuotaExceeded();
+            } else {
+              console.warn('Firestore saveReportOnline shard warning:', retryErr);
+            }
+            lastError = retryErr;
+          }
+        });
 
-  // 3. Background sync to Google Sheets (non-blocking) with dynamic admin schema
-  if (masterDocCache.googleSheetsAutoSync !== false) {
-    const schema = buildSheetsSchemaMetadata(
-      masterDocCache.bundledCategories,
-      masterDocCache.bundledQueueMetrics
-    );
-    syncReportToGoogleSheets(cleanReport, masterDocCache.googleSheetsWebhookUrl, schema).catch(
-      () => {}
-    );
-  }
+  // 3. Sync to Google Sheets with dynamic admin schema (serves as real-time persistence when Firestore daily quota is reached)
+  let sheetsOk = false;
+  const sheetsPromise =
+    masterDocCache.googleSheetsAutoSync !== false
+      ? (async () => {
+          const schema = buildSheetsSchemaMetadata(
+            masterDocCache.bundledCategories,
+            masterDocCache.bundledQueueMetrics
+          );
+          sheetsOk = await syncReportToGoogleSheets(
+            cleanReport,
+            masterDocCache.googleSheetsWebhookUrl,
+            schema
+          );
+        })().catch(() => {})
+      : Promise.resolve();
 
-  await Promise.all([sqlPromise, firestoreShardPromise]);
+  await Promise.all([sqlPromise, firestoreShardPromise, sheetsPromise]);
 
-  if (!sqlOk && !firestoreOk) {
+  if (!sqlOk && !firestoreOk && !sheetsOk) {
     throw lastError || new Error('Online report persistence failed');
   }
 }
@@ -2286,17 +2442,21 @@ export async function purgeGhostReportOnline(reportId: string): Promise<void> {
     console.warn('Could not purge report in Cloud SQL:', reportId, err);
   });
 
-  const firestorePromises = touchedShards.map((shardId) =>
-    setDoc(
-      doc(db, REPORT_BUNDLES_COLLECTION, shardId),
-      {
-        id: shardId,
-        reportsMap: { [reportId]: deleteField() },
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    ).catch(() => {})
-  );
+  const firestorePromises = isFirestoreWriteQuotaBlocked()
+    ? []
+    : touchedShards.map((shardId) =>
+        setDoc(
+          doc(db, REPORT_BUNDLES_COLLECTION, shardId),
+          {
+            id: shardId,
+            reportsMap: { [reportId]: deleteField() },
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        ).catch((err) => {
+          if (isQuotaExceededError(err)) markFirestoreWriteQuotaExceeded();
+        })
+      );
 
   if (masterDocCache.googleSheetsAutoSync !== false) {
     deleteReportFromGoogleSheets(reportId, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
@@ -2342,17 +2502,21 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
     console.warn('Cloud SQL deleteReportOnline warning:', err);
   });
 
-  const firestorePromises = touchedShards.map((shardId) =>
-    setDoc(
-      doc(db, REPORT_BUNDLES_COLLECTION, shardId),
-      {
-        id: shardId,
-        reportsMap: { [report.id]: deleteField() },
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    ).catch(() => {})
-  );
+  const firestorePromises = isFirestoreWriteQuotaBlocked()
+    ? []
+    : touchedShards.map((shardId) =>
+        setDoc(
+          doc(db, REPORT_BUNDLES_COLLECTION, shardId),
+          {
+            id: shardId,
+            reportsMap: { [report.id]: deleteField() },
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        ).catch((err) => {
+          if (isQuotaExceededError(err)) markFirestoreWriteQuotaExceeded();
+        })
+      );
 
   if (masterDocCache.googleSheetsAutoSync !== false) {
     deleteReportFromGoogleSheets(report.id, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
@@ -2388,15 +2552,19 @@ export async function restoreReportOnline(report: DOEReport): Promise<void> {
     console.warn('Cloud SQL restoreReportOnline warning:', err);
   });
 
-  const firestorePromise = setDoc(
-    doc(db, REPORT_BUNDLES_COLLECTION, shardId),
-    {
-      id: shardId,
-      reportsMap: { [sanitized.id]: cleanReport },
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  ).catch(() => {});
+  const firestorePromise = isFirestoreWriteQuotaBlocked()
+    ? Promise.resolve()
+    : setDoc(
+        doc(db, REPORT_BUNDLES_COLLECTION, shardId),
+        {
+          id: shardId,
+          reportsMap: { [sanitized.id]: cleanReport },
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      ).catch((err) => {
+        if (isQuotaExceededError(err)) markFirestoreWriteQuotaExceeded();
+      });
 
   if (masterDocCache.googleSheetsAutoSync !== false) {
     const schema = buildSheetsSchemaMetadata(

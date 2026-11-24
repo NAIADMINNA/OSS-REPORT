@@ -21,6 +21,8 @@ import {
   clearAllSystemIssuesOnline,
   saveBulkReportsOnline,
   cleanupDuplicateReportsOnline,
+  syncMasterConfigNowToGoogleSheets,
+  applyPulledMasterConfigFromSheets,
   DeepScanDiagnosticResult,
 } from '../services/firestoreService';
 import {
@@ -203,6 +205,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     const schema = buildSheetsSchemaMetadata(categories, queueMetrics);
     setSheetsSyncProgress({ done: 0, total: duplicateSlotAudit.deduped.length });
     try {
+      await syncMasterConfigNowToGoogleSheets(cleanUrl).catch(() => false);
       const result = await syncBulkReportsToGoogleSheets(
         reports,
         cleanUrl,
@@ -211,7 +214,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         },
         schema
       );
-      onNotify(result.message || 'ซิงค์ข้อมูลลง Google Sheets สำเร็จ');
+      onNotify(result.message || 'ซิงค์ข้อมูลรายงานและการตั้งค่าแอดมินลง Google Sheets สำเร็จ');
     } finally {
       setIsSyncingToSheets(false);
       setSheetsSyncProgress(null);
@@ -227,6 +230,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         cleanUrl.startsWith('https://script.google.com/') ? cleanUrl : undefined
       );
       if (cleanUrl.startsWith('https://script.google.com/')) {
+        await syncMasterConfigNowToGoogleSheets(cleanUrl).catch(() => false);
         const schema = buildSheetsSchemaMetadata(categories, queueMetrics);
         await syncBulkReportsToGoogleSheets(
           duplicateSlotAudit.deduped,
@@ -237,11 +241,11 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       }
       if (removedCount > 0) {
         onNotify(
-          `ล้างรายงานซ้ำในวันเดียวกันสำเร็จ จำนวน ${removedCount.toLocaleString()} รายการ (คงเหลือฉบับล่าสุด ${keptCount.toLocaleString()} รายการ พร้อมอัปเดตคอลัมน์ใน Google Sheets แล้ว)`
+          `ล้างรายงานซ้ำในวันเดียวกันสำเร็จ จำนวน ${removedCount.toLocaleString()} รายการ (คงเหลือฉบับล่าสุด ${keptCount.toLocaleString()} รายการ พร้อมซิงก์หัวข้อและคอลัมน์บน Google Sheets แล้ว)`
         );
       } else {
         onNotify(
-          `ตรวจสอบแล้วไม่พบรายการซ้ำในระบบ (${keptCount.toLocaleString()} รายการ) และได้อัปเดตคอลัมน์หัวข้อเพิ่มเติมใน Google Sheets เรียบร้อยแล้ว`
+          `ตรวจสอบแล้วไม่พบรายการซ้ำในระบบ (${keptCount.toLocaleString()} รายการ) และได้ซิงก์หัวข้อและการตั้งค่าแอดมินขึ้น Google Sheets เรียบร้อยแล้ว`
         );
       }
     } catch {
@@ -260,9 +264,16 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     setIsPullingFromSheets(true);
     try {
       const result = await pullReportsFromGoogleSheets(cleanUrl);
+      const appliedMaster = await applyPulledMasterConfigFromSheets(result.masterConfig);
       if (result.success && result.reports.length > 0) {
         await saveBulkReportsOnline(result.reports, true, false);
-        onNotify(`กู้คืนและซิงค์ข้อมูลจาก Google Sheets จำนวน ${result.reports.length.toLocaleString()} รายการ เข้าสู่ระบบเรียบร้อยแล้ว`);
+        onNotify(
+          appliedMaster
+            ? `กู้คืนและซิงก์ข้อมูลจาก Google Sheets จำนวน ${result.reports.length.toLocaleString()} รายการ พร้อมหัวข้อและการตั้งค่าแอดมินล่าสุดเรียบร้อยแล้ว`
+            : `กู้คืนและซิงก์ข้อมูลจาก Google Sheets จำนวน ${result.reports.length.toLocaleString()} รายการ เข้าสู่ระบบเรียบร้อยแล้ว`
+        );
+      } else if (appliedMaster) {
+        onNotify('ซิงก์หัวข้อกลุ่มเป้าหมาย สถานะคิว และการตั้งค่าแอดมินล่าสุดจาก Google Sheets เรียบร้อยแล้ว');
       } else {
         onNotify(result.message || 'ไม่พบรายการรายงานใน Google Sheets');
       }
@@ -4096,7 +4107,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                       )}
                     </div>
                     <p className="text-xs text-emerald-200/80 mt-0.5">
-                      บันทึกสำเนารายงานทุกฉบับลง Google Sheets อัตโนมัติ <strong>ป้องกันแถวซ้ำในวันเดียวกัน (1 แถวต่อวัน/สำนักงาน/ศูนย์)</strong>, <strong>แตกคอลัมน์เพิ่มอัตโนมัติตามหัวข้อและสถานะใหม่ของแอดมิน + คอลัมน์สรุปอ่านง่าย</strong>, เรียงวันที่ล่าสุดอยู่บนสุด และแยกแท็บรายเดือนอัตโนมัติ
+                      บันทึกสำเนารายงานทุกฉบับลง Google Sheets อัตโนมัติ <strong>ป้องกันแถวซ้ำในวันเดียวกัน</strong>, <strong>แตกคอลัมน์เพิ่มอัตโนมัติตามหัวข้อและสถานะใหม่</strong>, และ <strong>ซิงก์หัวข้อ/สถานะ/ศูนย์บริการแบบ 2 ทางผ่านแท็บ "ตั้งค่าระบบ_DOE"</strong> ทำให้ตัวพัฒนาและเว็บที่ Deploy ตรงกันตลอดเวลาแม้โควตาเขียน Firestore รายวันเต็ม
                     </p>
                   </div>
                 </div>
@@ -4107,7 +4118,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <Code className="w-3.5 h-3.5" />
-                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'อัปเดตโค้ด Apps Script v2 (แตกคอลัมน์อัตโนมัติ + กันแถวซ้ำ)'}</span>
+                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'อัปเดตโค้ด Apps Script v2.2 (คอลัมน์ ม.63/2 มติ 14 ก.ค. 69 + เรียงคอลัมน์ B ล่าสุด)'}</span>
                 </button>
               </div>
 
@@ -4115,28 +4126,28 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 <div className="bg-slate-950/80 rounded-xl p-4 border border-emerald-800/50 space-y-3 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-bold text-emerald-300">
-                      โค้ด Google Apps Script รุ่นผู้บริหาร v2 (แตกคอลัมน์หัวข้อใหม่ + คอลัมน์สรุปอ่านง่าย + ล้างและป้องกันแถวซ้ำในวันเดียวกันอัตโนมัติ):
+                      โค้ด Google Apps Script รุ่นผู้บริหาร v2.2 (คอลัมน์ ม.63/2 มติ 14 ก.ค. 69 + เรียงคอลัมน์ B ล่าสุดบนสุด + ซิงก์แท็บ "ตั้งค่าระบบ_DOE" + กันแถวซ้ำ):
                     </span>
                     <button
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
-                        onNotify('คัดลอกโค้ด Google Apps Script v2 (แตกคอลัมน์อัตโนมัติ + กันแถวซ้ำ) เรียบร้อยแล้ว');
+                        onNotify('คัดลอกโค้ด Google Apps Script v2.2 เรียบร้อยแล้ว');
                       }}
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <Copy className="w-3.5 h-3.5" />
-                      <span>คัดลอกโค้ด Apps Script v2 ทั้งหมด</span>
+                      <span>คัดลอกโค้ด Apps Script v2.2 ทั้งหมด</span>
                     </button>
                   </div>
                   <ol className="list-decimal list-inside space-y-1.5 text-slate-300 leading-relaxed">
                     <li>เปิดไฟล์ <strong>Google Sheets</strong> ของคุณ แล้วไปที่เมนูด้านบน <strong>ส่วนขยาย (Extensions) &rarr; Apps Script</strong></li>
-                    <li>ลบโค้ดเดิมออกทั้งหมด กดปุ่ม <strong>"คัดลอกโค้ด Apps Script v2 ทั้งหมด"</strong> ด้านบนไปวางแทนที่ แล้วกดไอคอนบันทึก (Save)</li>
+                    <li>ลบโค้ดเดิมออกทั้งหมด กดปุ่ม <strong>"คัดลอกโค้ด Apps Script v2.2 ทั้งหมด"</strong> ด้านบนไปวางแทนที่ แล้วกดไอคอนบันทึก (Save)</li>
                     <li>
                       หากเคยสร้าง URL ไว้แล้ว: กดปุ่มมุมขวาบน <strong>ทำให้ใช้งานได้ (Deploy) &rarr; จัดการการทำให้ใช้งานได้ (Manage deployments)</strong> &rarr; กดไอคอนรูปดินสอ (แก้ไข) &rarr; ช่องเวอร์ชันเลือก <strong>เวอร์ชันใหม่ (New version)</strong> แล้วกด Deploy (ได้ URL เดิม ไม่ต้องเปลี่ยน URL)
                     </li>
                     <li>
-                      หลังจากกด Deploy เวอร์ชันใหม่แล้ว ให้กดปุ่ม <strong>"ล้างแถวซ้ำ &amp; อัปเดตคอลัมน์บน Google Sheets"</strong> ด้านล่าง 1 ครั้ง ระบบจะรวมแถวซ้ำในวันเดียวกันให้อัตโนมัติ พร้อมเพิ่มคอลัมน์ <code>หัวข้อ/สถานะเพิ่มเติม (สรุป)</code> และแตกคอลัมน์แยกตามหัวข้อใหม่ทุกข้อให้ทันที
+                      หลังจากกด Deploy เวอร์ชันใหม่แล้ว ให้กดปุ่ม <strong>"ซิงก์รายงานทั้งหมดขึ้น Google Sheets"</strong> หรือ <strong>"ล้างแถวซ้ำ &amp; อัปเดตคอลัมน์"</strong> ด้านล่าง 1 ครั้ง ระบบจะจัดหัวคอลัมน์เป็น <code>ม.63/2 มติ 14 ก.ค. 69</code> และเรียงคอลัมน์ B (วันที่รายงาน + เวลาล่าสุดอยู่ด้านบน) ให้อัตโนมัติทันที
                     </li>
                   </ol>
                 </div>
