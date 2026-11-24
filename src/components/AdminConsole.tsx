@@ -67,6 +67,7 @@ import {
   RefreshCw,
   BookOpen,
   Send,
+  Star,
 } from 'lucide-react';
 import { ActiveTab } from './DOEHeader';
 import { SystemManualView } from './SystemManualView';
@@ -538,6 +539,8 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       color: newCategory.color || 'from-blue-600 to-indigo-600',
       isActive: true,
       isDefault: false,
+      isHighlighted: Boolean(newCategory.isHighlighted),
+      highlightLabel: newCategory.highlightLabel?.trim() || undefined,
     };
     onUpdateCategories([...categories, item]);
     setIsAddingCategory(false);
@@ -583,6 +586,32 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     );
   };
 
+  const handleToggleCategoryHighlight = (catId: string, idx: number) => {
+    const updated = categories.map((c, i) => {
+      if (c.id !== catId) return c;
+      const currentlyHighlighted =
+        typeof c.isHighlighted === 'boolean' ? c.isHighlighted : i === 0;
+      const nextHighlighted = !currentlyHighlighted;
+      return {
+        ...c,
+        isHighlighted: nextHighlighted,
+        highlightLabel:
+          nextHighlighted && !c.highlightLabel
+            ? idx === 0
+              ? 'HOT'
+              : 'เน้นพิเศษ'
+            : c.highlightLabel,
+      };
+    });
+    onUpdateCategories(updated);
+    const target = updated.find((c) => c.id === catId);
+    onNotify(
+      target?.isHighlighted
+        ? `เปิดเน้นหัวข้อ "${target.title}" ให้โดดเด่นแล้ว`
+        : `ยกเลิกการเน้นหัวข้อ "${target?.title}" แล้ว`
+    );
+  };
+
   // 2.1 QUEUE & DAILY SERVICES METRICS ACTIONS (3. สถานะคิวและการให้บริการประจำวัน)
   const handleSaveQueueMetric = (qm: QueueMetricCategory) => {
     const list = queueMetrics || DEFAULT_QUEUE_METRICS;
@@ -606,6 +635,8 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       badgeColor: 'text-indigo-700 bg-indigo-50 border-indigo-200',
       isActive: true,
       isDefault: false,
+      isHighlighted: Boolean(newQueueMetric.isHighlighted),
+      highlightLabel: newQueueMetric.highlightLabel?.trim() || undefined,
     };
     const list = queueMetrics || DEFAULT_QUEUE_METRICS;
     onUpdateQueueMetrics?.([...list, item]);
@@ -651,6 +682,27 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       m?.isActive
         ? `เปิดใช้งานหัวข้อสถานะคิว "${m.title}" แล้ว`
         : `ซ่อนหัวข้อสถานะคิว "${m?.title}" จากรายงานแล้ว`
+    );
+  };
+
+  const handleToggleQueueMetricHighlight = (qmId: string) => {
+    const list = queueMetrics || DEFAULT_QUEUE_METRICS;
+    const updated = list.map((m) => {
+      if (m.id !== qmId) return m;
+      const nextHighlighted = !Boolean(m.isHighlighted);
+      return {
+        ...m,
+        isHighlighted: nextHighlighted,
+        highlightLabel:
+          nextHighlighted && !m.highlightLabel ? 'เน้นพิเศษ' : m.highlightLabel,
+      };
+    });
+    onUpdateQueueMetrics?.(updated);
+    const target = updated.find((item) => item.id === qmId);
+    onNotify(
+      target?.isHighlighted
+        ? `เปิดเน้นสถานะ "${target.title}" ให้โดดเด่นแล้ว`
+        : `ยกเลิกการเน้นสถานะ "${target?.title}" แล้ว`
     );
   };
 
@@ -1376,21 +1428,56 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingCategory(false)}
-                    className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
-                  >
-                    ยกเลิก
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleAddCategory}
-                    className="text-xs font-bold px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs cursor-pointer"
-                  >
-                    บันทึกหัวข้อใหม่
-                  </button>
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-sky-200/70">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="inline-flex items-center gap-2 text-xs font-bold text-amber-900 bg-amber-50/90 border border-amber-300 px-3 py-1.5 rounded-lg cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(newCategory.isHighlighted)}
+                        onChange={(e) =>
+                          setNewCategory({
+                            ...newCategory,
+                            isHighlighted: e.target.checked,
+                            highlightLabel:
+                              e.target.checked && !newCategory.highlightLabel
+                                ? 'เน้นพิเศษ'
+                                : newCategory.highlightLabel,
+                          })
+                        }
+                        className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                      />
+                      <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+                      <span>เน้นหัวข้อนี้เพื่อความชัดเจน</span>
+                    </label>
+                    {newCategory.isHighlighted && (
+                      <input
+                        type="text"
+                        placeholder="ข้อความป้ายเน้น (เช่น เน้นพิเศษ, HOT, สำคัญ)"
+                        value={newCategory.highlightLabel || ''}
+                        onChange={(e) =>
+                          setNewCategory({ ...newCategory, highlightLabel: e.target.value })
+                        }
+                        className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 w-56"
+                      />
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingCategory(false)}
+                      className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAddCategory}
+                      className="text-xs font-bold px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs cursor-pointer"
+                    >
+                      บันทึกหัวข้อใหม่
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1447,6 +1534,54 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                             className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md"
                           />
                         </div>
+                        <div className="col-span-2 flex flex-wrap items-center gap-2 pt-1">
+                          <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2.5 py-1 rounded-lg cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={
+                                typeof editingCategory.isHighlighted === 'boolean'
+                                  ? editingCategory.isHighlighted
+                                  : idx === 0
+                              }
+                              onChange={(e) =>
+                                setEditingCategory({
+                                  ...editingCategory,
+                                  isHighlighted: e.target.checked,
+                                  highlightLabel:
+                                    e.target.checked && !editingCategory.highlightLabel
+                                      ? idx === 0
+                                        ? 'HOT'
+                                        : 'เน้นพิเศษ'
+                                      : editingCategory.highlightLabel,
+                                })
+                              }
+                              className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                            />
+                            <Star className="w-3 h-3 text-amber-500 fill-amber-400" />
+                            <span>เน้นหัวข้อนี้</span>
+                          </label>
+                          {(typeof editingCategory.isHighlighted === 'boolean'
+                            ? editingCategory.isHighlighted
+                            : idx === 0) && (
+                            <input
+                              type="text"
+                              placeholder="ป้ายเน้น เช่น เน้นพิเศษ, HOT, สำคัญ"
+                              value={
+                                editingCategory.highlightLabel ??
+                                (typeof editingCategory.isHighlighted === 'boolean'
+                                  ? 'เน้นพิเศษ'
+                                  : 'HOT')
+                              }
+                              onChange={(e) =>
+                                setEditingCategory({
+                                  ...editingCategory,
+                                  highlightLabel: e.target.value,
+                                })
+                              }
+                              className="flex-1 min-w-[140px] text-xs p-1.5 bg-white border border-amber-300 rounded-md focus:ring-2 focus:ring-amber-500"
+                            />
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center justify-between gap-2 pt-2 border-t border-sky-200">
                         <button
@@ -1480,27 +1615,49 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   );
                 }
 
+                const isCatHighlighted =
+                  typeof cat.isHighlighted === 'boolean' ? cat.isHighlighted : idx === 0;
+                const catHighlightText =
+                  cat.highlightLabel?.trim() ||
+                  (typeof cat.isHighlighted === 'boolean' ? 'เน้นพิเศษ' : 'HOT');
+
                 return (
                   <div
                     key={cat.id}
                     className={`p-3.5 rounded-xl border flex items-center justify-between transition-all ${
-                      cat.isActive
-                        ? 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
-                        : 'bg-slate-50 border-dashed border-slate-300 opacity-60'
+                      !cat.isActive
+                        ? 'bg-slate-50 border-dashed border-slate-300 opacity-60'
+                        : isCatHighlighted
+                        ? 'bg-gradient-to-r from-amber-50/70 via-white to-blue-50/50 border-amber-300 ring-1 ring-amber-200/80 shadow-xs'
+                        : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-900 font-bold text-xs flex items-center justify-center shrink-0">
+                      <div
+                        className={`w-8 h-8 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 ${
+                          isCatHighlighted
+                            ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-2xs'
+                            : 'bg-blue-100 text-blue-900'
+                        }`}
+                      >
                         {idx + 1}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-bold text-xs text-slate-900 truncate">
                             {cat.title}
                           </span>
-                          <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-700">
-                            {cat.code}
-                          </span>
+                          {cat.code && (
+                            <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-700">
+                              {cat.code}
+                            </span>
+                          )}
+                          {isCatHighlighted && cat.isActive && (
+                            <span className="inline-flex items-center gap-0.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                              <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                              <span>{catHighlightText}</span>
+                            </span>
+                          )}
                           {!cat.isActive && (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-100 text-rose-700 font-bold">
                               ปิดใช้งาน
@@ -1514,6 +1671,28 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleCategoryHighlight(cat.id, idx)}
+                        className={`text-[10px] font-bold px-2 py-1 rounded-lg transition-colors border cursor-pointer inline-flex items-center gap-1 ${
+                          isCatHighlighted
+                            ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 border-amber-300 shadow-2xs'
+                            : 'bg-white text-slate-500 hover:bg-amber-50 hover:text-amber-800 border-slate-200 hover:border-amber-300'
+                        }`}
+                        title={
+                          isCatHighlighted
+                            ? 'กำลังเน้นหัวข้อนี้อยู่ (กดเพื่อยกเลิกการเน้น)'
+                            : 'กดเพื่อเน้นหัวข้อนี้ให้โดดเด่นในแบบฟอร์ม รายงาน และโปสเตอร์'
+                        }
+                      >
+                        <Star
+                          className={`w-3 h-3 ${
+                            isCatHighlighted ? 'fill-amber-500 text-amber-600' : 'text-slate-400'
+                          }`}
+                        />
+                        <span>{isCatHighlighted ? 'เน้นอยู่' : 'เน้น'}</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => handleToggleCategoryActive(cat.id)}
@@ -1647,21 +1826,56 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingQueueMetric(false)}
-                    className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
-                  >
-                    ยกเลิก
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleAddQueueMetric}
-                    className="text-xs font-bold px-4 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg shadow-xs cursor-pointer"
-                  >
-                    บันทึกหัวข้อใหม่
-                  </button>
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-teal-200/70">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="inline-flex items-center gap-2 text-xs font-bold text-amber-900 bg-amber-50/90 border border-amber-300 px-3 py-1.5 rounded-lg cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(newQueueMetric.isHighlighted)}
+                        onChange={(e) =>
+                          setNewQueueMetric({
+                            ...newQueueMetric,
+                            isHighlighted: e.target.checked,
+                            highlightLabel:
+                              e.target.checked && !newQueueMetric.highlightLabel
+                                ? 'เน้นพิเศษ'
+                                : newQueueMetric.highlightLabel,
+                          })
+                        }
+                        className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                      />
+                      <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+                      <span>เน้นสถานะนี้เพื่อความชัดเจน</span>
+                    </label>
+                    {newQueueMetric.isHighlighted && (
+                      <input
+                        type="text"
+                        placeholder="ข้อความป้ายเน้น (เช่น เน้นพิเศษ, สำคัญ)"
+                        value={newQueueMetric.highlightLabel || ''}
+                        onChange={(e) =>
+                          setNewQueueMetric({ ...newQueueMetric, highlightLabel: e.target.value })
+                        }
+                        className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 w-56"
+                      />
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingQueueMetric(false)}
+                      className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAddQueueMetric}
+                      className="text-xs font-bold px-4 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg shadow-xs cursor-pointer"
+                    >
+                      บันทึกหัวข้อใหม่
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1716,6 +1930,41 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                           className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-teal-500"
                         />
                       </div>
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2.5 py-1 rounded-lg cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(editingQueueMetric.isHighlighted)}
+                            onChange={(e) =>
+                              setEditingQueueMetric({
+                                ...editingQueueMetric,
+                                isHighlighted: e.target.checked,
+                                highlightLabel:
+                                  e.target.checked && !editingQueueMetric.highlightLabel
+                                    ? 'เน้นพิเศษ'
+                                    : editingQueueMetric.highlightLabel,
+                              })
+                            }
+                            className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                          />
+                          <Star className="w-3 h-3 text-amber-500 fill-amber-400" />
+                          <span>เน้นสถานะนี้</span>
+                        </label>
+                        {editingQueueMetric.isHighlighted && (
+                          <input
+                            type="text"
+                            placeholder="ป้ายเน้น เช่น เน้นพิเศษ, สำคัญ"
+                            value={editingQueueMetric.highlightLabel ?? 'เน้นพิเศษ'}
+                            onChange={(e) =>
+                              setEditingQueueMetric({
+                                ...editingQueueMetric,
+                                highlightLabel: e.target.value,
+                              })
+                            }
+                            className="flex-1 min-w-[140px] text-xs p-1.5 bg-white border border-amber-300 rounded-md focus:ring-2 focus:ring-amber-500"
+                          />
+                        )}
+                      </div>
                       <div className="flex items-center justify-between pt-1">
                         <button
                           type="button"
@@ -1747,27 +1996,44 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   );
                 }
 
+                const isQmHighlighted = Boolean(qm.isHighlighted);
+                const qmHighlightText = qm.highlightLabel?.trim() || 'เน้นพิเศษ';
+
                 return (
                   <div
                     key={qm.id}
                     className={`p-3.5 rounded-xl border flex items-center justify-between transition-all ${
-                      qm.isActive
-                        ? 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
-                        : 'bg-slate-50 border-dashed border-slate-300 opacity-60'
+                      !qm.isActive
+                        ? 'bg-slate-50 border-dashed border-slate-300 opacity-60'
+                        : isQmHighlighted
+                        ? 'bg-gradient-to-r from-amber-50/70 via-white to-teal-50/50 border-amber-300 ring-1 ring-amber-200/80 shadow-xs'
+                        : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-teal-100 text-teal-900 font-bold text-xs flex items-center justify-center shrink-0">
+                      <div
+                        className={`w-8 h-8 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 ${
+                          isQmHighlighted
+                            ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-2xs'
+                            : 'bg-teal-100 text-teal-900'
+                        }`}
+                      >
                         {idx + 1}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-bold text-xs text-slate-900 truncate">
                             {qm.title}
                           </span>
                           <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-teal-50 text-teal-800 border border-teal-200">
                             {qm.unit}
                           </span>
+                          {isQmHighlighted && qm.isActive && (
+                            <span className="inline-flex items-center gap-0.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                              <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                              <span>{qmHighlightText}</span>
+                            </span>
+                          )}
                           {!qm.isActive && (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-100 text-rose-700 font-bold">
                               ปิดใช้งาน
@@ -1786,6 +2052,28 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleQueueMetricHighlight(qm.id)}
+                        className={`text-[10px] font-bold px-2 py-1 rounded-lg transition-colors border cursor-pointer inline-flex items-center gap-1 ${
+                          isQmHighlighted
+                            ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 border-amber-300 shadow-2xs'
+                            : 'bg-white text-slate-500 hover:bg-amber-50 hover:text-amber-800 border-slate-200 hover:border-amber-300'
+                        }`}
+                        title={
+                          isQmHighlighted
+                            ? 'กำลังเน้นสถานะนี้อยู่ (กดเพื่อยกเลิกการเน้น)'
+                            : 'กดเพื่อเน้นสถานะนี้ให้โดดเด่นในแบบฟอร์ม รายงาน และโปสเตอร์'
+                        }
+                      >
+                        <Star
+                          className={`w-3 h-3 ${
+                            isQmHighlighted ? 'fill-amber-500 text-amber-600' : 'text-slate-400'
+                          }`}
+                        />
+                        <span>{isQmHighlighted ? 'เน้นอยู่' : 'เน้น'}</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => handleToggleQueueMetricActive(qm.id)}

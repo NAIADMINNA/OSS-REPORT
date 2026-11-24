@@ -56,6 +56,8 @@ export interface QueueMetricCategory {
   badgeColor?: string;
   isActive: boolean;
   isDefault?: boolean;
+  isHighlighted?: boolean;
+  highlightLabel?: string;
 }
 
 export interface EmploymentOffice {
@@ -78,6 +80,8 @@ export interface ReportCategory {
   iconName?: string;
   isActive: boolean;
   isDefault?: boolean;
+  isHighlighted?: boolean;
+  highlightLabel?: string;
 }
 
 export interface ReporterProfile {

@@ -106,11 +106,15 @@ export const ReportForm: React.FC<ReportFormProps> = ({
   const [newCatTitleInput, setNewCatTitleInput] = useState('');
   const [newCatSubLabelInput, setNewCatSubLabelInput] = useState('');
   const [newCatCodeInput, setNewCatCodeInput] = useState('');
+  const [newCatHighlightInput, setNewCatHighlightInput] = useState(false);
+  const [newCatHighlightLabelInput, setNewCatHighlightLabelInput] = useState('เน้นพิเศษ');
 
   const [showAdminQueuePanel, setShowAdminQueuePanel] = useState(false);
   const [newQueueTitleInput, setNewQueueTitleInput] = useState('');
   const [newQueueUnitInput, setNewQueueUnitInput] = useState('คน');
   const [newQueueSubLabelInput, setNewQueueSubLabelInput] = useState('');
+  const [newQueueHighlightInput, setNewQueueHighlightInput] = useState(false);
+  const [newQueueHighlightLabelInput, setNewQueueHighlightLabelInput] = useState('เน้นพิเศษ');
 
   // Admin Verification Modal for protected fields (Center Name & Notes)
   const [adminModalOpen, setAdminModalOpen] = useState(false);
@@ -671,12 +675,18 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       color: 'from-blue-600 to-indigo-600',
       isActive: true,
       isDefault: false,
+      isHighlighted: newCatHighlightInput,
+      highlightLabel: newCatHighlightInput
+        ? newCatHighlightLabelInput.trim() || 'เน้นพิเศษ'
+        : undefined,
     };
     const baseCats = categories && categories.length > 0 ? categories : activeCategories;
     onUpdateCategories?.([...baseCats, newCat]);
     setNewCatTitleInput('');
     setNewCatSubLabelInput('');
     setNewCatCodeInput('');
+    setNewCatHighlightInput(false);
+    setNewCatHighlightLabelInput('เน้นพิเศษ');
     setShowAdminCategoryPanel(false);
     onNotify?.(`เพิ่มหัวข้อใหม่ "${newCat.title}" เรียบร้อยแล้ว`);
   };
@@ -696,12 +706,18 @@ export const ReportForm: React.FC<ReportFormProps> = ({
       badgeColor: 'text-indigo-700 bg-indigo-50 border-indigo-200',
       isActive: true,
       isDefault: false,
+      isHighlighted: newQueueHighlightInput,
+      highlightLabel: newQueueHighlightInput
+        ? newQueueHighlightLabelInput.trim() || 'เน้นพิเศษ'
+        : undefined,
     };
     const baseMetrics = queueMetrics && queueMetrics.length > 0 ? queueMetrics : activeQueueMetrics;
     onUpdateQueueMetrics?.([...baseMetrics, newQm]);
     setNewQueueTitleInput('');
     setNewQueueUnitInput('คน');
     setNewQueueSubLabelInput('');
+    setNewQueueHighlightInput(false);
+    setNewQueueHighlightLabelInput('เน้นพิเศษ');
     setShowAdminQueuePanel(false);
     onNotify?.(`เพิ่มหัวข้อสถานะคิวใหม่ "${newQm.title}" เรียบร้อยแล้ว`);
   };
@@ -2217,22 +2233,45 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowAdminCategoryPanel(false)}
-                className="text-xs px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer"
-              >
-                ยกเลิก
-              </button>
-              <button
-                type="button"
-                onClick={handleQuickAddCategory}
-                className="text-xs px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>บันทึกเพิ่มหัวข้อนี้ทันที</span>
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2.5 py-1.5 rounded-lg cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={newCatHighlightInput}
+                    onChange={(e) => setNewCatHighlightInput(e.target.checked)}
+                    className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                  />
+                  <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+                  <span>เน้นหัวข้อนี้เพื่อความชัดเจน</span>
+                </label>
+                {newCatHighlightInput && (
+                  <input
+                    type="text"
+                    value={newCatHighlightLabelInput}
+                    onChange={(e) => setNewCatHighlightLabelInput(e.target.value)}
+                    placeholder="ป้ายเน้น เช่น เน้นพิเศษ, HOT"
+                    className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-44"
+                  />
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdminCategoryPanel(false)}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={handleQuickAddCategory}
+                  className="text-xs px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>บันทึกเพิ่มหัวข้อนี้ทันที</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -2282,6 +2321,12 @@ export const ReportForm: React.FC<ReportFormProps> = ({
               onStepChange = (d) => stepCustomCategory(cat.id, d);
             }
 
+            const isCatHighlighted =
+              typeof cat.isHighlighted === 'boolean' ? cat.isHighlighted : idx === 0;
+            const catHighlightLabel =
+              cat.highlightLabel?.trim() ||
+              (typeof cat.isHighlighted === 'boolean' ? 'เน้นพิเศษ' : 'HOT');
+
             return (
               <NumberInputField
                 key={cat.id}
@@ -2292,7 +2337,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 onStep={onStepChange}
                 highlight={val > 0}
                 primary={cat.id === 'section63_2' || cat.id === 'mouGroup'}
-                isHot={idx === 0}
+                isHot={isCatHighlighted}
+                hotLabel={catHighlightLabel}
               />
             );
           })}
@@ -2392,22 +2438,45 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowAdminQueuePanel(false)}
-                className="text-xs px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer"
-              >
-                ยกเลิก
-              </button>
-              <button
-                type="button"
-                onClick={handleQuickAddQueueMetric}
-                className="text-xs px-3.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>บันทึกเพิ่มหัวข้อคิวทันที</span>
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2.5 py-1.5 rounded-lg cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={newQueueHighlightInput}
+                    onChange={(e) => setNewQueueHighlightInput(e.target.checked)}
+                    className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                  />
+                  <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+                  <span>เน้นสถานะนี้เพื่อความชัดเจน</span>
+                </label>
+                {newQueueHighlightInput && (
+                  <input
+                    type="text"
+                    value={newQueueHighlightLabelInput}
+                    onChange={(e) => setNewQueueHighlightLabelInput(e.target.value)}
+                    placeholder="ป้ายเน้น เช่น เน้นพิเศษ, สำคัญ"
+                    className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-44"
+                  />
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdminQueuePanel(false)}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={handleQuickAddQueueMetric}
+                  className="text-xs px-3.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>บันทึกเพิ่มหัวข้อคิวทันที</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -2458,6 +2527,8 @@ export const ReportForm: React.FC<ReportFormProps> = ({
                 onStep={onStepChange}
                 badgeColor={metric.badgeColor || 'text-teal-700 bg-teal-50 border-teal-200'}
                 primary={metric.id === 'queueAppointment' || metric.id === 'cardsIssued'}
+                isHot={Boolean(metric.isHighlighted)}
+                hotLabel={metric.highlightLabel?.trim() || 'เน้นพิเศษ'}
                 isRequired={metric.id === 'queueAppointment'}
                 hasError={metric.id === 'queueAppointment' && queueAppointmentError}
                 inputRef={metric.id === 'queueAppointment' ? queueInputRef : undefined}
@@ -2854,6 +2925,7 @@ interface NumberInputFieldProps {
   primary?: boolean;
   badgeColor?: string;
   isHot?: boolean;
+  hotLabel?: string;
   isRequired?: boolean;
   hasError?: boolean;
   inputRef?: React.RefObject<HTMLInputElement | null>;
@@ -2870,6 +2942,7 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
   primary,
   badgeColor,
   isHot,
+  hotLabel,
   isRequired,
   hasError,
   inputRef,
@@ -2885,7 +2958,7 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
             ? 'bg-gradient-to-r from-teal-50/90 via-emerald-50/70 to-sky-50/80 border-2 border-teal-500 ring-2 ring-teal-400/25 shadow-xs'
             : 'bg-gradient-to-r from-amber-50/90 via-orange-50/70 to-rose-50/80 border-2 border-amber-500 ring-2 ring-amber-400/30 shadow-xs'
           : isHot
-          ? 'bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-sky-50/80 border-blue-400 ring-2 ring-blue-400/30 shadow-xs'
+          ? 'bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-sky-50/80 border-2 border-blue-400 ring-2 ring-blue-400/30 shadow-xs'
           : primary
           ? 'bg-blue-50/50 border-blue-200'
           : highlight
@@ -2934,7 +3007,7 @@ const NumberInputField: React.FC<NumberInputFieldProps> = ({
             {isHot && (
               <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white font-['Prompt'] shrink-0 shadow-2xs tracking-wider">
                 <Star className="w-3 h-3 fill-amber-200 text-amber-100" />
-                <span>HOT</span>
+                <span>{hotLabel || 'เน้นพิเศษ'}</span>
               </span>
             )}
           </div>

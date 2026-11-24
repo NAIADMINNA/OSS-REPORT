@@ -42,6 +42,7 @@ import {
   FolderOpen,
   Truck,
   MapPin,
+  Star,
 } from 'lucide-react';
 
 const THAI_MONTHS_FULL = [
@@ -108,10 +109,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const todayStr = useMemo(() => getTodayIsoDate(), []);
 
-  // Helper to look up configured queue metric titles & units
+  // Helper to look up configured queue metric titles, units, and highlight state
   const getQueueMetric = (id: string, defaultTitle: string, defaultUnit: string) => {
     const found = queueMetrics?.find((m) => m.id === id);
-    if (!found) return { title: defaultTitle, unit: defaultUnit };
+    if (!found) {
+      return {
+        title: defaultTitle,
+        unit: defaultUnit,
+        isHighlighted: false,
+        highlightLabel: 'เน้นพิเศษ',
+      };
+    }
     const title =
       id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร'
         ? 'บัตรเสีย'
@@ -120,9 +128,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร' && found.unit === 'คน'
         ? 'ใบ'
         : found.unit || defaultUnit;
-    return { title, unit };
+    return {
+      title,
+      unit,
+      isHighlighted: Boolean(found.isHighlighted),
+      highlightLabel: found.highlightLabel?.trim() || 'เน้นพิเศษ',
+    };
   };
 
+  const queueAppMetricInfo = getQueueMetric('queueAppointment', 'คิวนัดหมาย', 'คิว');
+  const verifiedMetricInfo = getQueueMetric('identityVerified', 'ยืนยันตัวตนสำเร็จ', 'คน');
   const issuedMetricInfo = getQueueMetric('cardsIssued', 'ออกบัตรสำเร็จ', 'ใบ');
   const missedMetricInfo = getQueueMetric('missedAppointment', 'ไม่มาตามนัด', 'คน');
   const wrongDateMetricInfo = getQueueMetric('wrongAppointmentDate', 'มาไม่ตรงวันนัด', 'คน');
@@ -1247,12 +1262,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       else if (cat.id === 'modifyDetails') color = 'bg-violet-600';
       else if (cat.id === 'substituteCard') color = 'bg-amber-500';
 
+      const isHighlighted =
+        typeof cat.isHighlighted === 'boolean' ? cat.isHighlighted : i === 0;
+      const highlightLabel =
+        cat.highlightLabel?.trim() ||
+        (typeof cat.isHighlighted === 'boolean' ? 'เน้นพิเศษ' : 'HOT');
+
       return {
         id: cat.id,
         label: `${i + 1}. ${cat.title}`,
         sub: cat.subLabel || cat.code,
         count,
         color,
+        isHighlighted,
+        highlightLabel,
       };
     });
   }, [activeCategories, displayedStats]);
@@ -2042,20 +2065,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* 3. HERO METRICS: Row 1 - Two Volume & Verification Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Card 1: คิวนัดหมายทั้งหมด */}
-        <div className="bg-gradient-to-r from-teal-50/90 via-white to-teal-50/30 rounded-2xl p-5 border border-teal-200/90 shadow-xs relative overflow-hidden flex items-center justify-between hover:shadow-md transition-shadow">
+        <div
+          className={`bg-gradient-to-r from-teal-50/90 via-white to-teal-50/30 rounded-2xl p-5 shadow-xs relative overflow-hidden flex items-center justify-between hover:shadow-md transition-shadow ${
+            queueAppMetricInfo.isHighlighted
+              ? 'border-2 border-amber-400 ring-2 ring-amber-300/60'
+              : 'border border-teal-200/90'
+          }`}
+        >
           <div className="absolute right-0 top-0 bottom-0 w-36 bg-gradient-to-l from-teal-100/20 to-transparent pointer-events-none" />
           <div className="flex items-center gap-4 relative z-10">
             <div className="w-13 h-13 rounded-xl bg-gradient-to-br from-teal-600 to-teal-700 text-white flex items-center justify-center shrink-0 shadow-xs ring-4 ring-teal-100/70">
               <Calendar className="w-6.5 h-6.5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-lg font-extrabold text-slate-900 tracking-tight font-['Prompt']">
-                  {displayedStats.isDrilldown ? 'คิวนัดหมาย (จังหวัดนี้)' : 'คิวนัดหมายทั้งหมด'}
+                  {displayedStats.isDrilldown
+                    ? `${queueAppMetricInfo.title} (จังหวัดนี้)`
+                    : queueAppMetricInfo.title === 'คิวนัดหมาย'
+                      ? 'คิวนัดหมายทั้งหมด'
+                      : queueAppMetricInfo.title}
                 </span>
                 <span className="text-xs sm:text-sm px-3 py-0.5 rounded-full font-bold bg-teal-100 text-teal-800 border border-teal-200 shadow-2xs">
                   เป้าหมายบริการ
                 </span>
+                {queueAppMetricInfo.isHighlighted && (
+                  <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                    <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                    <span>{queueAppMetricInfo.highlightLabel}</span>
+                  </span>
+                )}
               </div>
               <div className="text-sm sm:text-base text-slate-600 mt-0.5 font-medium">
                 {displayedStats.isDrilldown
@@ -2069,7 +2108,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-3xl sm:text-4xl font-black font-['Prompt'] text-teal-950 tracking-tight leading-none drop-shadow-2xs">
                 {formatNumber(displayedStats.totalQueue)}
               </span>
-              <span className="text-base sm:text-lg font-bold text-teal-700">คิว</span>
+              <span className="text-base sm:text-lg font-bold text-teal-700">{queueAppMetricInfo.unit}</span>
             </div>
             <div className="text-xs sm:text-sm text-slate-500 font-medium mt-1">
               เป้าหมายให้บริการ 100%
@@ -2078,20 +2117,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Card 2: ยืนยันตัวตนสำเร็จ */}
-        <div className="bg-gradient-to-r from-sky-50/90 via-white to-blue-50/30 rounded-2xl p-5 border border-sky-200/90 shadow-xs relative overflow-hidden flex items-center justify-between hover:shadow-md transition-shadow">
+        <div
+          className={`bg-gradient-to-r from-sky-50/90 via-white to-blue-50/30 rounded-2xl p-5 shadow-xs relative overflow-hidden flex items-center justify-between hover:shadow-md transition-shadow ${
+            verifiedMetricInfo.isHighlighted
+              ? 'border-2 border-amber-400 ring-2 ring-amber-300/60'
+              : 'border border-sky-200/90'
+          }`}
+        >
           <div className="absolute right-0 top-0 bottom-0 w-36 bg-gradient-to-l from-sky-100/20 to-transparent pointer-events-none" />
           <div className="flex items-center gap-4 relative z-10">
             <div className="w-13 h-13 rounded-xl bg-gradient-to-br from-sky-600 to-blue-700 text-white flex items-center justify-center shrink-0 shadow-xs ring-4 ring-sky-100/70">
               <ShieldCheck className="w-6.5 h-6.5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-lg font-extrabold text-slate-900 tracking-tight font-['Prompt']">
-                  ยืนยันตัวตนสำเร็จ
+                  {verifiedMetricInfo.title === 'ยืนยันตัวตน' ? 'ยืนยันตัวตนสำเร็จ' : verifiedMetricInfo.title}
                 </span>
                 <span className="text-xs sm:text-sm px-3 py-0.5 rounded-full font-bold bg-sky-100 text-sky-800 border border-sky-200 shadow-2xs">
                   ตรวจอัตลักษณ์
                 </span>
+                {verifiedMetricInfo.isHighlighted && (
+                  <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                    <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                    <span>{verifiedMetricInfo.highlightLabel}</span>
+                  </span>
+                )}
               </div>
               <div className="text-sm sm:text-base text-slate-600 mt-0.5 font-medium">
                 ผ่านการสแกนใบหน้าและตรวจสอบตัวตนตามมาตรฐาน
@@ -2103,7 +2154,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-3xl sm:text-4xl font-black font-['Prompt'] text-blue-950 tracking-tight leading-none drop-shadow-2xs">
                 {formatNumber(displayedStats.totalVerified)}
               </span>
-              <span className="text-base sm:text-lg font-bold text-sky-700">คน</span>
+              <span className="text-base sm:text-lg font-bold text-sky-700">{verifiedMetricInfo.unit}</span>
             </div>
             <div className="text-xs sm:text-sm text-slate-500 font-medium mt-1">
               ยืนยันตัวตนแล้ว
@@ -2115,12 +2166,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* 3. HERO METRICS: Row 2 - Four Outcome Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Card 1: ออกบัตรสำเร็จ */}
-        <div className="bg-gradient-to-b from-emerald-50/80 via-white to-white rounded-2xl p-4.5 border border-emerald-300 shadow-xs hover:shadow-md transition-all ring-1 ring-emerald-200/80 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-base sm:text-lg font-bold text-emerald-950 tracking-tight font-['Prompt']">
-              {issuedMetricInfo.title === 'ออกบัตร' ? 'ออกบัตรสำเร็จ' : issuedMetricInfo.title}
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-xs flex items-center justify-center">
+        <div
+          className={`bg-gradient-to-b from-emerald-50/80 via-white to-white rounded-2xl p-4.5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between ${
+            issuedMetricInfo.isHighlighted
+              ? 'border-2 border-amber-400 ring-2 ring-amber-300/70'
+              : 'border border-emerald-300 ring-1 ring-emerald-200/80'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+              <span className="text-base sm:text-lg font-bold text-emerald-950 tracking-tight font-['Prompt']">
+                {issuedMetricInfo.title === 'ออกบัตร' ? 'ออกบัตรสำเร็จ' : issuedMetricInfo.title}
+              </span>
+              {issuedMetricInfo.isHighlighted && (
+                <span className="inline-flex items-center gap-0.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                  <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                  <span>{issuedMetricInfo.highlightLabel}</span>
+                </span>
+              )}
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-xs flex items-center justify-center shrink-0">
               <CheckCircle2 className="w-5 h-5" />
             </div>
           </div>
@@ -2137,12 +2202,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Card 2: ไม่มาตามนัด */}
-        <div className="bg-gradient-to-b from-rose-50/80 via-white to-white rounded-2xl p-4.5 border border-rose-300 shadow-xs hover:shadow-md transition-all ring-1 ring-rose-200/80 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-base sm:text-lg font-bold text-rose-950 tracking-tight font-['Prompt']">
-              {missedMetricInfo.title}
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-xs flex items-center justify-center">
+        <div
+          className={`bg-gradient-to-b from-rose-50/80 via-white to-white rounded-2xl p-4.5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between ${
+            missedMetricInfo.isHighlighted
+              ? 'border-2 border-amber-400 ring-2 ring-amber-300/70'
+              : 'border border-rose-300 ring-1 ring-rose-200/80'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+              <span className="text-base sm:text-lg font-bold text-rose-950 tracking-tight font-['Prompt']">
+                {missedMetricInfo.title}
+              </span>
+              {missedMetricInfo.isHighlighted && (
+                <span className="inline-flex items-center gap-0.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                  <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                  <span>{missedMetricInfo.highlightLabel}</span>
+                </span>
+              )}
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-xs flex items-center justify-center shrink-0">
               <UserX className="w-5 h-5" />
             </div>
           </div>
@@ -2158,12 +2237,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Card 3: มาไม่ตรงวันนัด */}
-        <div className="bg-gradient-to-b from-amber-50/80 via-white to-white rounded-2xl p-4.5 border border-amber-300 shadow-xs hover:shadow-md transition-all ring-1 ring-amber-200/80 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-base sm:text-lg font-bold text-amber-950 tracking-tight font-['Prompt']">
-              {wrongDateMetricInfo.title === 'ไม่ตรงวันนัด' ? 'มาไม่ตรงวันนัด' : wrongDateMetricInfo.title}
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-white shadow-xs flex items-center justify-center">
+        <div
+          className={`bg-gradient-to-b from-amber-50/80 via-white to-white rounded-2xl p-4.5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between ${
+            wrongDateMetricInfo.isHighlighted
+              ? 'border-2 border-amber-500 ring-2 ring-amber-300/80'
+              : 'border border-amber-300 ring-1 ring-amber-200/80'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+              <span className="text-base sm:text-lg font-bold text-amber-950 tracking-tight font-['Prompt']">
+                {wrongDateMetricInfo.title === 'ไม่ตรงวันนัด' ? 'มาไม่ตรงวันนัด' : wrongDateMetricInfo.title}
+              </span>
+              {wrongDateMetricInfo.isHighlighted && (
+                <span className="inline-flex items-center gap-0.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                  <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                  <span>{wrongDateMetricInfo.highlightLabel}</span>
+                </span>
+              )}
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-white shadow-xs flex items-center justify-center shrink-0">
               <CalendarX className="w-5 h-5" />
             </div>
           </div>
@@ -2179,12 +2272,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Card 4: บัตรเสีย (หรือชื่อที่ตั้งค่าไว้ใน Admin) */}
-        <div className="bg-gradient-to-b from-slate-50/80 via-white to-white rounded-2xl p-4.5 border border-slate-300 shadow-xs hover:shadow-md transition-all ring-1 ring-slate-200/80 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-base sm:text-lg font-bold text-slate-900 tracking-tight font-['Prompt']">
-              {notIssuedMetricInfo.title}
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-slate-600 to-slate-700 text-white shadow-xs flex items-center justify-center">
+        <div
+          className={`bg-gradient-to-b from-slate-50/80 via-white to-white rounded-2xl p-4.5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between ${
+            notIssuedMetricInfo.isHighlighted
+              ? 'border-2 border-amber-400 ring-2 ring-amber-300/70'
+              : 'border border-slate-300 ring-1 ring-slate-200/80'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+              <span className="text-base sm:text-lg font-bold text-slate-900 tracking-tight font-['Prompt']">
+                {notIssuedMetricInfo.title}
+              </span>
+              {notIssuedMetricInfo.isHighlighted && (
+                <span className="inline-flex items-center gap-0.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                  <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                  <span>{notIssuedMetricInfo.highlightLabel}</span>
+                </span>
+              )}
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-slate-600 to-slate-700 text-white shadow-xs flex items-center justify-center shrink-0">
               <XCircle className="w-5 h-5" />
             </div>
           </div>
@@ -2215,16 +2322,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )
           .map((cm) => {
             const val = displayedStats.customQueueSums?.[cm.id] || 0;
+            const isCmHighlighted = Boolean(cm.isHighlighted);
             return (
               <div
                 key={cm.id}
-                className="bg-gradient-to-b from-indigo-50/75 via-white to-white rounded-2xl p-4.5 border border-indigo-200 shadow-xs hover:shadow-md transition-all ring-1 ring-indigo-100/80 flex flex-col justify-between"
+                className={`bg-gradient-to-b via-white to-white rounded-2xl p-4.5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between ${
+                  isCmHighlighted
+                    ? 'from-amber-50/85 border-2 border-amber-400 ring-2 ring-amber-300/70'
+                    : 'from-indigo-50/75 border border-indigo-200 ring-1 ring-indigo-100/80'
+                }`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-base sm:text-lg font-bold text-indigo-950 tracking-tight font-['Prompt']">
-                    {cm.title}
-                  </span>
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-xs flex items-center justify-center">
+                <div className="flex items-center justify-between gap-1">
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                    <span className="text-base sm:text-lg font-bold text-indigo-950 tracking-tight font-['Prompt']">
+                      {cm.title}
+                    </span>
+                    {isCmHighlighted && (
+                      <span className="inline-flex items-center gap-0.5 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                        <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                        <span>{cm.highlightLabel?.trim() || 'เน้นพิเศษ'}</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-xs flex items-center justify-center shrink-0">
                     <TrendingUp className="w-5 h-5" />
                   </div>
                 </div>
@@ -2342,14 +2462,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             const barW = maxSec > 0 ? (sec.count / maxSec) * 100 : 0;
 
             return (
-              <div key={i} className="space-y-1.5 p-2 rounded-xl hover:bg-slate-50/80 transition-colors">
-                <div className="flex items-center justify-between text-sm sm:text-base">
-                  <div className="flex items-center gap-2.5 truncate">
-                    <span className="w-7 h-7 rounded-lg bg-slate-100 text-slate-700 text-xs sm:text-sm font-bold flex items-center justify-center shrink-0 border border-slate-200">
+              <div
+                key={sec.id || i}
+                className={`space-y-1.5 p-2.5 rounded-xl transition-all ${
+                  sec.isHighlighted
+                    ? 'bg-gradient-to-r from-blue-50/90 via-indigo-50/60 to-amber-50/50 border border-blue-300 ring-1 ring-blue-200/70 shadow-2xs'
+                    : 'hover:bg-slate-50/80'
+                }`}
+              >
+                <div className="flex items-center justify-between text-sm sm:text-base gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`w-7 h-7 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center shrink-0 border ${
+                        sec.isHighlighted
+                          ? 'bg-gradient-to-br from-blue-700 to-indigo-700 text-white border-blue-700 shadow-2xs'
+                          : 'bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                    >
                       {i + 1}
                     </span>
-                    <span className="font-bold text-slate-900 text-sm sm:text-base tracking-tight">{sec.label}</span>
-                    <span className="text-xs sm:text-sm text-slate-500 font-medium truncate">({sec.sub})</span>
+                    <span
+                      className={`font-bold text-sm sm:text-base tracking-tight truncate ${
+                        sec.isHighlighted ? 'text-blue-950 font-extrabold' : 'text-slate-900'
+                      }`}
+                    >
+                      {sec.label}
+                    </span>
+                    {sec.isHighlighted && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shrink-0 shadow-2xs">
+                        <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                        <span>{sec.highlightLabel}</span>
+                      </span>
+                    )}
+                    {sec.sub && (
+                      <span className="text-xs sm:text-sm text-slate-500 font-medium truncate">
+                        ({sec.sub})
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2.5 shrink-0">
                     <span className="font-bold text-slate-900 text-sm sm:text-base font-['Prompt']">{formatNumber(sec.count)} <span className="text-xs sm:text-sm font-normal text-slate-500">คน</span></span>

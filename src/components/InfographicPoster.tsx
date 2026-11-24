@@ -37,10 +37,17 @@ interface InfographicPosterProps {
 
 export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterProps>(
   ({ report, scale = 1, categories, queueMetrics, systemConfig, customLogoUrl }, ref) => {
-    // Helper to look up configured queue metric titles & units
+    // Helper to look up configured queue metric titles, units, and highlight state
     const getQueueMetric = (id: string, defaultTitle: string, defaultUnit: string) => {
       const found = queueMetrics?.find((m) => m.id === id);
-      if (!found) return { title: defaultTitle, unit: defaultUnit };
+      if (!found) {
+        return {
+          title: defaultTitle,
+          unit: defaultUnit,
+          isHighlighted: false,
+          highlightLabel: 'เน้นพิเศษ',
+        };
+      }
       const title =
         id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร'
           ? 'บัตรเสีย'
@@ -49,9 +56,15 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
         id === 'cardsNotIssued' && found.title === 'ไม่ออกบัตร' && found.unit === 'คน'
           ? 'ใบ'
           : found.unit || defaultUnit;
-      return { title, unit };
+      return {
+        title,
+        unit,
+        isHighlighted: Boolean(found.isHighlighted),
+        highlightLabel: found.highlightLabel?.trim() || 'เน้นพิเศษ',
+      };
     };
 
+    const queueAppMetricInfo = getQueueMetric('queueAppointment', 'คิวนัดหมายทั้งหมด', 'คิว');
     const issuedMetricInfo = getQueueMetric('cardsIssued', 'ออกบัตรสำเร็จ', 'ใบ');
     const missedMetricInfo = getQueueMetric('missedAppointment', 'ไม่มาตามนัด', 'คน');
     const wrongDateMetricInfo = getQueueMetric('wrongAppointmentDate', 'มาไม่ตรงวันนัด', 'คน');
@@ -85,6 +98,12 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
       else if (c.id === 'modifyDetails') icon = Edit3;
       else if (c.id === 'substituteCard') icon = CreditCard;
 
+      const isHighlighted =
+        typeof c.isHighlighted === 'boolean' ? c.isHighlighted : idx === 0;
+      const highlightLabel =
+        c.highlightLabel?.trim() ||
+        (typeof c.isHighlighted === 'boolean' ? 'เน้นพิเศษ' : 'HOT');
+
       return {
         id: c.id,
         code: c.code || `ม.${idx + 1}`,
@@ -93,7 +112,8 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
         count,
         icon,
         color: c.color || 'from-blue-600 to-indigo-600',
-        isPrimary: idx === 0,
+        isPrimary: isHighlighted,
+        highlightLabel,
       };
     });
 
@@ -519,7 +539,13 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
 
         {/* 2. TOP HERO METRICS: Row 1 - คิวนัดหมายทั้งหมด */}
         <div className="relative z-10 mb-3.5">
-          <div className="bg-gradient-to-r from-teal-50/80 via-white to-teal-50/40 rounded-2xl p-4 border border-teal-200/90 shadow-sm relative overflow-hidden flex items-center justify-between gap-3">
+          <div
+            className={`bg-gradient-to-r from-teal-50/80 via-white to-teal-50/40 rounded-2xl p-4 shadow-sm relative overflow-hidden flex items-center justify-between gap-3 ${
+              queueAppMetricInfo.isHighlighted
+                ? 'border-2 border-amber-400 ring-2 ring-amber-300/70'
+                : 'border border-teal-200/90'
+            }`}
+          >
             <div className="absolute right-0 top-0 bottom-0 w-44 bg-gradient-to-l from-teal-100/30 to-transparent pointer-events-none" />
             <div className="flex items-center gap-3.5 relative z-10 min-w-0 flex-1">
               <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-teal-600 to-teal-700 text-white flex items-center justify-center shrink-0 shadow-sm ring-4 ring-teal-100/70">
@@ -533,6 +559,12 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                   <span className="text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-teal-100 text-teal-800 border border-teal-300/80 shadow-2xs font-['Prompt'] inline-flex items-center justify-center text-center whitespace-nowrap shrink-0">
                     {isCycle ? 'ยอดรวมประจำรอบ' : 'เป้าหมายประจำวัน'}
                   </span>
+                  {queueAppMetricInfo.isHighlighted && (
+                    <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white font-['Prompt'] shrink-0 shadow-2xs">
+                      <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                      <span>{queueAppMetricInfo.highlightLabel}</span>
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-slate-500 mt-0.5 font-medium">
                   {isCycle
@@ -546,7 +578,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                 <span className="text-3xl font-black font-['Prompt'] text-teal-950 tracking-normal leading-none drop-shadow-2xs">
                   {formatNumber(report.queueAppointment)}
                 </span>
-                <span className="text-sm font-bold text-teal-700">คิว</span>
+                <span className="text-sm font-bold text-teal-700">{queueAppMetricInfo.unit}</span>
               </div>
               <div className="text-[11px] text-slate-400 font-medium mt-1 whitespace-nowrap">
                 {isCycle ? 'สถิติสะสมตามรอบการให้บริการ' : 'เป้าหมายให้บริการ 100%'}
@@ -558,7 +590,13 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
         {/* 2. TOP HERO METRICS: Row 2 - 4 Outcome Cards */}
         <div className="grid grid-cols-4 gap-3 relative z-10 mb-5">
           {/* Card 1: ออกบัตรสำเร็จ */}
-          <div className="bg-gradient-to-b from-emerald-50/70 via-white to-white rounded-2xl p-3.5 border border-emerald-300 shadow-xs relative overflow-hidden ring-1 ring-emerald-200/80 flex flex-col justify-between">
+          <div
+            className={`bg-gradient-to-b from-emerald-50/70 via-white to-white rounded-2xl p-3.5 shadow-xs relative overflow-hidden flex flex-col justify-between ${
+              issuedMetricInfo.isHighlighted
+                ? 'border-2 border-amber-400 ring-2 ring-amber-300/70'
+                : 'border border-emerald-300 ring-1 ring-emerald-200/80'
+            }`}
+          >
             <div className="flex items-center justify-between gap-1">
               <span className="text-xs font-bold text-emerald-950 tracking-normal truncate">
                 {issuedMetricInfo.title === 'ออกบัตร' ? 'ออกบัตรสำเร็จ' : issuedMetricInfo.title}
@@ -571,16 +609,28 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
               <span>{formatNumber(effectiveCardsIssued)}</span>
               <span className="text-xs font-semibold ml-1 text-slate-500 shrink-0">{issuedMetricInfo.unit}</span>
             </div>
-            <div>
+            <div className="flex items-center gap-1 flex-wrap">
               <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200/90 shadow-2xs whitespace-nowrap">
                 <TrendingUp className="w-3 h-3 text-emerald-600 shrink-0" />
                 <span>สำเร็จ {completionRate}%</span>
               </span>
+              {issuedMetricInfo.isHighlighted && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                  <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                  <span>{issuedMetricInfo.highlightLabel}</span>
+                </span>
+              )}
             </div>
           </div>
 
           {/* Card 2: ไม่มาตามนัด */}
-          <div className="bg-gradient-to-b from-rose-50/70 via-white to-white rounded-2xl p-3.5 border border-rose-300 shadow-xs relative overflow-hidden ring-1 ring-rose-200/80 flex flex-col justify-between">
+          <div
+            className={`bg-gradient-to-b from-rose-50/70 via-white to-white rounded-2xl p-3.5 shadow-xs relative overflow-hidden flex flex-col justify-between ${
+              missedMetricInfo.isHighlighted
+                ? 'border-2 border-amber-400 ring-2 ring-amber-300/70'
+                : 'border border-rose-300 ring-1 ring-rose-200/80'
+            }`}
+          >
             <div className="flex items-center justify-between gap-1">
               <span className="text-xs font-bold text-rose-950 tracking-normal truncate">
                 {missedMetricInfo.title}
@@ -593,15 +643,27 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
               <span>{formatNumber(report.missedAppointment)}</span>
               <span className="text-xs font-semibold ml-1 text-slate-500 shrink-0">{missedMetricInfo.unit}</span>
             </div>
-            <div>
+            <div className="flex items-center gap-1 flex-wrap">
               <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200/90 shadow-2xs whitespace-nowrap">
                 <span>ขาดนัด {missedRate}%</span>
               </span>
+              {missedMetricInfo.isHighlighted && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                  <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                  <span>{missedMetricInfo.highlightLabel}</span>
+                </span>
+              )}
             </div>
           </div>
 
           {/* Card 3: มาไม่ตรงวันนัด */}
-          <div className="bg-gradient-to-b from-amber-50/70 via-white to-white rounded-2xl p-3.5 border border-amber-300 shadow-xs relative overflow-hidden ring-1 ring-amber-200/80 flex flex-col justify-between">
+          <div
+            className={`bg-gradient-to-b from-amber-50/70 via-white to-white rounded-2xl p-3.5 shadow-xs relative overflow-hidden flex flex-col justify-between ${
+              wrongDateMetricInfo.isHighlighted
+                ? 'border-2 border-amber-500 ring-2 ring-amber-300/80'
+                : 'border border-amber-300 ring-1 ring-amber-200/80'
+            }`}
+          >
             <div className="flex items-center justify-between gap-1">
               <span className="text-xs font-bold text-amber-950 tracking-normal truncate">
                 {wrongDateMetricInfo.title === 'ไม่ตรงวันนัด' ? 'มาไม่ตรงวันนัด' : wrongDateMetricInfo.title}
@@ -614,15 +676,27 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
               <span>{formatNumber(report.wrongAppointmentDate)}</span>
               <span className="text-xs font-semibold ml-1 text-slate-500 shrink-0">{wrongDateMetricInfo.unit}</span>
             </div>
-            <div>
+            <div className="flex items-center gap-1 flex-wrap">
               <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/90 shadow-2xs whitespace-nowrap">
                 <span>ผิดวันนัด {wrongDayRate}%</span>
               </span>
+              {wrongDateMetricInfo.isHighlighted && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                  <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                  <span>{wrongDateMetricInfo.highlightLabel}</span>
+                </span>
+              )}
             </div>
           </div>
 
           {/* Card 4: บัตรเสีย (หรือชื่อที่ตั้งค่าไว้ใน Admin) */}
-          <div className="bg-gradient-to-b from-slate-50/80 via-white to-white rounded-2xl p-3.5 border border-slate-300 shadow-xs relative overflow-hidden ring-1 ring-slate-200/80 flex flex-col justify-between">
+          <div
+            className={`bg-gradient-to-b from-slate-50/80 via-white to-white rounded-2xl p-3.5 shadow-xs relative overflow-hidden flex flex-col justify-between ${
+              notIssuedMetricInfo.isHighlighted
+                ? 'border-2 border-amber-400 ring-2 ring-amber-300/70'
+                : 'border border-slate-300 ring-1 ring-slate-200/80'
+            }`}
+          >
             <div className="flex items-center justify-between gap-1">
               <span className="text-xs font-bold text-slate-900 tracking-normal truncate">
                 {notIssuedMetricInfo.title}
@@ -635,10 +709,16 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
               <span>{formatNumber(report.cardsNotIssued)}</span>
               <span className="text-xs font-semibold ml-1 text-slate-500 shrink-0">{notIssuedMetricInfo.unit}</span>
             </div>
-            <div>
+            <div className="flex items-center gap-1 flex-wrap">
               <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200/90 shadow-2xs whitespace-nowrap">
                 <span>{notIssuedMetricInfo.title} {notIssuedRate}%</span>
               </span>
+              {notIssuedMetricInfo.isHighlighted && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white shadow-2xs">
+                  <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
+                  <span>{notIssuedMetricInfo.highlightLabel}</span>
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -681,7 +761,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                   const IconComponent = sec.icon;
                   const pct = totalIssuedGroups > 0 ? Math.round((sec.count / totalIssuedGroups) * 100) : 0;
                   const barWidth = maxSectionCount > 0 ? (sec.count / maxSectionCount) * 100 : 0;
-                  const isItem1 = idx === 0;
+                  const isItem1 = sec.isPrimary;
 
                   return (
                     <div
@@ -715,7 +795,7 @@ export const InfographicPoster = forwardRef<HTMLDivElement, InfographicPosterPro
                               {isItem1 && (
                                 <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 text-white font-['Prompt'] shrink-0 shadow-2xs tracking-wider">
                                   <Star className="w-2.5 h-2.5 fill-amber-200 text-amber-100" />
-                                  <span>HOT</span>
+                                  <span>{sec.highlightLabel || 'เน้นพิเศษ'}</span>
                                 </span>
                               )}
                             </div>
