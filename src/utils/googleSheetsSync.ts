@@ -1,9 +1,28 @@
-import { DOEReport } from '../types/doe';
-import { DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL } from '../data/initialAdminData';
-import { sanitizeReport } from './doeUtils';
+import { DOEReport, QueueMetricCategory, ReportCategory } from '../types/doe';
+import {
+  DEFAULT_CATEGORIES,
+  DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL,
+  DEFAULT_QUEUE_METRICS,
+} from '../data/initialAdminData';
+import { deduplicateReportsBySlot, sanitizeReport } from './doeUtils';
 
 export const STORAGE_KEY_GSHEETS_URL = 'doe_google_sheets_webhook_url_v1';
 export const STORAGE_KEY_GSHEETS_AUTO = 'doe_google_sheets_auto_sync_v1';
+
+export interface GoogleSheetsSchemaMetadata {
+  categories?: Array<{
+    id: string;
+    title: string;
+    subLabel?: string;
+    isActive?: boolean;
+  }>;
+  queueMetrics?: Array<{
+    id: string;
+    title: string;
+    unit?: string;
+    isActive?: boolean;
+  }>;
+}
 
 export function getStoredGoogleSheetsConfig(): {
   webhookUrl: string;
@@ -31,29 +50,84 @@ export function saveStoredGoogleSheetsConfig(webhookUrl: string, autoSync = true
   } catch {}
 }
 
+export function buildSheetsSchemaMetadata(
+  categories?: ReportCategory[],
+  queueMetrics?: QueueMetricCategory[]
+): GoogleSheetsSchemaMetadata {
+  let resolvedCats = categories;
+  let resolvedQms = queueMetrics;
+
+  if (!resolvedCats || resolvedCats.length === 0) {
+    try {
+      const raw = localStorage.getItem('doe_work_permit_categories_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          resolvedCats = parsed;
+        }
+      }
+    } catch {}
+  }
+
+  if (!resolvedQms || resolvedQms.length === 0) {
+    try {
+      const raw = localStorage.getItem('doe_work_permit_queue_metrics_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          resolvedQms = parsed;
+        }
+      }
+    } catch {}
+  }
+
+  const finalCats = resolvedCats && resolvedCats.length > 0 ? resolvedCats : DEFAULT_CATEGORIES;
+  const finalQms = resolvedQms && resolvedQms.length > 0 ? resolvedQms : DEFAULT_QUEUE_METRICS;
+
+  return {
+    categories: finalCats.map((c) => ({
+      id: c.id,
+      title: (c.title || '').trim(),
+      subLabel: (c.subLabel || '').trim(),
+      isActive: c.isActive !== false,
+    })),
+    queueMetrics: finalQms.map((q) => ({
+      id: q.id,
+      title: (q.title || '').trim(),
+      unit: (q.unit || '').trim(),
+      isActive: q.isActive !== false,
+    })),
+  };
+}
+
 /**
  * โค้ด Google Apps Script สำเร็จรูปสำหรับนำไปวางใน Google Sheets (Extensions -> Apps Script)
- * รองรับทั้งการบันทึกอัตโนมัติรายรายการ (upsert_single), การซิงค์ยกล็อต (upsert_bulk),
- * การลบรายการ (delete_single) และการดึงข้อมูลย้อนกลับเข้าแอป (doGet)
+ * รุ่นผู้บริหาร (Enterprise v2):
+ *   1) ป้องกันข้อมูลซ้ำอัตโนมัติ (Deduplicate by วันที่รายงาน + สำนักงาน + ศูนย์บริการ) ไม่สร้างแถวซ้ำแม้คนละ ID หรือส่งจากหลายเครื่อง
+ *   2) แตกคอลัมน์เพิ่มอัตโนมัติสำหรับทุก "หัวข้อกลุ่มเป้าหมาย" และ "สถานะคิว" ที่แอดมินสร้างใหม่ + คอลัมน์สรุปอ่านง่าย
+ *   3) จัดเรียงแถวอัตโนมัติ: วันที่รายงานล่าสุด (YYYY-MM-DD) อยู่แถวบนสุด (แถวที่ 2) เสมอ
+ *   4) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") ควบคู่กับชีตรวมหลัก
  */
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  * ระบบสำรองและซิงค์ข้อมูลอัตโนมัติ (DOE Work Permit Reporting System -> Google Sheets)
- * รุ่นผู้บริหาร (Enterprise):
- *   1) จัดเรียงแถวอัตโนมัติ: วันที่รายงานล่าสุด (YYYY-MM-DD) อยู่แถวบนสุด (แถวที่ 2) เสมอ
- *   2) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") ควบคู่กับชีตรวมหลัก เพื่อให้เปิดไฟล์รวดเร็วแม้ข้อมูลเกิน 10,000 แถว
+ * รุ่นผู้บริหาร (Enterprise v2):
+ *   1) ป้องกันและรวมแถวซ้ำอัตโนมัติ: ยึดหลัก 1 แถวต่อ (วันที่รายงาน + สำนักงาน + ศูนย์บริการ) เก็บฉบับที่แก้ไขล่าสุดเสมอ
+ *   2) แตกคอลัมน์เพิ่มอัตโนมัติตามหัวข้อและสถานะที่แอดมินสร้างใหม่ พร้อมคอลัมน์สรุปหัวข้อเพิ่มเติมให้อ่านง่ายบนชีตทันที
+ *   3) จัดเรียงแถวอัตโนมัติ: วันที่รายงานล่าสุด (YYYY-MM-DD) อยู่แถวบนสุด (แถวที่ 2) เสมอ
+ *   4) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") ควบคู่กับชีตรวมหลัก
  *
  * วิธีติดตั้ง / อัปเดตโค้ด:
  * 1. เปิดไฟล์ Google Sheets ของคุณ -> เมนู "ส่วนขยาย (Extensions)" -> "Apps Script"
- * 2. ลบโค้ดเดิมออกทั้งหมด แล้ววางโค้ดชุดนี้ลงไป -> กดปุ่มบันทึก (ไอคอนแผ่นดิสก์ หรือ Ctrl+S)
+ * 2. ลบโค้ดเดิมออกทั้งหมด แล้ววางโค้ดชุดนี้ลงไป -> กดปุ่มบันทึก (Ctrl+S)
  * 3. กดปุ่ม "ทำให้ใช้งานได้ (Deploy)" -> "จัดการการทำให้ใช้งานได้ (Manage deployments)"
  *    - กดไอคอนรูปดินสอ (แก้ไข/Edit) -> ช่องเวอร์ชัน (Version) เลือก "เวอร์ชันใหม่ (New version)" -> กด Deploy
  *    (หรือหากติดตั้งครั้งแรก ให้เลือก "การทำให้ใช้งานได้รายการใหม่ (New deployment)" -> ประเภท "เว็บแอป (Web app)" -> ผู้มีสิทธิ์เข้าถึง "ทุกคน (Anyone)")
  */
 
 const SHEET_NAME = 'รายงานผลการปฏิบัติงาน_DOE';
-const ENABLE_MONTHLY_ARCHIVE_TABS = true; // ตั้งเป็น true เพื่อสร้างและซิงค์แท็บแยกตามเดือน พ.ศ. อัตโนมัติ
+const ENABLE_MONTHLY_ARCHIVE_TABS = true; // สร้างและซิงค์แท็บแยกตามเดือน พ.ศ. อัตโนมัติ
 
-const HEADERS = [
+const BASE_HEADERS = [
   'รหัสรายงาน (ID)',
   'วันที่รายงาน (YYYY-MM-DD)',
   'วันที่รายงาน (ไทย)',
@@ -80,19 +154,42 @@ const HEADERS = [
   'ตำแหน่ง',
   'เบอร์โทรศัพท์',
   'LINE ID',
-  'เวลาแก้ไขล่าสุด (ISO)',
-  'JSON_BACKUP (ห้ามลบ-ใช้กู้คืนระบบ)'
+  'เวลาแก้ไขล่าสุด (ISO)'
 ];
 
-function getOrCreateNamedSheet(targetName, headerBgColor) {
+const EXTRA_SUMMARY_HEADER = 'หัวข้อ/สถานะเพิ่มเติม (สรุป)';
+const JSON_BACKUP_HEADER = 'JSON_BACKUP (ห้ามลบ-ใช้กู้คืนระบบ)';
+
+const BUILTIN_CATEGORY_IDS = {
+  cat_1791818621214: true,
+  modifyDetails: true,
+  section59: true,
+  section62: true,
+  section63_1: true,
+  section63_2: true,
+  section64: true,
+  substituteCard: true
+};
+
+const BUILTIN_QUEUE_IDS = {
+  queueAppointment: true,
+  cardsIssued: true,
+  identityVerified: true,
+  cardsNotIssued: true,
+  missedAppointment: true,
+  wrongAppointmentDate: true
+};
+
+function getOrCreateNamedSheet(targetName, headerBgColor, headers) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(targetName);
   if (!sheet) {
     sheet = ss.insertSheet(targetName);
   }
+  const activeHeaders = headers && headers.length > 0 ? headers : BASE_HEADERS.concat([EXTRA_SUMMARY_HEADER, JSON_BACKUP_HEADER]);
   if (sheet.getLastRow() === 0) {
-    sheet.appendRow(HEADERS);
-    const headerRange = sheet.getRange(1, 1, 1, HEADERS.length);
+    sheet.getRange(1, 1, 1, activeHeaders.length).setValues([activeHeaders]);
+    const headerRange = sheet.getRange(1, 1, 1, activeHeaders.length);
     headerRange.setBackground(headerBgColor || '#0f172a');
     headerRange.setFontColor('#ffffff');
     headerRange.setFontWeight('bold');
@@ -105,8 +202,36 @@ function getOrCreateSheet() {
   return getOrCreateNamedSheet(SHEET_NAME, '#0f172a');
 }
 
+function findJsonBackupColIndex(headerRow) {
+  for (let i = headerRow.length - 1; i >= 0; i--) {
+    const h = String(headerRow[i] || '').trim();
+    if (h.indexOf('JSON_BACKUP') !== -1) {
+      return i;
+    }
+  }
+  return headerRow.length - 1;
+}
+
+function normalizeDateIso(val) {
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    let y = val.getFullYear();
+    if (y >= 2400) y -= 543;
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  }
+  const raw = String(val || '').trim();
+  const match = raw.match(/^(\\d{4})[-/](\\d{1,2})[-/](\\d{1,2})/);
+  if (match) {
+    let y = parseInt(match[1], 10);
+    if (y >= 2400) y -= 543;
+    return y + '-' + match[2].padStart(2, '0') + '-' + match[3].padStart(2, '0');
+  }
+  return raw.slice(0, 10);
+}
+
 function getMonthlyTabNameFromDate(isoDateStr) {
-  const clean = String(isoDateStr || '').trim();
+  const clean = normalizeDateIso(isoDateStr);
   const match = clean.match(/^(\\d{4})-(\\d{2})/);
   if (!match) return null;
   let year = parseInt(match[1], 10);
@@ -115,11 +240,234 @@ function getMonthlyTabNameFromDate(isoDateStr) {
   return 'ประจำเดือน_' + thaiYear + '-' + month;
 }
 
-function reportToRow(r) {
+function getCanonicalCenterKey(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  if (raw.indexOf('วัดป้อมวิเชียร') !== -1 || raw.indexOf('ป้อมวิเชียร') !== -1) {
+    return 'special_center_wat_pom_wichian';
+  }
+  return raw
+    .toLowerCase()
+    .replace(/ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว\\s*\\(\\s*เฉพาะกิจ\\s*\\)/g, 'ศูนย์เฉพาะกิจ')
+    .replace(/ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ/g, 'ศูนย์เฉพาะกิจ')
+    .replace(/ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว/g, 'ศูนย์บริการ')
+    .replace(/จังหวัด/g, '')
+    .replace(/จ\\./g, '')
+    .replace(/[\\s\\-_().,'"“”‘’ฯ]/g, '');
+}
+
+function getReportSlotKey(r) {
+  const dateKey = normalizeDateIso(r.reportDate);
+  const officeKey = String(r.officeId || r.officeName || '').trim().toLowerCase();
+  const rawCenter = String(r.centerName || '').trim();
+  const lowerCenter = rawCenter.toLowerCase();
+  const isMobile = lowerCenter.indexOf('mobile unit') !== -1 || lowerCenter.indexOf('เคลื่อนที่') !== -1;
+  const centerKey = isMobile ? '__mobile_unit__' : getCanonicalCenterKey(rawCenter || r.officeName || '');
+  if (!dateKey || !officeKey) {
+    return '__id__:' + String(r.id || '');
+  }
+  return dateKey + '|' + officeKey + '|' + centerKey;
+}
+
+function getReportTimestampMs(r) {
+  const ts = String(r.updatedAt || r.createdAt || '').trim();
+  if (!ts) return 0;
+  const ms = Date.parse(ts);
+  return isNaN(ms) ? 0 : ms;
+}
+
+function getReportRichness(r) {
+  let score = 0;
+  if (Number(r.queueAppointment || 0) > 0) score += 2;
+  if (Number(r.cardsIssued || 0) > 0) score += 2;
+  if (Number(r.identityVerified || 0) > 0) score += 1;
+  if (String(r.notes || '').trim()) score += 1;
+  if (String(r.reporterName || '').trim()) score += 1;
+  const cc = r.customCategoryValues || {};
+  for (const k in cc) {
+    if (Number(cc[k] || 0) > 0) score += 1;
+  }
+  const cq = r.customQueueValues || {};
+  for (const k in cq) {
+    if (Number(cq[k] || 0) > 0) score += 1;
+  }
+  return score;
+}
+
+function pickWinningReport(existingRep, candidateRep) {
+  if (!existingRep) return candidateRep;
+  if (!candidateRep) return existingRep;
+  const existingMs = getReportTimestampMs(existingRep);
+  const candidateMs = getReportTimestampMs(candidateRep);
+  if (candidateMs > existingMs) return candidateRep;
+  if (existingMs > candidateMs) return existingRep;
+  return getReportRichness(candidateRep) >= getReportRichness(existingRep) ? candidateRep : existingRep;
+}
+
+function rowToFallbackReport(row, jsonColIdx) {
+  const rawJson = jsonColIdx >= 0 ? row[jsonColIdx] : '';
+  if (rawJson && String(rawJson).trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(String(rawJson));
+      if (parsed && parsed.id) {
+        parsed.reportDate = normalizeDateIso(parsed.reportDate || row[1]);
+        return parsed;
+      }
+    } catch (e) {}
+  }
+  const id = String(row[0] || '').trim();
+  if (!id) return null;
+  return {
+    id: id,
+    reportDate: normalizeDateIso(row[1]),
+    reportDateThaiStr: String(row[2] || ''),
+    region: String(row[3] || ''),
+    officeId: String(row[4] || ''),
+    officeName: String(row[5] || ''),
+    centerName: String(row[6] || ''),
+    queueAppointment: Number(row[7] || 0),
+    cardsIssued: Number(row[8] || 0),
+    identityVerified: Number(row[9] || 0),
+    cardsNotIssued: Number(row[10] || 0),
+    missedAppointment: Number(row[11] || 0),
+    wrongAppointmentDate: Number(row[12] || 0),
+    customCategoryValues: { cat_1791818621214: Number(row[13] || 0) },
+    modifyDetails: Number(row[14] || 0),
+    section59: Number(row[15] || 0),
+    section62: Number(row[16] || 0),
+    section63_1: Number(row[17] || 0),
+    section63_2: Number(row[18] || 0),
+    section64: Number(row[19] || 0),
+    substituteCard: Number(row[20] || 0),
+    notes: String(row[21] || ''),
+    reporterName: String(row[22] || ''),
+    reporterPosition: String(row[23] || ''),
+    phoneNumber: String(row[24] || ''),
+    lineId: String(row[25] || ''),
+    updatedAt: String(row[26] || '')
+  };
+}
+
+/**
+ * สร้างรายการคอลัมน์ไดนามิกสำหรับหัวข้อกลุ่มเป้าหมายและสถานะคิวที่แอดมินเพิ่มใหม่
+ * รูปแบบหัวคอลัมน์: "หัวข้อเพิ่ม: <ชื่อหัวข้อ> [cat:<id>]" หรือ "สถานะเพิ่ม: <ชื่อสถานะ> (<หน่วย>) [qm:<id>]"
+ */
+function buildDynamicColumns(existingHeaders, incomingSchema, allReports) {
+  const colOrder = [];
+  const colMap = {};
+
+  function registerCol(kind, id, title, unit) {
+    if (!id) return;
+    if (kind === 'cat' && BUILTIN_CATEGORY_IDS[id]) return;
+    if (kind === 'qm' && BUILTIN_QUEUE_IDS[id]) return;
+    const key = kind + ':' + id;
+    if (!colMap[key]) {
+      colMap[key] = { kind: kind, id: id, title: title || id, unit: unit || '' };
+      colOrder.push(key);
+    } else {
+      if (title && title !== id) colMap[key].title = title;
+      if (unit) colMap[key].unit = unit;
+    }
+  }
+
+  // 1) คงลำดับคอลัมน์ไดนามิกเดิมที่มีอยู่บนหัวตารางชีตแล้ว
+  for (let i = 0; i < (existingHeaders || []).length; i++) {
+    const h = String(existingHeaders[i] || '').trim();
+    const catMatch = h.match(/\\[cat:([^\\]]+)\\]/);
+    if (catMatch) {
+      const cleanTitle = h.replace(/^หัวข้อเพิ่ม:\\s*/, '').replace(/\\s*\\[cat:[^\\]]+\\]\\s*$/, '').trim();
+      registerCol('cat', catMatch[1], cleanTitle, '');
+      continue;
+    }
+    const qmMatch = h.match(/\\[qm:([^\\]]+)\\]/);
+    if (qmMatch) {
+      const withoutTag = h.replace(/^สถานะเพิ่ม:\\s*/, '').replace(/\\s*\\[qm:[^\\]]+\\]\\s*$/, '').trim();
+      const unitMatch = withoutTag.match(/^(.*)\\(([^)]+)\\)$/);
+      registerCol('qm', qmMatch[1], unitMatch ? unitMatch[1].trim() : withoutTag, unitMatch ? unitMatch[2].trim() : '');
+    }
+  }
+
+  // 2) เพิ่มหรืออัปเดตชื่อคอลัมน์จาก schema ล่าสุดที่แอปส่งมา (หัวข้อ/สถานะที่แอดมินสร้างใหม่ทั้งหมด)
+  if (incomingSchema && Array.isArray(incomingSchema.categories)) {
+    for (let i = 0; i < incomingSchema.categories.length; i++) {
+      const c = incomingSchema.categories[i];
+      if (!c || !c.id || BUILTIN_CATEGORY_IDS[c.id]) continue;
+      registerCol('cat', String(c.id), String(c.title || c.id).trim(), '');
+    }
+  }
+  if (incomingSchema && Array.isArray(incomingSchema.queueMetrics)) {
+    for (let i = 0; i < incomingSchema.queueMetrics.length; i++) {
+      const q = incomingSchema.queueMetrics[i];
+      if (!q || !q.id || BUILTIN_QUEUE_IDS[q.id]) continue;
+      registerCol('qm', String(q.id), String(q.title || q.id).trim(), String(q.unit || '').trim());
+    }
+  }
+
+  // 3) ตรวจหาคีย์เพิ่มเติมที่อาจอยู่ในข้อมูลรายงานแต่ละฉบับ (เผื่อรายงานเก่าที่มีข้อมูลอยู่แล้ว)
+  for (let i = 0; i < allReports.length; i++) {
+    const r = allReports[i];
+    if (!r) continue;
+    const cc = r.customCategoryValues || {};
+    for (const catId in cc) {
+      if (!BUILTIN_CATEGORY_IDS[catId] && Number(cc[catId] || 0) !== 0) {
+        registerCol('cat', catId, catId, '');
+      }
+    }
+    const cq = r.customQueueValues || {};
+    for (const qmId in cq) {
+      if (!BUILTIN_QUEUE_IDS[qmId] && Number(cq[qmId] || 0) !== 0) {
+        registerCol('qm', qmId, qmId, '');
+      }
+    }
+  }
+
+  const dynamicCols = [];
+  for (let i = 0; i < colOrder.length; i++) {
+    const item = colMap[colOrder[i]];
+    const headerLabel = item.kind === 'cat'
+      ? 'หัวข้อเพิ่ม: ' + item.title + ' [cat:' + item.id + ']'
+      : 'สถานะเพิ่ม: ' + item.title + (item.unit ? ' (' + item.unit + ')' : '') + ' [qm:' + item.id + ']';
+    dynamicCols.push({
+      kind: item.kind,
+      id: item.id,
+      title: item.title,
+      unit: item.unit,
+      header: headerLabel
+    });
+  }
+  return dynamicCols;
+}
+
+function buildFullHeaders(dynamicCols) {
+  const headers = BASE_HEADERS.slice();
+  headers.push(EXTRA_SUMMARY_HEADER);
+  for (let i = 0; i < dynamicCols.length; i++) {
+    headers.push(dynamicCols[i].header);
+  }
+  headers.push(JSON_BACKUP_HEADER);
+  return headers;
+}
+
+function reportToRow(r, dynamicCols) {
   const customCat = r.customCategoryValues || {};
-  return [
+  const customQueue = r.customQueueValues || {};
+  const summaryParts = [];
+  const dynamicValues = [];
+
+  for (let i = 0; i < dynamicCols.length; i++) {
+    const col = dynamicCols[i];
+    const val = col.kind === 'cat'
+      ? Number(customCat[col.id] || 0)
+      : Number(customQueue[col.id] || 0);
+    dynamicValues.push(val);
+    if (val > 0) {
+      summaryParts.push(col.title + ': ' + val + (col.unit ? ' ' + col.unit : ''));
+    }
+  }
+
+  const row = [
     r.id || '',
-    r.reportDate || '',
+    normalizeDateIso(r.reportDate),
     r.reportDateThaiStr || '',
     r.region || '',
     r.officeId || '',
@@ -145,47 +493,59 @@ function reportToRow(r) {
     r.phoneNumber || '',
     r.lineId || '',
     r.updatedAt || r.createdAt || new Date().toISOString(),
-    JSON.stringify(r)
+    summaryParts.join(' | ')
   ];
+
+  for (let i = 0; i < dynamicValues.length; i++) {
+    row.push(dynamicValues[i]);
+  }
+  row.push(JSON.stringify(r));
+  return row;
 }
 
-function extractSortDateKey(row) {
-  const cellVal = row[1];
-  if (cellVal instanceof Date && !isNaN(cellVal.getTime())) {
-    const y = cellVal.getFullYear();
-    const m = String(cellVal.getMonth() + 1).padStart(2, '0');
-    const d = String(cellVal.getDate()).padStart(2, '0');
-    return y + '-' + m + '-' + d;
-  }
-  const rawStr = String(cellVal || '').trim();
-  if (/^\\d{4}-\\d{2}-\\d{2}/.test(rawStr)) {
-    return rawStr.slice(0, 10);
-  }
-  const rawJson = row[HEADERS.length - 1];
-  if (rawJson && String(rawJson).trim().startsWith('{')) {
-    try {
-      const parsed = JSON.parse(String(rawJson));
-      if (parsed && parsed.reportDate) return String(parsed.reportDate).slice(0, 10);
-    } catch (e) {}
-  }
-  return rawStr;
-}
-
-function compareRowsNewestFirst(a, b) {
-  const dateA = extractSortDateKey(a);
-  const dateB = extractSortDateKey(b);
+function compareReportsNewestFirst(a, b) {
+  const dateA = normalizeDateIso(a.reportDate);
+  const dateB = normalizeDateIso(b.reportDate);
   if (dateA !== dateB) {
-    return dateB.localeCompare(dateA); // วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ (Descending)
+    return dateB.localeCompare(dateA); // วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ
   }
-  const timeA = String(a[26] || '');
-  const timeB = String(b[26] || '');
+  const timeA = String(a.updatedAt || a.createdAt || '');
+  const timeB = String(b.updatedAt || b.createdAt || '');
   if (timeA !== timeB) {
-    return timeB.localeCompare(timeA); // หากวันที่รายงานวันเดียวกัน ให้รายการที่ส่ง/แก้ไขล่าสุดอยู่บนสุด
+    return timeB.localeCompare(timeA);
   }
-  return String(a[4] || '').localeCompare(String(b[4] || ''));
+  return String(a.officeId || '').localeCompare(String(b.officeId || ''));
 }
 
-function syncMonthlyArchiveTabs(allSortedMasterRows, touchedMonthTabsMap) {
+function writeTableToSheet(sheet, headers, rows, headerBgColor) {
+  const numCols = headers.length;
+  const prevLastRow = sheet.getLastRow();
+  const prevLastCol = sheet.getLastColumn();
+
+  // อัปเดตแถวหัวตารางให้ครบทุกคอลัมน์ไดนามิก
+  const headerRange = sheet.getRange(1, 1, 1, numCols);
+  headerRange.setValues([headers]);
+  headerRange.setBackground(headerBgColor || '#0f172a');
+  headerRange.setFontColor('#ffffff');
+  headerRange.setFontWeight('bold');
+  sheet.setFrozenRows(1);
+
+  if (rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, numCols).setValues(rows);
+  }
+
+  // ลบแถวส่วนเกินด้านล่าง (เช่น กรณีรวมแถวซ้ำแล้วจำนวนแถวลดลง)
+  if (prevLastRow > rows.length + 1) {
+    sheet.deleteRows(rows.length + 2, prevLastRow - (rows.length + 1));
+  }
+
+  // ล้างคอลัมน์ส่วนเกินด้านขวาหากมี
+  if (prevLastCol > numCols) {
+    sheet.getRange(1, numCols + 1, Math.max(1, rows.length + 1), prevLastCol - numCols).clearContent();
+  }
+}
+
+function syncMonthlyArchiveTabs(sortedReports, dynamicCols, fullHeaders, touchedMonthTabsMap) {
   if (!ENABLE_MONTHLY_ARCHIVE_TABS) return;
   const tabKeys = Object.keys(touchedMonthTabsMap || {});
   if (tabKeys.length === 0) return;
@@ -195,28 +555,19 @@ function syncMonthlyArchiveTabs(allSortedMasterRows, touchedMonthTabsMap) {
     groupedByTab[tabKeys[i]] = [];
   }
 
-  for (let i = 0; i < allSortedMasterRows.length; i++) {
-    const row = allSortedMasterRows[i];
-    const dateKey = extractSortDateKey(row);
-    const tabName = getMonthlyTabNameFromDate(dateKey);
+  for (let i = 0; i < sortedReports.length; i++) {
+    const r = sortedReports[i];
+    const tabName = getMonthlyTabNameFromDate(r.reportDate);
     if (tabName && groupedByTab[tabName] !== undefined) {
-      groupedByTab[tabName].push(row);
+      groupedByTab[tabName].push(reportToRow(r, dynamicCols));
     }
   }
 
   for (let i = 0; i < tabKeys.length; i++) {
     const tabName = tabKeys[i];
     const monthRows = groupedByTab[tabName] || [];
-    const mSheet = getOrCreateNamedSheet(tabName, '#1e3a8a');
-    const prevLastRow = mSheet.getLastRow();
-    if (monthRows.length > 0) {
-      mSheet.getRange(2, 1, monthRows.length, HEADERS.length).setValues(monthRows);
-      if (prevLastRow > monthRows.length + 1) {
-        mSheet.deleteRows(monthRows.length + 2, prevLastRow - (monthRows.length + 1));
-      }
-    } else if (prevLastRow > 1) {
-      mSheet.deleteRows(2, prevLastRow - 1);
-    }
+    const mSheet = getOrCreateNamedSheet(tabName, '#1e3a8a', fullHeaders);
+    writeTableToSheet(mSheet, fullHeaders, monthRows, '#1e3a8a');
   }
 }
 
@@ -227,39 +578,65 @@ function doPost(e) {
     const sheet = getOrCreateSheet();
     const body = JSON.parse(e.postData.contents || '{}');
     const action = body.action || 'upsert_single';
+    const incomingSchema = body.schema || null;
 
     const lastRow = sheet.getLastRow();
-    const existingRows = lastRow > 1
-      ? sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues()
+    const lastCol = Math.max(sheet.getLastColumn(), 1);
+    const existingHeaders = lastRow >= 1
+      ? sheet.getRange(1, 1, 1, lastCol).getValues()[0]
+      : [];
+    const jsonColIdx = findJsonBackupColIndex(existingHeaders);
+
+    const existingRawRows = lastRow > 1
+      ? sheet.getRange(2, 1, lastRow - 1, lastCol).getValues()
       : [];
 
-    const idToIndexMap = {};
-    for (let i = 0; i < existingRows.length; i++) {
-      const existingId = String(existingRows[i][0] || '').trim();
-      if (existingId) {
-        idToIndexMap[existingId] = i;
+    // แปลงแถวเดิมทั้งหมดเป็นอ็อบเจกต์รายงาน พร้อมรวมรายการซ้ำ (ทั้งซ้ำตาม ID และซ้ำตาม วัน+สำนักงาน+ศูนย์บริการ)
+    const slotMap = {};
+    let duplicatesMerged = 0;
+    const touchedMonthTabs = {};
+
+    for (let i = 0; i < existingRawRows.length; i++) {
+      const rep = rowToFallbackReport(existingRawRows[i], jsonColIdx);
+      if (!rep || !rep.id || rep.id === 'report-test-123') continue;
+      const slotKey = getReportSlotKey(rep);
+      if (slotMap[slotKey]) {
+        slotMap[slotKey] = pickWinningReport(slotMap[slotKey], rep);
+        duplicatesMerged++;
+        const dupTab = getMonthlyTabNameFromDate(rep.reportDate);
+        if (dupTab) touchedMonthTabs[dupTab] = true;
+      } else {
+        slotMap[slotKey] = rep;
       }
     }
 
-    const touchedMonthTabs = {};
-
     if (action === 'delete_single' && body.reportId) {
       const targetId = String(body.reportId).trim();
-      const targetIndex = idToIndexMap[targetId];
-      if (targetIndex !== undefined) {
-        const oldDate = extractSortDateKey(existingRows[targetIndex]);
-        const oldTab = getMonthlyTabNameFromDate(oldDate);
-        if (oldTab) touchedMonthTabs[oldTab] = true;
-        sheet.deleteRow(targetIndex + 2);
-        existingRows.splice(targetIndex, 1);
-        syncMonthlyArchiveTabs(existingRows, touchedMonthTabs);
+      let deletedAny = false;
+      for (const sKey in slotMap) {
+        if (String(slotMap[sKey].id || '').trim() === targetId) {
+          const oldTab = getMonthlyTabNameFromDate(slotMap[sKey].reportDate);
+          if (oldTab) touchedMonthTabs[oldTab] = true;
+          delete slotMap[sKey];
+          deletedAny = true;
+        }
       }
-      return ContentService.createTextOutput(JSON.stringify({ ok: true, deleted: body.reportId }))
-        .setMimeType(ContentService.MimeType.JSON);
+      const remainingReports = Object.keys(slotMap).map(function (k) { return slotMap[k]; });
+      remainingReports.sort(compareReportsNewestFirst);
+      const dynamicColsDel = buildDynamicColumns(existingHeaders, incomingSchema, remainingReports);
+      const fullHeadersDel = buildFullHeaders(dynamicColsDel);
+      const rowsDel = remainingReports.map(function (r) { return reportToRow(r, dynamicColsDel); });
+      writeTableToSheet(sheet, fullHeadersDel, rowsDel, '#0f172a');
+      syncMonthlyArchiveTabs(remainingReports, dynamicColsDel, fullHeadersDel, touchedMonthTabs);
+      return ContentService.createTextOutput(
+        JSON.stringify({ ok: true, deleted: targetId, deletedAny: deletedAny, duplicatesMerged: duplicatesMerged, totalRows: remainingReports.length })
+      ).setMimeType(ContentService.MimeType.JSON);
     }
 
     const incomingList = action === 'upsert_bulk'
       ? (Array.isArray(body.reports) ? body.reports : [])
+      : (action === 'sync_schema' || action === 'deduplicate_all')
+      ? []
       : (body.report ? [body.report] : []);
 
     let insertedCount = 0;
@@ -267,47 +644,69 @@ function doPost(e) {
 
     for (let i = 0; i < incomingList.length; i++) {
       const r = incomingList[i];
-      if (!r || !r.id) continue;
-      const rowData = reportToRow(r);
+      if (!r || !r.id || r.id === 'report-test-123') continue;
+      r.reportDate = normalizeDateIso(r.reportDate);
+
+      const newSlotKey = getReportSlotKey(r);
       const newTab = getMonthlyTabNameFromDate(r.reportDate);
       if (newTab) touchedMonthTabs[newTab] = true;
 
+      // หากมีรายงานเดิมที่ ID ตรงกันแต่อยู่คนละช่อง (เช่น แอดมินแก้เปลี่ยนวันที่/เปลี่ยนศูนย์) ให้ลบช่องเดิมออกก่อน
       const rid = String(r.id).trim();
-      const existingIdx = idToIndexMap[rid];
-      if (existingIdx !== undefined) {
-        const prevDate = extractSortDateKey(existingRows[existingIdx]);
-        const prevTab = getMonthlyTabNameFromDate(prevDate);
+      for (const existingKey in slotMap) {
+        if (existingKey !== newSlotKey && String(slotMap[existingKey].id || '').trim() === rid) {
+          const prevTab = getMonthlyTabNameFromDate(slotMap[existingKey].reportDate);
+          if (prevTab) touchedMonthTabs[prevTab] = true;
+          delete slotMap[existingKey];
+        }
+      }
+
+      if (slotMap[newSlotKey]) {
+        const prevTab = getMonthlyTabNameFromDate(slotMap[newSlotKey].reportDate);
         if (prevTab) touchedMonthTabs[prevTab] = true;
-        existingRows[existingIdx] = rowData;
+        // หากเป็น upsert_single ให้ยึดฉบับที่ส่งมาล่าสุดหรือฉบับที่ใหม่กว่าเสมอ
+        slotMap[newSlotKey] = action === 'upsert_single'
+          ? r
+          : pickWinningReport(slotMap[newSlotKey], r);
         updatedCount++;
       } else {
-        idToIndexMap[rid] = existingRows.length;
-        existingRows.push(rowData);
+        slotMap[newSlotKey] = r;
         insertedCount++;
       }
     }
 
-    // จัดเรียงแถวทั้งหมดตาม "วันที่รายงาน (YYYY-MM-DD)" จากวันที่ล่าสุดไปเก่าสุด (แถวบนสุดคือวันที่ล่าสุดเสมอ)
-    existingRows.sort(compareRowsNewestFirst);
-    for (let i = 0; i < existingRows.length; i++) {
-      existingRows[i][1] = extractSortDateKey(existingRows[i]);
+    const allReports = Object.keys(slotMap).map(function (k) { return slotMap[k]; });
+    allReports.sort(compareReportsNewestFirst);
+
+    const dynamicCols = buildDynamicColumns(existingHeaders, incomingSchema, allReports);
+    const fullHeaders = buildFullHeaders(dynamicCols);
+
+    // หากมีการเพิ่มคอลัมน์ใหม่หรือสั่งล้างข้อมูลซ้ำ ให้ซิงค์หัวตารางไปยังแท็บรายเดือนทั้งหมดที่มีข้อมูลด้วย
+    const headerChanged = fullHeaders.length !== existingHeaders.length ||
+      fullHeaders.some(function (h, idx) { return String(existingHeaders[idx] || '') !== h; });
+
+    if (headerChanged || action === 'sync_schema' || action === 'deduplicate_all' || body.deduplicate) {
+      for (let i = 0; i < allReports.length; i++) {
+        const t = getMonthlyTabNameFromDate(allReports[i].reportDate);
+        if (t) touchedMonthTabs[t] = true;
+      }
     }
 
-    if (existingRows.length > 0) {
-      sheet.getRange(2, 1, existingRows.length, HEADERS.length).setValues(existingRows);
-    }
-
-    // ซิงค์แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น ประจำเดือน_2569-11)
-    syncMonthlyArchiveTabs(existingRows, touchedMonthTabs);
+    const allRows = allReports.map(function (r) { return reportToRow(r, dynamicCols); });
+    writeTableToSheet(sheet, fullHeaders, allRows, '#0f172a');
+    syncMonthlyArchiveTabs(allReports, dynamicCols, fullHeaders, touchedMonthTabs);
 
     return ContentService.createTextOutput(
       JSON.stringify({
         ok: true,
         inserted: insertedCount,
         updated: updatedCount,
+        duplicatesMerged: duplicatesMerged,
+        dynamicColumnCount: dynamicCols.length,
+        totalColumns: fullHeaders.length,
         sorted: 'reportDate_DESC',
         monthlyArchiveSynced: Object.keys(touchedMonthTabs),
-        totalRows: existingRows.length
+        totalRows: allReports.length
       })
     ).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
@@ -323,40 +722,29 @@ function doGet() {
   try {
     const sheet = getOrCreateSheet();
     const lastRow = sheet.getLastRow();
+    const lastCol = Math.max(sheet.getLastColumn(), 1);
     if (lastRow <= 1) {
       return ContentService.createTextOutput(JSON.stringify({ ok: true, reports: [] }))
         .setMimeType(ContentService.MimeType.JSON);
     }
-    const range = sheet.getRange(2, 1, lastRow - 1, HEADERS.length);
-    const data = range.getValues();
 
-    // ตรวจสอบว่าตารางเรียงตามวันที่รายงานล่าสุดอยู่บนสุดหรือยัง หากยังไม่เรียงให้จัดเรียงอัตโนมัติทันที
-    let needsSort = false;
-    for (let i = 0; i < data.length - 1; i++) {
-      if (compareRowsNewestFirst(data[i], data[i + 1]) > 0) {
-        needsSort = true;
-        break;
-      }
-    }
-    if (needsSort) {
-      data.sort(compareRowsNewestFirst);
-      for (let i = 0; i < data.length; i++) {
-        data[i][1] = extractSortDateKey(data[i]);
-      }
-      range.setValues(data);
-    }
+    const headerRow = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    const jsonColIdx = findJsonBackupColIndex(headerRow);
+    const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
 
-    const reports = [];
+    const slotMap = {};
     for (let i = 0; i < data.length; i++) {
-      const rawJson = data[i][HEADERS.length - 1];
-      if (rawJson && String(rawJson).trim().startsWith('{')) {
-        try {
-          reports.push(JSON.parse(String(rawJson)));
-        } catch (e) {}
-      }
+      const rep = rowToFallbackReport(data[i], jsonColIdx);
+      if (!rep || !rep.id || rep.id === 'report-test-123') continue;
+      const slotKey = getReportSlotKey(rep);
+      slotMap[slotKey] = pickWinningReport(slotMap[slotKey], rep);
     }
+
+    const reports = Object.keys(slotMap).map(function (k) { return slotMap[k]; });
+    reports.sort(compareReportsNewestFirst);
+
     return ContentService.createTextOutput(
-      JSON.stringify({ ok: true, count: reports.length, sorted: true, reports: reports })
+      JSON.stringify({ ok: true, count: reports.length, sorted: true, deduplicated: true, reports: reports })
     ).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(
@@ -368,7 +756,8 @@ function doGet() {
 
 export async function syncReportToGoogleSheets(
   report: DOEReport,
-  explicitWebhookUrl?: string
+  explicitWebhookUrl?: string,
+  schema?: GoogleSheetsSchemaMetadata
 ): Promise<boolean> {
   const cfg = getStoredGoogleSheetsConfig();
   const url = (explicitWebhookUrl || cfg.webhookUrl || '').trim();
@@ -377,6 +766,44 @@ export async function syncReportToGoogleSheets(
   const payload = {
     action: 'upsert_single',
     report,
+    schema: schema || buildSheetsSchemaMetadata(),
+  };
+
+  try {
+    const proxyRes = await fetch('/api/doe/sheets-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhookUrl: url, payload }),
+    });
+    if (proxyRes.ok) return true;
+  } catch {}
+
+  try {
+    await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function syncSchemaToGoogleSheets(
+  explicitWebhookUrl?: string,
+  schema?: GoogleSheetsSchemaMetadata
+): Promise<boolean> {
+  const cfg = getStoredGoogleSheetsConfig();
+  const url = (explicitWebhookUrl || cfg.webhookUrl || '').trim();
+  if (!url || !url.startsWith('https://script.google.com/')) return false;
+  if (!explicitWebhookUrl && !cfg.autoSync) return false;
+
+  const payload = {
+    action: 'sync_schema',
+    deduplicate: true,
+    schema: schema || buildSheetsSchemaMetadata(),
   };
 
   try {
@@ -412,6 +839,7 @@ export async function deleteReportFromGoogleSheets(
   const payload = {
     action: 'delete_single',
     reportId,
+    schema: buildSheetsSchemaMetadata(),
   };
 
   try {
@@ -439,8 +867,14 @@ export async function deleteReportFromGoogleSheets(
 export async function syncBulkReportsToGoogleSheets(
   reports: DOEReport[],
   webhookUrl: string,
-  onProgress?: (syncedCount: number, totalCount: number) => void
-): Promise<{ success: boolean; syncedCount: number; message?: string }> {
+  onProgress?: (syncedCount: number, totalCount: number) => void,
+  schema?: GoogleSheetsSchemaMetadata
+): Promise<{
+  success: boolean;
+  syncedCount: number;
+  duplicatesMerged?: number;
+  message?: string;
+}> {
   const cleanUrl = (webhookUrl || '').trim();
   if (!cleanUrl || !cleanUrl.startsWith('https://script.google.com/')) {
     return {
@@ -450,7 +884,10 @@ export async function syncBulkReportsToGoogleSheets(
     };
   }
 
-  const sorted = [...reports].sort((a, b) => {
+  // คัดกรองรายการซ้ำในวันเดียวกัน + สำนักงานเดียวกัน + ศูนย์บริการเดียวกันก่อนส่งทุกครั้ง
+  const { deduped, removedDuplicates } = deduplicateReportsBySlot(reports);
+
+  const sorted = [...deduped].sort((a, b) => {
     const dateCmp = (b.reportDate || '').localeCompare(a.reportDate || '');
     if (dateCmp !== 0) return dateCmp;
     const timeA = a.updatedAt || a.createdAt || '';
@@ -458,19 +895,26 @@ export async function syncBulkReportsToGoogleSheets(
     if (timeA !== timeB) return timeB.localeCompare(timeA);
     return (a.officeId || '').localeCompare(b.officeId || '');
   });
+
   const total = sorted.length;
+  const resolvedSchema = schema || buildSheetsSchemaMetadata();
+
   if (total === 0) {
     return { success: true, syncedCount: 0, message: 'ไม่มีข้อมูลรายงานให้ซิงค์' };
   }
 
   const BATCH_SIZE = 120;
   let synced = 0;
+  let remoteMerged = 0;
 
   for (let i = 0; i < total; i += BATCH_SIZE) {
     const chunk = sorted.slice(i, i + BATCH_SIZE);
+    const isLastBatch = i + BATCH_SIZE >= total;
     const payload = {
       action: 'upsert_bulk',
       reports: chunk,
+      schema: resolvedSchema,
+      deduplicate: isLastBatch,
     };
 
     let chunkOk = false;
@@ -482,6 +926,12 @@ export async function syncBulkReportsToGoogleSheets(
       });
       if (res.ok) {
         chunkOk = true;
+        try {
+          const json = await res.json();
+          if (typeof json?.duplicatesMerged === 'number') {
+            remoteMerged += json.duplicatesMerged;
+          }
+        } catch {}
       }
     } catch {}
 
@@ -507,10 +957,15 @@ export async function syncBulkReportsToGoogleSheets(
     if (onProgress) onProgress(synced, total);
   }
 
+  const totalMerged = Math.max(removedDuplicates.length, remoteMerged);
   return {
     success: true,
     syncedCount: synced,
-    message: `ซิงค์ข้อมูลรายงานทั้งหมด ${synced.toLocaleString()} รายการ ลง Google Sheets สำเร็จเรียบร้อยแล้ว`,
+    duplicatesMerged: totalMerged,
+    message:
+      totalMerged > 0
+        ? `ซิงค์ข้อมูลรายงาน ${synced.toLocaleString()} รายการ ลง Google Sheets สำเร็จ (รวมและคัดกรองรายการซ้ำออก ${totalMerged.toLocaleString()} แถว พร้อมอัปเดตคอลัมน์หัวข้อเพิ่มเติมแล้ว)`
+        : `ซิงค์ข้อมูลรายงานทั้งหมด ${synced.toLocaleString()} รายการ ลง Google Sheets พร้อมอัปเดตคอลัมน์หัวข้อเพิ่มเติมเรียบร้อยแล้ว`,
   };
 }
 
@@ -539,10 +994,11 @@ export async function pullReportsFromGoogleSheets(
           const clean = sanitizeReport(raw);
           if (clean && clean.id) valid.push(clean);
         }
+        const { deduped } = deduplicateReportsBySlot(valid);
         return {
           success: true,
-          reports: valid,
-          message: `ดึงข้อมูลจาก Google Sheets สำเร็จ จำนวน ${valid.length.toLocaleString()} รายการ`,
+          reports: deduped,
+          message: `ดึงข้อมูลจาก Google Sheets สำเร็จ จำนวน ${deduped.length.toLocaleString()} รายการ`,
         };
       }
     }
@@ -558,10 +1014,11 @@ export async function pullReportsFromGoogleSheets(
           const clean = sanitizeReport(raw);
           if (clean && clean.id) valid.push(clean);
         }
+        const { deduped } = deduplicateReportsBySlot(valid);
         return {
           success: true,
-          reports: valid,
-          message: `ดึงข้อมูลจาก Google Sheets สำเร็จ จำนวน ${valid.length.toLocaleString()} รายการ`,
+          reports: deduped,
+          message: `ดึงข้อมูลจาก Google Sheets สำเร็จ จำนวน ${deduped.length.toLocaleString()} รายการ`,
         };
       }
     }

@@ -25,6 +25,38 @@ function parseIsoMs(val: unknown): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function getCanonicalCenterKeyServer(name?: string): string {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  if (raw.includes('วัดป้อมวิเชียร') || raw.includes('ป้อมวิเชียร')) {
+    return 'special_center_wat_pom_wichian';
+  }
+  return raw
+    .toLowerCase()
+    .replace(/ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว\s*\(\s*เฉพาะกิจ\s*\)/g, 'ศูนย์เฉพาะกิจ')
+    .replace(/ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าวเฉพาะกิจ/g, 'ศูนย์เฉพาะกิจ')
+    .replace(/ศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว/g, 'ศูนย์บริการ')
+    .replace(/จังหวัด/g, '')
+    .replace(/จ\./g, '')
+    .replace(/[\s\-_().,'"“”‘’ฯ]/g, '');
+}
+
+function getReportSlotKeyServer(report: Partial<DOEReport> | null | undefined): string {
+  if (!report) return '';
+  const dateKey = String(report.reportDate || '').trim().slice(0, 10);
+  const officeKey = String(report.officeId || report.officeName || '')
+    .trim()
+    .toLowerCase();
+  const rawCenter = String(report.centerName || '').trim();
+  const lowerCenter = rawCenter.toLowerCase();
+  const isMobile = lowerCenter.includes('mobile unit') || lowerCenter.includes('เคลื่อนที่');
+  const centerKey = isMobile
+    ? '__mobile_unit__'
+    : getCanonicalCenterKeyServer(rawCenter || report.officeName || '');
+  if (!dateKey || !officeKey) return '';
+  return `${dateKey}|${officeKey}|${centerKey}`;
+}
+
 function getSectionTimestampMs(
   cfg: Record<string, unknown> | null | undefined,
   sectionKey: string
@@ -106,6 +138,51 @@ function mergeMasterConfigRecords(
   pickSection('bundledCategories', 'categoriesUpdatedAt');
   pickSection('bundledQueueMetrics', 'queueMetricsUpdatedAt');
   pickSection('bundledReporters', 'reportersUpdatedAt');
+
+  // Preserve non-deleted custom admin categories & queue metrics across merges
+  const mergeProtectedCustom = (
+    arrayKey: string,
+    deletedKey: string,
+    customPrefix: string
+  ) => {
+    const deletedIds = Array.from(
+      new Set([
+        ...(Array.isArray(base[deletedKey]) ? (base[deletedKey] as string[]) : []),
+        ...(Array.isArray(incoming[deletedKey]) ? (incoming[deletedKey] as string[]) : []),
+      ])
+    );
+    const deletedSet = new Set(deletedIds);
+    const primary = Array.isArray(merged[arrayKey])
+      ? ([...(merged[arrayKey] as Record<string, unknown>[])])
+      : [];
+    const primaryIds = new Set(primary.map((item) => String(item?.id || '')));
+    const secondary = [
+      ...(Array.isArray(base[arrayKey]) ? (base[arrayKey] as Record<string, unknown>[]) : []),
+      ...(Array.isArray(incoming[arrayKey]) ? (incoming[arrayKey] as Record<string, unknown>[]) : []),
+    ];
+    for (const item of secondary) {
+      const id = String(item?.id || '');
+      if (
+        id &&
+        item?.title &&
+        !primaryIds.has(id) &&
+        !deletedSet.has(id) &&
+        (item.isDefault === false || id.startsWith(customPrefix))
+      ) {
+        primary.push({ ...item, sortOrder: primary.length });
+        primaryIds.add(id);
+        baseHadNewerData = true;
+      }
+    }
+    merged[arrayKey] = primary;
+    merged[deletedKey] = deletedIds.filter((id) => !primaryIds.has(id));
+  };
+
+  mergeProtectedCustom('bundledCategories', 'deletedCategoryIds', 'cat_');
+  mergeProtectedCustom('bundledQueueMetrics', 'deletedQueueMetricIds', 'custom_queue_');
+  if ('testPing' in merged) {
+    delete merged.testPing;
+  }
 
   // Protect offices & service centers (bundledOffices + bundledDeletedOffices) with officesUpdatedAt
   const baseOfficesDedicatedMs = parseIsoMs(base.officesUpdatedAt);
@@ -337,6 +414,19 @@ async function syncFromGoogleSheetsIntoSqlIfDue(mirror: ServerMirrorState): Prom
         const deltaRows: typeof doeReports.$inferInsert[] = [];
         const nowIso = new Date().toISOString();
 
+        // Build map of existing active slots so older duplicate IDs from Google Sheets never recreate duplicate slots
+        const activeSlotMap = new Map<string, { id: string; ms: number }>();
+        for (const [id, entry] of Object.entries(mirror.reports)) {
+          if (!entry || entry.isDeleted || !entry.report) continue;
+          const sk = getReportSlotKeyServer(entry.report);
+          if (!sk) continue;
+          const ms = getReportTimestampMs(entry.report);
+          const prev = activeSlotMap.get(sk);
+          if (!prev || ms > prev.ms) {
+            activeSlotMap.set(sk, { id, ms });
+          }
+        }
+
         for (const raw of data.reports) {
           if (!raw || !raw.id || raw.id === 'report-test-123') continue;
           const existingEntry = mirror.reports[raw.id];
@@ -344,6 +434,15 @@ async function syncFromGoogleSheetsIntoSqlIfDue(mirror: ServerMirrorState): Prom
 
           const incomingMs = getReportTimestampMs(raw);
           const existingMs = existingEntry ? getReportTimestampMs(existingEntry.report) : 0;
+
+          // If another active ID already owns this exact date+office+center slot with a newer/equal timestamp, skip duplicate
+          const rawSlotKey = getReportSlotKeyServer(raw);
+          if (rawSlotKey) {
+            const slotOwner = activeSlotMap.get(rawSlotKey);
+            if (slotOwner && slotOwner.id !== raw.id && slotOwner.ms >= incomingMs) {
+              continue;
+            }
+          }
 
           if (!existingEntry || incomingMs > existingMs) {
             const winner = existingEntry
@@ -354,6 +453,9 @@ async function syncFromGoogleSheetsIntoSqlIfDue(mirror: ServerMirrorState): Prom
               isDeleted: false,
               updatedAtMs: Math.max(incomingMs, existingEntry?.updatedAtMs || 0, now),
             };
+            if (rawSlotKey) {
+              activeSlotMap.set(rawSlotKey, { id: winner.id, ms: getReportTimestampMs(winner) });
+            }
             deltaRows.push({
               id: winner.id,
               reportDate: winner.reportDate || '',
@@ -488,12 +590,42 @@ export async function upsertReportInSql(
     : report;
   const nowIso = finalReport.updatedAt || new Date().toISOString();
 
+  // Prevent duplicate active rows for the exact same (reportDate + officeId + centerName) across different devices/IDs
+  const supersededDuplicateIds: string[] = [];
+  if (!isDeleted) {
+    const finalSlotKey = getReportSlotKeyServer(finalReport);
+    if (finalSlotKey) {
+      for (const [otherId, entry] of Object.entries(mirror.reports)) {
+        if (otherId === finalReport.id || !entry || entry.isDeleted || !entry.report) continue;
+        if (getReportSlotKeyServer(entry.report) === finalSlotKey) {
+          mirror.reports[otherId] = {
+            ...entry,
+            isDeleted: true,
+            updatedAtMs: Date.now(),
+          };
+          supersededDuplicateIds.push(otherId);
+        }
+      }
+    }
+  }
+
   mirror.reports[report.id] = {
     report: finalReport,
     isDeleted,
     updatedAtMs: Math.max(getReportTimestampMs(finalReport), Date.now()),
   };
   saveMirror(mirror);
+
+  if (supersededDuplicateIds.length > 0) {
+    enqueueBackgroundSqlSync(async () => {
+      for (const dupId of supersededDuplicateIds) {
+        await db
+          .update(doeReports)
+          .set({ isDeleted: true, updatedAt: nowIso })
+          .where(eq(doeReports.id, dupId));
+      }
+    });
+  }
 
   try {
     await withSqlRetry(

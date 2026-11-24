@@ -24,19 +24,21 @@ import {
   DEFAULT_REPORTERS,
   DEFAULT_SYSTEM_CONFIG,
 } from '../data/initialAdminData';
-import { sanitizeReport } from '../utils/doeUtils';
+import { deduplicateReportsBySlot, getReportSlotKey, sanitizeReport } from '../utils/doeUtils';
 import { deduplicateCenterList } from '../utils/officeUtils';
 import {
   loadReportsFromIndexedDB,
   saveReportsToIndexedDB,
 } from '../utils/indexedDbStorage';
 import {
+  buildSheetsSchemaMetadata,
   deleteReportFromGoogleSheets,
   getStoredGoogleSheetsConfig,
   pullReportsFromGoogleSheets,
   saveStoredGoogleSheetsConfig,
   syncBulkReportsToGoogleSheets,
   syncReportToGoogleSheets,
+  syncSchemaToGoogleSheets,
 } from '../utils/googleSheetsSync';
 
 const REPORT_BUNDLES_COLLECTION = 'report_bundles';
@@ -76,6 +78,35 @@ function cleanForFirestore<T>(data: T): T {
   return JSON.parse(JSON.stringify(data, (_, val) => (val === undefined ? null : val)));
 }
 
+/**
+ * Removes all `undefined` object keys cleanly (preserving explicit `null` values)
+ * so partial Firestore `setDoc(..., { merge: true })` writes NEVER overwrite untouched
+ * fields like `categoriesUpdatedAt` with `null`.
+ */
+function omitUndefinedForFirestore<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data));
+}
+
+/**
+ * Quota-safe localStorage writer for critical master configuration keys
+ * (categories, queueMetrics, offices, section timestamps). If the browser's 5MB
+ * localStorage quota is full due to cached reports (which live safely in IndexedDB),
+ * evict bloated report cache keys and retry immediately.
+ */
+function safeWriteMasterLocalStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+    return;
+  } catch {}
+  try {
+    localStorage.removeItem('doe_work_permit_reports_backup_v1');
+    localStorage.removeItem('doe_ss_reports_backup_v1');
+    localStorage.removeItem('doe_ss_reports_v1');
+    localStorage.removeItem('doe_work_permit_reports_v1');
+    localStorage.setItem(key, value);
+  } catch {}
+}
+
 // ============================================================================
 // BUNDLED MASTER CONFIG DOCUMENT (system_config/main_config)
 // ============================================================================
@@ -85,7 +116,9 @@ interface BundledMasterConfig extends SystemConfig {
   bundledOffices?: EmploymentOffice[];
   bundledDeletedOffices?: EmploymentOffice[];
   bundledCategories?: (ReportCategory & { sortOrder?: number })[];
+  deletedCategoryIds?: string[];
   bundledQueueMetrics?: (QueueMetricCategory & { sortOrder?: number })[];
+  deletedQueueMetricIds?: string[];
   bundledReporters?: (ReporterProfile & { sortOrder?: number })[];
   bundledDeletedReports?: DOEReport[];
   bundledIssues?: SystemIssueReport[];
@@ -106,6 +139,8 @@ interface MasterSectionTimestamps {
   reportersUpdatedAt?: string;
   configUpdatedAt?: string;
   updatedAt?: string;
+  deletedCategoryIds?: string[];
+  deletedQueueMetricIds?: string[];
 }
 
 function parseIsoMs(val?: string | null): number {
@@ -137,17 +172,19 @@ function loadMasterSectionTimestamps(): MasterSectionTimestamps {
 }
 
 function saveMasterSectionTimestamps(cfg: Partial<BundledMasterConfig>) {
-  try {
-    const next: MasterSectionTimestamps = {
-      officesUpdatedAt: cfg.officesUpdatedAt,
-      categoriesUpdatedAt: cfg.categoriesUpdatedAt,
-      queueMetricsUpdatedAt: cfg.queueMetricsUpdatedAt,
-      reportersUpdatedAt: cfg.reportersUpdatedAt,
-      configUpdatedAt: cfg.configUpdatedAt,
-      updatedAt: cfg.updatedAt,
-    };
-    localStorage.setItem(STORAGE_KEY_MASTER_TIMESTAMPS, JSON.stringify(next));
-  } catch {}
+  const next: MasterSectionTimestamps = {
+    officesUpdatedAt: cfg.officesUpdatedAt,
+    categoriesUpdatedAt: cfg.categoriesUpdatedAt,
+    queueMetricsUpdatedAt: cfg.queueMetricsUpdatedAt,
+    reportersUpdatedAt: cfg.reportersUpdatedAt,
+    configUpdatedAt: cfg.configUpdatedAt,
+    updatedAt: cfg.updatedAt,
+    deletedCategoryIds: Array.isArray(cfg.deletedCategoryIds) ? cfg.deletedCategoryIds : undefined,
+    deletedQueueMetricIds: Array.isArray(cfg.deletedQueueMetricIds)
+      ? cfg.deletedQueueMetricIds
+      : undefined,
+  };
+  safeWriteMasterLocalStorage(STORAGE_KEY_MASTER_TIMESTAMPS, JSON.stringify(next));
 }
 
 let hasLocalSavedOffices = false;
@@ -446,7 +483,9 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
     bundledOffices: localOffices,
     bundledDeletedOffices: localDelOffices,
     bundledCategories: localCats,
+    deletedCategoryIds: savedTimestamps.deletedCategoryIds || [],
     bundledQueueMetrics: localQms,
+    deletedQueueMetricIds: savedTimestamps.deletedQueueMetricIds || [],
     bundledReporters: localReps,
     bundledDeletedReports: localDelReports,
     bundledIssues: localIssues,
@@ -523,14 +562,20 @@ function mergeIncomingMasterConfig(
 
     // Accept remote when remote is strictly newer, OR when local had no timestamp yet
     if (remoteMs > localMs || localMs === 0) {
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(parsedRemote));
-      } catch {}
+      safeWriteMasterLocalStorage(storageKey, JSON.stringify(parsedRemote));
       return { list: parsedRemote, ts: remoteDedicatedMs > 0 ? remoteTs : localTs };
     }
 
     return { list: localArr, ts: localTs };
   };
+
+  const mergedDeletedCatIds = Array.from(
+    new Set([
+      ...(Array.isArray(current.deletedCategoryIds) ? current.deletedCategoryIds : []),
+      ...(Array.isArray(incoming.deletedCategoryIds) ? incoming.deletedCategoryIds : []),
+    ])
+  );
+  const deletedCatSet = new Set(mergedDeletedCatIds);
 
   const catsPick = pickSectionArray(
     current.bundledCategories,
@@ -542,6 +587,45 @@ function mergeIncomingMasterConfig(
     'doe_work_permit_categories_v1'
   );
 
+  // Safeguard: never silently drop non-deleted custom admin categories from either side
+  // if a stale remote snapshot without dedicated categoriesUpdatedAt arrives.
+  const remoteCatsParsed = parseArrayField<ReportCategory & { sortOrder?: number }>(
+    incoming.bundledCategories
+  );
+  let finalCatsList = catsPick.list ? [...catsPick.list] : [];
+  const otherCatsSource =
+    catsPick.list === current.bundledCategories ? remoteCatsParsed : (current.bundledCategories || []);
+  const finalCatIds = new Set(finalCatsList.map((c) => c.id));
+  let rescuedCustomCat = false;
+  for (const candidate of otherCatsSource) {
+    if (
+      candidate &&
+      candidate.id &&
+      candidate.title &&
+      !finalCatIds.has(candidate.id) &&
+      !deletedCatSet.has(candidate.id) &&
+      (candidate.isDefault === false || candidate.id.startsWith('cat_'))
+    ) {
+      finalCatsList.push({ ...candidate, sortOrder: finalCatsList.length });
+      finalCatIds.add(candidate.id);
+      rescuedCustomCat = true;
+    }
+  }
+  if (rescuedCustomCat) {
+    safeWriteMasterLocalStorage('doe_work_permit_categories_v1', JSON.stringify(finalCatsList));
+    if (catsPick.list !== current.bundledCategories) {
+      localHasNewerSections = true;
+    }
+  }
+
+  const mergedDeletedQmIds = Array.from(
+    new Set([
+      ...(Array.isArray(current.deletedQueueMetricIds) ? current.deletedQueueMetricIds : []),
+      ...(Array.isArray(incoming.deletedQueueMetricIds) ? incoming.deletedQueueMetricIds : []),
+    ])
+  );
+  const deletedQmSet = new Set(mergedDeletedQmIds);
+
   const qmPick = pickSectionArray(
     current.bundledQueueMetrics,
     current.queueMetricsUpdatedAt,
@@ -551,6 +635,35 @@ function mergeIncomingMasterConfig(
     incoming.updatedAt,
     'doe_work_permit_queue_metrics_v1'
   );
+
+  const remoteQmParsed = parseArrayField<QueueMetricCategory & { sortOrder?: number }>(
+    incoming.bundledQueueMetrics
+  );
+  let finalQmList = qmPick.list ? [...qmPick.list] : [];
+  const otherQmSource =
+    qmPick.list === current.bundledQueueMetrics ? remoteQmParsed : (current.bundledQueueMetrics || []);
+  const finalQmIds = new Set(finalQmList.map((m) => m.id));
+  let rescuedCustomQm = false;
+  for (const candidate of otherQmSource) {
+    if (
+      candidate &&
+      candidate.id &&
+      candidate.title &&
+      !finalQmIds.has(candidate.id) &&
+      !deletedQmSet.has(candidate.id) &&
+      (candidate.isDefault === false || candidate.id.startsWith('custom_queue_'))
+    ) {
+      finalQmList.push({ ...candidate, sortOrder: finalQmList.length });
+      finalQmIds.add(candidate.id);
+      rescuedCustomQm = true;
+    }
+  }
+  if (rescuedCustomQm) {
+    safeWriteMasterLocalStorage('doe_work_permit_queue_metrics_v1', JSON.stringify(finalQmList));
+    if (qmPick.list !== current.bundledQueueMetrics) {
+      localHasNewerSections = true;
+    }
+  }
 
   const repsPick = pickSectionArray(
     current.bundledReporters,
@@ -664,10 +777,14 @@ function mergeIncomingMasterConfig(
     bundledOffices: nextOffices,
     bundledDeletedOffices: nextDelOffices,
     officesUpdatedAt: nextOfficesTs,
-    bundledCategories: catsPick.list,
-    categoriesUpdatedAt: catsPick.ts,
-    bundledQueueMetrics: qmPick.list,
-    queueMetricsUpdatedAt: qmPick.ts,
+    bundledCategories: finalCatsList,
+    deletedCategoryIds: mergedDeletedCatIds.filter((id) => !finalCatIds.has(id)),
+    categoriesUpdatedAt:
+      rescuedCustomCat && !catsPick.ts ? nextMonotonicIsoTimestamp(current.updatedAt) : catsPick.ts,
+    bundledQueueMetrics: finalQmList,
+    deletedQueueMetricIds: mergedDeletedQmIds.filter((id) => !finalQmIds.has(id)),
+    queueMetricsUpdatedAt:
+      rescuedCustomQm && !qmPick.ts ? nextMonotonicIsoTimestamp(current.updatedAt) : qmPick.ts,
     bundledReporters: repsPick.list,
     reportersUpdatedAt: repsPick.ts,
     bundledDeletedReports:
@@ -1002,19 +1119,43 @@ async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Prom
         }
       }
 
-      // Two-Way Sync: Push any active reports present on this client (e.g. 1,080 on Deployed Web App)
-      // that are missing from Google Sheets (e.g. 1,078 in Sheets) up to Google Sheets automatically
+      // Two-Way Sync: Push any active reports present on this client (deduplicated by date+office+center)
+      // that are missing from Google Sheets or newer than Google Sheets
       if (masterDocCache.googleSheetsAutoSync !== false && sheetsMap.size > 0) {
+        const sheetsSlotMap = new Map<string, DOEReport>();
+        sheetsMap.forEach((rep) => {
+          const sk = getReportSlotKey(rep);
+          if (sk) {
+            sheetsSlotMap.set(sk, pickNewerReport(sheetsSlotMap.get(sk), rep));
+          }
+        });
+
+        const { deduped: activeDeduped } = deduplicateReportsBySlot(
+          Array.from(sqlActiveReportsCache.values()).filter(
+            (r) => r && r.id && !sqlDeletedIds.has(r.id) && r.id !== 'report-test-123'
+          )
+        );
+
         const missingFromSheets: DOEReport[] = [];
-        sqlActiveReportsCache.forEach((clientRep, id) => {
-          if (!clientRep || !id || sqlDeletedIds.has(id) || id === 'report-test-123') return;
-          const inSheets = sheetsMap.get(id);
-          if (!inSheets || isReportStrictlyNewer(clientRep, inSheets)) {
+        activeDeduped.forEach((clientRep) => {
+          const inSheetsById = sheetsMap.get(clientRep.id);
+          const inSheetsBySlot = sheetsSlotMap.get(getReportSlotKey(clientRep));
+          const existingInSheets = inSheetsById || inSheetsBySlot;
+          if (!existingInSheets || isReportStrictlyNewer(clientRep, existingInSheets)) {
             missingFromSheets.push(clientRep);
           }
         });
         if (missingFromSheets.length > 0) {
-          await syncBulkReportsToGoogleSheets(missingFromSheets, webhookUrl).catch(() => {});
+          const schema = buildSheetsSchemaMetadata(
+            masterDocCache.bundledCategories,
+            masterDocCache.bundledQueueMetrics
+          );
+          await syncBulkReportsToGoogleSheets(
+            missingFromSheets,
+            webhookUrl,
+            undefined,
+            schema
+          ).catch(() => {});
         }
       }
     }
@@ -1110,7 +1251,7 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
         fetch('/api/doe/master-config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ config: cleanForFirestore(masterDocCache) }),
+          body: JSON.stringify({ config: omitUndefinedForFirestore(masterDocCache) }),
         }).catch(() => {});
       }
     } else {
@@ -1128,7 +1269,7 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
         fetch('/api/doe/master-config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ config: cleanForFirestore(masterDocCache) }),
+          body: JSON.stringify({ config: omitUndefinedForFirestore(masterDocCache) }),
         }).catch(() => {});
       }
     }
@@ -1212,32 +1353,26 @@ async function persistMasterConfigOnline(
   if (Array.isArray(partialUpdate.bundledCategories)) {
     stampedUpdate.categoriesUpdatedAt = partialUpdate.categoriesUpdatedAt || nowIso;
     hasLocalSavedCategories = true;
-    try {
-      localStorage.setItem(
-        'doe_work_permit_categories_v1',
-        JSON.stringify(partialUpdate.bundledCategories)
-      );
-    } catch {}
+    safeWriteMasterLocalStorage(
+      'doe_work_permit_categories_v1',
+      JSON.stringify(partialUpdate.bundledCategories)
+    );
   }
   if (Array.isArray(partialUpdate.bundledQueueMetrics)) {
     stampedUpdate.queueMetricsUpdatedAt = partialUpdate.queueMetricsUpdatedAt || nowIso;
     hasLocalSavedQueueMetrics = true;
-    try {
-      localStorage.setItem(
-        'doe_work_permit_queue_metrics_v1',
-        JSON.stringify(partialUpdate.bundledQueueMetrics)
-      );
-    } catch {}
+    safeWriteMasterLocalStorage(
+      'doe_work_permit_queue_metrics_v1',
+      JSON.stringify(partialUpdate.bundledQueueMetrics)
+    );
   }
   if (Array.isArray(partialUpdate.bundledReporters)) {
     stampedUpdate.reportersUpdatedAt = partialUpdate.reportersUpdatedAt || nowIso;
     hasLocalSavedReporters = true;
-    try {
-      localStorage.setItem(
-        'doe_work_permit_reporters_v1',
-        JSON.stringify(partialUpdate.bundledReporters)
-      );
-    } catch {}
+    safeWriteMasterLocalStorage(
+      'doe_work_permit_reporters_v1',
+      JSON.stringify(partialUpdate.bundledReporters)
+    );
   }
   if (
     partialUpdate.reportTitle !== undefined ||
@@ -1253,21 +1388,25 @@ async function persistMasterConfigOnline(
     hasLocalSavedConfig = true;
   }
 
+  const resolvedReportTitle =
+    stampedUpdate.reportTitle ||
+    masterDocCache.reportTitle ||
+    DEFAULT_SYSTEM_CONFIG.reportTitle;
+  const resolvedDeptTh =
+    stampedUpdate.departmentNameTh ||
+    masterDocCache.departmentNameTh ||
+    DEFAULT_SYSTEM_CONFIG.departmentNameTh;
+  const resolvedAdminPin =
+    stampedUpdate.adminPin ||
+    masterDocCache.adminPin ||
+    DEFAULT_SYSTEM_CONFIG.adminPin;
+
   masterDocCache = {
     ...masterDocCache,
     ...stampedUpdate,
-    reportTitle:
-      stampedUpdate.reportTitle ||
-      masterDocCache.reportTitle ||
-      DEFAULT_SYSTEM_CONFIG.reportTitle,
-    departmentNameTh:
-      stampedUpdate.departmentNameTh ||
-      masterDocCache.departmentNameTh ||
-      DEFAULT_SYSTEM_CONFIG.departmentNameTh,
-    adminPin:
-      stampedUpdate.adminPin ||
-      masterDocCache.adminPin ||
-      DEFAULT_SYSTEM_CONFIG.adminPin,
+    reportTitle: resolvedReportTitle,
+    departmentNameTh: resolvedDeptTh,
+    adminPin: resolvedAdminPin,
     migrationVersion: CURRENT_MIGRATION_VERSION,
     updatedAt: nowIso,
   };
@@ -1275,18 +1414,39 @@ async function persistMasterConfigOnline(
   saveMasterSectionTimestamps(masterDocCache);
   broadcastMasterState(false);
 
-  // 1. Primary write to Cloud SQL (PostgreSQL)
-  const sqlPromise = fetch('/api/doe/master-config', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ config: cleanForFirestore(masterDocCache) }),
-  }).catch((sqlErr) => {
-    console.warn('Cloud SQL master-config sync fallback:', sqlErr);
+  // CRITICAL: Only send the EXACT section fields being updated (+ required Firestore rule fields),
+  // omitting all undefined keys so an unrelated update (e.g. offices, deleted reports, issues)
+  // NEVER overwrites `bundledCategories` or wipes `categoriesUpdatedAt` to null!
+  const partialWirePayload = omitUndefinedForFirestore({
+    ...stampedUpdate,
+    reportTitle: resolvedReportTitle,
+    departmentNameTh: resolvedDeptTh,
+    adminPin: resolvedAdminPin,
+    migrationVersion: CURRENT_MIGRATION_VERSION,
+    updatedAt: nowIso,
   });
 
-  // 2. Dual-write to Cloud Firestore so Deployed Web App & real-time clients stay in sync
+  // 1. Primary write to Cloud SQL (PostgreSQL) with 1 retry on transient network glitch
+  const postMasterToSql = async () => {
+    const res = await fetch('/api/doe/master-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: partialWirePayload }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  };
+  const sqlPromise = postMasterToSql().catch(async () => {
+    try {
+      await new Promise((r) => setTimeout(r, 600));
+      await postMasterToSql();
+    } catch (sqlErr) {
+      console.warn('Cloud SQL master-config sync fallback:', sqlErr);
+    }
+  });
+
+  // 2. Dual-write partial section update to Cloud Firestore so Shared/Deployed Web App & real-time clients stay in sync
   const docRef = doc(db, CONFIG_COLLECTION, CONFIG_DOC_ID);
-  const firestorePromise = setDoc(docRef, cleanForFirestore(masterDocCache), {
+  const firestorePromise = setDoc(docRef, partialWirePayload, {
     merge: true,
   }).catch((error) => {
     if (isQuotaExceededError(error)) {
@@ -1310,13 +1470,32 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
       if (snapshot.exists()) {
         const rawData = snapshot.data() as Partial<BundledMasterConfig>;
         const activeIds = getActiveReportIdsInBundles();
-        const { next } = mergeIncomingMasterConfig(masterDocCache, rawData, {
+        const { next, localHasNewerSections } = mergeIncomingMasterConfig(masterDocCache, rawData, {
           isLiveRemote: true,
           activeIds,
         });
         masterDocCache = next;
         hasReceivedFirstMasterSnapshot = true;
         broadcastMasterState(false);
+
+        // If local cache had strictly newer edits (e.g. added category/status) than Firestore snapshot, push back to Firestore
+        if (localHasNewerSections) {
+          const repairPayload = omitUndefinedForFirestore({
+            bundledCategories: masterDocCache.bundledCategories,
+            deletedCategoryIds: masterDocCache.deletedCategoryIds,
+            categoriesUpdatedAt: masterDocCache.categoriesUpdatedAt,
+            bundledQueueMetrics: masterDocCache.bundledQueueMetrics,
+            deletedQueueMetricIds: masterDocCache.deletedQueueMetricIds,
+            queueMetricsUpdatedAt: masterDocCache.queueMetricsUpdatedAt,
+            bundledOffices: masterDocCache.bundledOffices,
+            bundledDeletedOffices: masterDocCache.bundledDeletedOffices,
+            officesUpdatedAt: masterDocCache.officesUpdatedAt,
+            reportTitle: masterDocCache.reportTitle || DEFAULT_SYSTEM_CONFIG.reportTitle,
+            adminPin: masterDocCache.adminPin || DEFAULT_SYSTEM_CONFIG.adminPin,
+            updatedAt: masterDocCache.updatedAt || new Date().toISOString(),
+          });
+          setDoc(docRef, repairPayload, { merge: true }).catch(() => {});
+        }
       }
     },
     (error) => {
@@ -1497,7 +1676,11 @@ export async function saveBulkReportsOnline(
       ''
     ).trim();
     if (webhookUrl.startsWith('https://script.google.com/')) {
-      syncBulkReportsToGoogleSheets(validReports, webhookUrl).catch(() => {});
+      const schema = buildSheetsSchemaMetadata(
+        masterDocCache.bundledCategories,
+        masterDocCache.bundledQueueMetrics
+      );
+      syncBulkReportsToGoogleSheets(validReports, webhookUrl, undefined, schema).catch(() => {});
     }
   }
 }
@@ -1862,9 +2045,16 @@ export async function deepScanAndRecoverAllReports(
     resolvedSheetsWebhookUrl.startsWith('https://script.google.com/') &&
     masterDocCache.googleSheetsAutoSync !== false
   ) {
-    await syncBulkReportsToGoogleSheets(missingFromSheetsList, resolvedSheetsWebhookUrl).catch(
-      () => {}
+    const schema = buildSheetsSchemaMetadata(
+      masterDocCache.bundledCategories,
+      masterDocCache.bundledQueueMetrics
     );
+    await syncBulkReportsToGoogleSheets(
+      missingFromSheetsList,
+      resolvedSheetsWebhookUrl,
+      undefined,
+      schema
+    ).catch(() => {});
   }
 
   // Build breakdown by date
@@ -2052,9 +2242,15 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
       }
     });
 
-  // 3. Background sync to Google Sheets (non-blocking)
+  // 3. Background sync to Google Sheets (non-blocking) with dynamic admin schema
   if (masterDocCache.googleSheetsAutoSync !== false) {
-    syncReportToGoogleSheets(cleanReport, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
+    const schema = buildSheetsSchemaMetadata(
+      masterDocCache.bundledCategories,
+      masterDocCache.bundledQueueMetrics
+    );
+    syncReportToGoogleSheets(cleanReport, masterDocCache.googleSheetsWebhookUrl, schema).catch(
+      () => {}
+    );
   }
 
   await Promise.all([sqlPromise, firestoreShardPromise]);
@@ -2203,10 +2399,59 @@ export async function restoreReportOnline(report: DOEReport): Promise<void> {
   ).catch(() => {});
 
   if (masterDocCache.googleSheetsAutoSync !== false) {
-    syncReportToGoogleSheets(cleanReport, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
+    const schema = buildSheetsSchemaMetadata(
+      masterDocCache.bundledCategories,
+      masterDocCache.bundledQueueMetrics
+    );
+    syncReportToGoogleSheets(cleanReport, masterDocCache.googleSheetsWebhookUrl, schema).catch(
+      () => {}
+    );
   }
 
   await Promise.all([sqlPromise, firestorePromise]);
+}
+
+/**
+ * ล้างรายงานที่ซ้ำกันในวันเดียวกัน + สำนักงานเดียวกัน + ศูนย์บริการเดียวกัน (เก็บฉบับที่แก้ไขล่าสุด)
+ * ซิงก์ลบทั้งใน Cloud SQL, Firestore และ Google Sheets พร้อมอัปเดตคอลัมน์หัวข้อเพิ่มเติม
+ */
+export async function cleanupDuplicateReportsOnline(
+  reports: DOEReport[],
+  explicitWebhookUrl?: string
+): Promise<{ keptCount: number; removedCount: number; removedIds: string[] }> {
+  const { deduped, removedDuplicates } = deduplicateReportsBySlot(reports);
+  const removedIds: string[] = [];
+
+  for (const dup of removedDuplicates) {
+    if (!dup || !dup.id) continue;
+    removedIds.push(dup.id);
+    try {
+      await deleteReportOnline(dup);
+    } catch {}
+  }
+
+  const storedCfg = getStoredGoogleSheetsConfig();
+  const webhookUrl = (
+    explicitWebhookUrl ||
+    masterDocCache.googleSheetsWebhookUrl ||
+    storedCfg.webhookUrl ||
+    DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL ||
+    ''
+  ).trim();
+
+  if (webhookUrl.startsWith('https://script.google.com/')) {
+    const schema = buildSheetsSchemaMetadata(
+      masterDocCache.bundledCategories,
+      masterDocCache.bundledQueueMetrics
+    );
+    await syncSchemaToGoogleSheets(webhookUrl, schema).catch(() => {});
+  }
+
+  return {
+    keptCount: deduped.length,
+    removedCount: removedIds.length,
+    removedIds,
+  };
 }
 
 export function subscribeDeletedReports(
@@ -2363,12 +2608,37 @@ export async function saveCategoryOnline(category: ReportCategory): Promise<void
     idx >= 0
       ? existing.map((c, i) => (i === idx ? { ...category, sortOrder: i } : c))
       : [...existing, { ...category, sortOrder: existing.length }];
-  await persistMasterConfigOnline({ bundledCategories: next });
+  const nextDeletedIds = (masterDocCache.deletedCategoryIds || []).filter((id) => id !== category.id);
+  await persistMasterConfigOnline({
+    bundledCategories: next,
+    deletedCategoryIds: nextDeletedIds,
+  });
+  if (masterDocCache.googleSheetsAutoSync !== false) {
+    syncSchemaToGoogleSheets(
+      masterDocCache.googleSheetsWebhookUrl,
+      buildSheetsSchemaMetadata(next, masterDocCache.bundledQueueMetrics)
+    ).catch(() => {});
+  }
 }
 
 export async function saveAllCategoriesOnline(categories: ReportCategory[]): Promise<void> {
+  const prevCats = masterDocCache.bundledCategories || DEFAULT_CATEGORIES;
+  const nextIds = new Set(categories.map((c) => c.id));
+  const newlyDeletedIds = prevCats.filter((c) => c && c.id && !nextIds.has(c.id)).map((c) => c.id);
+  const nextDeletedIds = Array.from(
+    new Set([...(masterDocCache.deletedCategoryIds || []), ...newlyDeletedIds])
+  ).filter((id) => !nextIds.has(id));
   const next = categories.map((cat, idx) => ({ ...cat, sortOrder: idx }));
-  await persistMasterConfigOnline({ bundledCategories: next });
+  await persistMasterConfigOnline({
+    bundledCategories: next,
+    deletedCategoryIds: nextDeletedIds,
+  });
+  if (masterDocCache.googleSheetsAutoSync !== false) {
+    syncSchemaToGoogleSheets(
+      masterDocCache.googleSheetsWebhookUrl,
+      buildSheetsSchemaMetadata(next, masterDocCache.bundledQueueMetrics)
+    ).catch(() => {});
+  }
 }
 
 // ============================================================================
@@ -2408,12 +2678,37 @@ export async function saveQueueMetricOnline(metric: QueueMetricCategory): Promis
     idx >= 0
       ? existing.map((m, i) => (i === idx ? { ...metric, sortOrder: i } : m))
       : [...existing, { ...metric, sortOrder: existing.length }];
-  await persistMasterConfigOnline({ bundledQueueMetrics: next });
+  const nextDeletedIds = (masterDocCache.deletedQueueMetricIds || []).filter((id) => id !== metric.id);
+  await persistMasterConfigOnline({
+    bundledQueueMetrics: next,
+    deletedQueueMetricIds: nextDeletedIds,
+  });
+  if (masterDocCache.googleSheetsAutoSync !== false) {
+    syncSchemaToGoogleSheets(
+      masterDocCache.googleSheetsWebhookUrl,
+      buildSheetsSchemaMetadata(masterDocCache.bundledCategories, next)
+    ).catch(() => {});
+  }
 }
 
 export async function saveAllQueueMetricsOnline(metrics: QueueMetricCategory[]): Promise<void> {
+  const prevQms = masterDocCache.bundledQueueMetrics || DEFAULT_QUEUE_METRICS;
+  const nextIds = new Set(metrics.map((m) => m.id));
+  const newlyDeletedIds = prevQms.filter((m) => m && m.id && !nextIds.has(m.id)).map((m) => m.id);
+  const nextDeletedIds = Array.from(
+    new Set([...(masterDocCache.deletedQueueMetricIds || []), ...newlyDeletedIds])
+  ).filter((id) => !nextIds.has(id));
   const next = metrics.map((m, idx) => ({ ...m, sortOrder: idx }));
-  await persistMasterConfigOnline({ bundledQueueMetrics: next });
+  await persistMasterConfigOnline({
+    bundledQueueMetrics: next,
+    deletedQueueMetricIds: nextDeletedIds,
+  });
+  if (masterDocCache.googleSheetsAutoSync !== false) {
+    syncSchemaToGoogleSheets(
+      masterDocCache.googleSheetsWebhookUrl,
+      buildSheetsSchemaMetadata(masterDocCache.bundledCategories, next)
+    ).catch(() => {});
+  }
 }
 
 export async function deleteQueueMetricOnline(metricId: string): Promise<void> {
@@ -2421,7 +2716,13 @@ export async function deleteQueueMetricOnline(metricId: string): Promise<void> {
   const next = existing
     .filter((m) => m.id !== metricId)
     .map((m, idx) => ({ ...m, sortOrder: idx }));
-  await persistMasterConfigOnline({ bundledQueueMetrics: next });
+  const nextDeletedIds = Array.from(
+    new Set([...(masterDocCache.deletedQueueMetricIds || []), metricId])
+  );
+  await persistMasterConfigOnline({
+    bundledQueueMetrics: next,
+    deletedQueueMetricIds: nextDeletedIds,
+  });
 }
 
 // ============================================================================

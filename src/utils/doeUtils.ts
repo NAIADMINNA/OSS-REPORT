@@ -1,6 +1,7 @@
 import { DOEReport, ReportCategory } from '../types/doe';
 import { EMPLOYMENT_OFFICES } from '../data/offices';
 import { formatThaiDateFull } from './thaiDate';
+import { getCanonicalCenterKey } from './officeUtils';
 
 /**
  * ทำความสะอาดข้อมูลรายงาน (Sanitize & Normalize) เพื่อป้องกันปัญหาฟิลด์เป็น undefined/null
@@ -224,4 +225,87 @@ export function calculateReportTotalSections(
     customSum
   );
 }
+
+/**
+ * สร้างคีย์มาตรฐานสำหรับตรวจสอบรายการซ้ำในวันเดียวกัน + สำนักงานเดียวกัน + ศูนย์บริการเดียวกัน
+ * (รองรับ 1 รายงานต่อศูนย์บริการมาตรฐาน และ 1 รายงานต่อหน่วยเคลื่อนที่ Mobile Unit ต่อวัน)
+ */
+export function getReportSlotKey(report: Partial<DOEReport> | null | undefined): string {
+  if (!report) return '';
+  const rawDate = String(report.reportDate || '').trim().slice(0, 10);
+  const officeKey = String(report.officeId || report.officeName || '')
+    .trim()
+    .toLowerCase();
+  const rawCenter = String(report.centerName || '').trim();
+  const lowerCenter = rawCenter.toLowerCase();
+  const isMobile = lowerCenter.includes('mobile unit') || lowerCenter.includes('เคลื่อนที่');
+  const centerKey = isMobile
+    ? '__mobile_unit__'
+    : getCanonicalCenterKey(rawCenter || report.officeName || '');
+  return `${rawDate}|${officeKey}|${centerKey}`;
+}
+
+function getReportModifiedMs(r: DOEReport): number {
+  const ts = r.updatedAt || r.createdAt || '';
+  const ms = ts ? Date.parse(ts) : 0;
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+function getReportRichnessScore(r: DOEReport): number {
+  let score = 0;
+  if ((r.queueAppointment || 0) > 0) score += 2;
+  if ((r.cardsIssued || 0) > 0) score += 2;
+  if ((r.identityVerified || 0) > 0) score += 1;
+  if ((r.notes || '').trim().length > 0) score += 1;
+  if ((r.reporterName || '').trim().length > 0) score += 1;
+  score += Object.values(r.customCategoryValues || {}).filter((v) => Number(v) > 0).length;
+  score += Object.values(r.customQueueValues || {}).filter((v) => Number(v) > 0).length;
+  return score;
+}
+
+/**
+ * คัดกรองรายการรายงานที่ซ้ำกันในวันเดียวกัน สำนักงานเดียวกัน และศูนย์บริการเดียวกัน
+ * โดยเก็บฉบับที่แก้ไขล่าสุด (updatedAt ล่าสุด) ไว้เพียง 1 รายการต่อช่อง
+ */
+export function deduplicateReportsBySlot(reports: DOEReport[]): {
+  deduped: DOEReport[];
+  removedDuplicates: DOEReport[];
+} {
+  const slotWinnerMap = new Map<string, DOEReport>();
+  const removedDuplicates: DOEReport[] = [];
+
+  for (const r of reports || []) {
+    if (!r || !r.id) continue;
+    const slotKey = getReportSlotKey(r);
+    if (!slotKey || slotKey === '||') {
+      slotWinnerMap.set(`__id__:${r.id}`, r);
+      continue;
+    }
+
+    const prev = slotWinnerMap.get(slotKey);
+    if (!prev) {
+      slotWinnerMap.set(slotKey, r);
+      continue;
+    }
+
+    const prevMs = getReportModifiedMs(prev);
+    const currMs = getReportModifiedMs(r);
+    const currWins =
+      currMs > prevMs ||
+      (currMs === prevMs && getReportRichnessScore(r) > getReportRichnessScore(prev));
+
+    if (currWins) {
+      removedDuplicates.push(prev);
+      slotWinnerMap.set(slotKey, r);
+    } else {
+      removedDuplicates.push(r);
+    }
+  }
+
+  return {
+    deduped: Array.from(slotWinnerMap.values()),
+    removedDuplicates,
+  };
+}
+
 

@@ -34,7 +34,7 @@ import { ConfirmDialogModal } from './components/ConfirmDialogModal';
 import { DOEAssistantMascot } from './components/DOEAssistantMascot';
 import { SystemManualView } from './components/SystemManualView';
 import { formatThaiDateFull, getTodayIsoDate } from './utils/thaiDate';
-import { sanitizeReportList } from './utils/doeUtils';
+import { getReportSlotKey, sanitizeReportList } from './utils/doeUtils';
 import { areSameCenterName, deduplicateCenterList } from './utils/officeUtils';
 import {
   loadReportsFromIndexedDB,
@@ -1061,13 +1061,15 @@ export default function App() {
       }
 
       const serializedActive = JSON.stringify(activeClean);
-      // Free up secondary backup key first if payload exceeds 600k chars (~1.2MB UTF-16) so primary localStorage never hits 5MB quota
-      if (serializedActive.length >= 600_000) {
+      // Keep full report history in IndexedDB; cap localStorage snapshot when large so 5MB quota NEVER blocks categories/config saves
+      if (serializedActive.length >= 500_000) {
         localStorage.removeItem(STORAGE_KEY_REPORTS_BACKUP);
+        safeSetLocalStorage(STORAGE_KEY_REPORTS, JSON.stringify(activeClean.slice(0, 120)));
+      } else {
+        safeSetLocalStorage(STORAGE_KEY_REPORTS, serializedActive);
       }
-      safeSetLocalStorage(STORAGE_KEY_REPORTS, serializedActive);
 
-      if (serializedActive.length < 600_000) {
+      if (serializedActive.length < 500_000) {
         const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
         let backupList: DOEReport[] = [];
         if (existingBackupRaw) {
@@ -1580,20 +1582,12 @@ export default function App() {
     let finalReport = { ...savedReport };
     const existingByIdIndex = reports.findIndex((r) => r.id === finalReport.id);
 
-    const isMobileCenterStr = (c?: string) => {
-      const lower = (c || '').toLowerCase();
-      return lower.includes('mobile unit') || lower.includes('เคลื่อนที่');
-    };
-
     // If not in edit mode and the user switched to a different office, date, or center/Mobile Unit after a previous save,
     // generate a fresh ID so it never overwrites the previous center's report
     if (
       !isEditingExistingReport &&
       existingByIdIndex >= 0 &&
-      (reports[existingByIdIndex].officeId !== finalReport.officeId ||
-        reports[existingByIdIndex].reportDate !== finalReport.reportDate ||
-        (reports[existingByIdIndex].centerName || '').trim() !==
-          (finalReport.centerName || '').trim())
+      getReportSlotKey(reports[existingByIdIndex]) !== getReportSlotKey(finalReport)
     ) {
       finalReport = {
         ...finalReport,
@@ -1603,45 +1597,61 @@ export default function App() {
       };
     }
 
-    // Ensure no duplicate report for the same office + date + center slot (1 per standard center name, 1 per Mobile Unit)
-    const duplicateSameSlot = reports.find((r) => {
-      if (r.id === finalReport.id) return false;
-      const sameDate = r.reportDate === finalReport.reportDate;
-      const sameOffice =
-        r.officeId === finalReport.officeId ||
-        (r.officeName || '').trim() === (finalReport.officeName || '').trim();
-      if (!sameDate || !sameOffice) return false;
-      const rIsMob = isMobileCenterStr(r.centerName);
-      const finalIsMob = isMobileCenterStr(finalReport.centerName);
-      if (rIsMob && finalIsMob) return true;
-      if (!rIsMob && !finalIsMob) {
-        return (r.centerName || '').trim() === (finalReport.centerName || '').trim();
-      }
-      return false;
-    });
+    // Ensure strictly 1 active report per (reportDate + office + canonical center / Mobile Unit)
+    const finalSlotKey = getReportSlotKey(finalReport);
+    const sameSlotReports = finalSlotKey
+      ? reports.filter((r) => r.id !== finalReport.id && getReportSlotKey(r) === finalSlotKey)
+      : [];
 
-    if (duplicateSameSlot && !isEditingExistingReport) {
-      finalReport = {
-        ...finalReport,
-        id: duplicateSameSlot.id,
-        createdAt: duplicateSameSlot.createdAt || finalReport.createdAt,
-        updatedAt: new Date().toISOString(),
-      };
+    const supersededDuplicateReports: DOEReport[] = [];
+
+    if (sameSlotReports.length > 0) {
+      if (!isEditingExistingReport) {
+        // Reuse the first existing slot ID so saving again updates the same row in-place
+        const primarySlot = sameSlotReports[0];
+        finalReport = {
+          ...finalReport,
+          id: primarySlot.id,
+          createdAt: primarySlot.createdAt || finalReport.createdAt,
+          updatedAt: new Date().toISOString(),
+        };
+        if (sameSlotReports.length > 1) {
+          supersededDuplicateReports.push(...sameSlotReports.slice(1));
+        }
+      } else {
+        // User edited an existing report onto a slot that already has another report -> supersede the older duplicate(s)
+        supersededDuplicateReports.push(...sameSlotReports);
+      }
     }
+
+    const supersededIds = new Set(supersededDuplicateReports.map((r) => r.id));
+    supersededIds.forEach((dupId) => {
+      deletedReportIdsRef.current.add(dupId);
+      pendingSaveReportIdsRef.current.delete(dupId);
+    });
 
     deletedReportIdsRef.current.delete(finalReport.id);
     pendingSaveReportIdsRef.current.add(finalReport.id);
     uploadedLocalReportIdsRef.current.delete(finalReport.id);
     persistUnsyncedIds();
 
-    const targetIndex = reports.findIndex((r) => r.id === finalReport.id);
+    const filteredBase =
+      supersededIds.size > 0 ? reports.filter((r) => !supersededIds.has(r.id)) : reports;
+    const targetIndex = filteredBase.findIndex((r) => r.id === finalReport.id);
     let updatedList: DOEReport[];
 
     if (targetIndex >= 0) {
-      updatedList = [...reports];
+      updatedList = [...filteredBase];
       updatedList[targetIndex] = finalReport;
     } else {
-      updatedList = [finalReport, ...reports];
+      updatedList = [finalReport, ...filteredBase];
+    }
+
+    // Clean up any superseded duplicate IDs from Cloud SQL, Firestore, and Google Sheets in the background
+    if (supersededDuplicateReports.length > 0) {
+      supersededDuplicateReports.forEach((dup) => {
+        deleteReportOnline(dup).catch(() => {});
+      });
     }
 
     // 1. Immediately persist to IndexedDB & localStorage using quota-safe helper before async network call
@@ -1649,11 +1659,13 @@ export default function App() {
       const delIds = deletedReportIdsRef.current;
       saveReportsToIndexedDB(updatedList).catch(() => {});
       const serializedUpdated = JSON.stringify(updatedList);
-      if (serializedUpdated.length >= 600_000) {
+      if (serializedUpdated.length >= 500_000) {
         localStorage.removeItem(STORAGE_KEY_REPORTS_BACKUP);
+        safeSetLocalStorage(STORAGE_KEY_REPORTS, JSON.stringify(updatedList.slice(0, 120)));
+      } else {
+        safeSetLocalStorage(STORAGE_KEY_REPORTS, serializedUpdated);
       }
-      safeSetLocalStorage(STORAGE_KEY_REPORTS, serializedUpdated);
-      if (serializedUpdated.length < 600_000) {
+      if (serializedUpdated.length < 500_000) {
         const existingBackupRaw = localStorage.getItem(STORAGE_KEY_REPORTS_BACKUP);
         const existingBackup: DOEReport[] = existingBackupRaw ? JSON.parse(existingBackupRaw) : [];
         const backupMap = new Map<string, DOEReport>();

@@ -20,15 +20,18 @@ import {
   deleteSystemIssueOnline,
   clearAllSystemIssuesOnline,
   saveBulkReportsOnline,
+  cleanupDuplicateReportsOnline,
   DeepScanDiagnosticResult,
 } from '../services/firestoreService';
 import {
   GOOGLE_APPS_SCRIPT_TEMPLATE,
+  buildSheetsSchemaMetadata,
   getStoredGoogleSheetsConfig,
   saveStoredGoogleSheetsConfig,
   syncBulkReportsToGoogleSheets,
   pullReportsFromGoogleSheets,
 } from '../utils/googleSheetsSync';
+import { deduplicateReportsBySlot } from '../utils/doeUtils';
 import { formatThaiDateShort } from '../utils/thaiDate';
 import {
   ShieldCheck,
@@ -159,7 +162,10 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [isSyncingToSheets, setIsSyncingToSheets] = useState(false);
   const [sheetsSyncProgress, setSheetsSyncProgress] = useState<{ done: number; total: number } | null>(null);
   const [isPullingFromSheets, setIsPullingFromSheets] = useState(false);
+  const [isCleaningDuplicates, setIsCleaningDuplicates] = useState(false);
   const [showAppsScriptGuide, setShowAppsScriptGuide] = useState(false);
+
+  const duplicateSlotAudit = useMemo(() => deduplicateReportsBySlot(reports), [reports]);
 
   useEffect(() => {
     if (systemConfig.googleSheetsWebhookUrl && systemConfig.googleSheetsWebhookUrl !== sheetsWebhookUrl) {
@@ -194,15 +200,54 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       googleSheetsAutoSync: sheetsAutoSync,
     });
     setIsSyncingToSheets(true);
-    setSheetsSyncProgress({ done: 0, total: reports.length });
+    const schema = buildSheetsSchemaMetadata(categories, queueMetrics);
+    setSheetsSyncProgress({ done: 0, total: duplicateSlotAudit.deduped.length });
     try {
-      const result = await syncBulkReportsToGoogleSheets(reports, cleanUrl, (done, total) => {
-        setSheetsSyncProgress({ done, total });
-      });
+      const result = await syncBulkReportsToGoogleSheets(
+        reports,
+        cleanUrl,
+        (done, total) => {
+          setSheetsSyncProgress({ done, total });
+        },
+        schema
+      );
       onNotify(result.message || 'ซิงค์ข้อมูลลง Google Sheets สำเร็จ');
     } finally {
       setIsSyncingToSheets(false);
       setSheetsSyncProgress(null);
+    }
+  };
+
+  const handleCleanupDuplicatesAndSyncSheets = async () => {
+    const cleanUrl = sheetsWebhookUrl.trim();
+    setIsCleaningDuplicates(true);
+    try {
+      const { removedCount, keptCount } = await cleanupDuplicateReportsOnline(
+        reports,
+        cleanUrl.startsWith('https://script.google.com/') ? cleanUrl : undefined
+      );
+      if (cleanUrl.startsWith('https://script.google.com/')) {
+        const schema = buildSheetsSchemaMetadata(categories, queueMetrics);
+        await syncBulkReportsToGoogleSheets(
+          duplicateSlotAudit.deduped,
+          cleanUrl,
+          undefined,
+          schema
+        );
+      }
+      if (removedCount > 0) {
+        onNotify(
+          `ล้างรายงานซ้ำในวันเดียวกันสำเร็จ จำนวน ${removedCount.toLocaleString()} รายการ (คงเหลือฉบับล่าสุด ${keptCount.toLocaleString()} รายการ พร้อมอัปเดตคอลัมน์ใน Google Sheets แล้ว)`
+        );
+      } else {
+        onNotify(
+          `ตรวจสอบแล้วไม่พบรายการซ้ำในระบบ (${keptCount.toLocaleString()} รายการ) และได้อัปเดตคอลัมน์หัวข้อเพิ่มเติมใน Google Sheets เรียบร้อยแล้ว`
+        );
+      }
+    } catch {
+      onNotify('เกิดข้อผิดพลาดระหว่างล้างรายการซ้ำ กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setIsCleaningDuplicates(false);
     }
   };
 
@@ -4051,7 +4096,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                       )}
                     </div>
                     <p className="text-xs text-emerald-200/80 mt-0.5">
-                      บันทึกสำเนารายงานทุกฉบับลง Google Sheets อัตโนมัติ จัดเรียง <strong>วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ (แถวที่ 2)</strong> และแยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น <code>ประจำเดือน_2569-11</code>)
+                      บันทึกสำเนารายงานทุกฉบับลง Google Sheets อัตโนมัติ <strong>ป้องกันแถวซ้ำในวันเดียวกัน (1 แถวต่อวัน/สำนักงาน/ศูนย์)</strong>, <strong>แตกคอลัมน์เพิ่มอัตโนมัติตามหัวข้อและสถานะใหม่ของแอดมิน + คอลัมน์สรุปอ่านง่าย</strong>, เรียงวันที่ล่าสุดอยู่บนสุด และแยกแท็บรายเดือนอัตโนมัติ
                     </p>
                   </div>
                 </div>
@@ -4062,7 +4107,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <Code className="w-3.5 h-3.5" />
-                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'ดูวิธีตั้งค่า / อัปเดตโค้ด (เรียงวันล่าสุด + แยกแท็บรายเดือน)'}</span>
+                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'อัปเดตโค้ด Apps Script v2 (แตกคอลัมน์อัตโนมัติ + กันแถวซ้ำ)'}</span>
                 </button>
               </div>
 
@@ -4070,28 +4115,28 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 <div className="bg-slate-950/80 rounded-xl p-4 border border-emerald-800/50 space-y-3 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-bold text-emerald-300">
-                      โค้ด Google Apps Script รุ่นผู้บริหาร (เรียงวันที่ล่าสุดอยู่บนสุด + แยกแท็บเก็บประวัติรายเดือนอัตโนมัติ):
+                      โค้ด Google Apps Script รุ่นผู้บริหาร v2 (แตกคอลัมน์หัวข้อใหม่ + คอลัมน์สรุปอ่านง่าย + ล้างและป้องกันแถวซ้ำในวันเดียวกันอัตโนมัติ):
                     </span>
                     <button
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
-                        onNotify('คัดลอกโค้ด Google Apps Script (รุ่นเรียงวันล่าสุด + แยกแท็บรายเดือนอัตโนมัติ) เรียบร้อยแล้ว');
+                        onNotify('คัดลอกโค้ด Google Apps Script v2 (แตกคอลัมน์อัตโนมัติ + กันแถวซ้ำ) เรียบร้อยแล้ว');
                       }}
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <Copy className="w-3.5 h-3.5" />
-                      <span>คัดลอกโค้ด Apps Script ทั้งหมด</span>
+                      <span>คัดลอกโค้ด Apps Script v2 ทั้งหมด</span>
                     </button>
                   </div>
                   <ol className="list-decimal list-inside space-y-1.5 text-slate-300 leading-relaxed">
                     <li>เปิดไฟล์ <strong>Google Sheets</strong> ของคุณ แล้วไปที่เมนูด้านบน <strong>ส่วนขยาย (Extensions) &rarr; Apps Script</strong></li>
-                    <li>ลบโค้ดเดิมออกทั้งหมด กดปุ่ม <strong>"คัดลอกโค้ด Apps Script ทั้งหมด"</strong> ด้านบนไปวางแทนที่ แล้วกดไอคอนบันทึก (Save)</li>
+                    <li>ลบโค้ดเดิมออกทั้งหมด กดปุ่ม <strong>"คัดลอกโค้ด Apps Script v2 ทั้งหมด"</strong> ด้านบนไปวางแทนที่ แล้วกดไอคอนบันทึก (Save)</li>
                     <li>
                       หากเคยสร้าง URL ไว้แล้ว: กดปุ่มมุมขวาบน <strong>ทำให้ใช้งานได้ (Deploy) &rarr; จัดการการทำให้ใช้งานได้ (Manage deployments)</strong> &rarr; กดไอคอนรูปดินสอ (แก้ไข) &rarr; ช่องเวอร์ชันเลือก <strong>เวอร์ชันใหม่ (New version)</strong> แล้วกด Deploy (ได้ URL เดิม ไม่ต้องเปลี่ยน URL)
                     </li>
                     <li>
-                      หากติดตั้งใหม่ครั้งแรก: กด <strong>ทำให้ใช้งานได้ (Deploy) &rarr; การทำให้ใช้งานได้รายการใหม่ (New deployment)</strong> &rarr; เลือกประเภท <strong>เว็บแอป (Web app)</strong> &bull; ผู้มีสิทธิ์เข้าถึง <strong>ทุกคน (Anyone)</strong> แล้วคัดลอก Web App URL มาวางด้านล่าง
+                      หลังจากกด Deploy เวอร์ชันใหม่แล้ว ให้กดปุ่ม <strong>"ล้างแถวซ้ำ &amp; อัปเดตคอลัมน์บน Google Sheets"</strong> ด้านล่าง 1 ครั้ง ระบบจะรวมแถวซ้ำในวันเดียวกันให้อัตโนมัติ พร้อมเพิ่มคอลัมน์ <code>หัวข้อ/สถานะเพิ่มเติม (สรุป)</code> และแตกคอลัมน์แยกตามหัวข้อใหม่ทุกข้อให้ทันที
                     </li>
                   </ol>
                 </div>
@@ -4150,7 +4195,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 <div className="flex flex-wrap items-center gap-2.5 pt-1">
                   <button
                     type="button"
-                    disabled={isSyncingToSheets}
+                    disabled={isSyncingToSheets || isCleaningDuplicates}
                     onClick={handleSyncAllReportsToGoogleSheets}
                     className="flex-1 min-w-[240px] px-4 py-2.5 bg-white hover:bg-emerald-50 text-emerald-950 font-extrabold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
@@ -4158,13 +4203,33 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     <span>
                       {isSyncingToSheets
                         ? 'กำลังซิงค์ข้อมูลลง Google Sheets...'
-                        : `ซิงค์ข้อมูลทั้งหมด (${reports.length.toLocaleString()} รายการ) ลง Google Sheets ทันที`}
+                        : `ซิงค์ข้อมูลทั้งหมด (${duplicateSlotAudit.deduped.length.toLocaleString()} รายการไม่ซ้ำ) + อัปเดตคอลัมน์`}
                     </span>
                   </button>
 
                   <button
                     type="button"
-                    disabled={isPullingFromSheets}
+                    disabled={isCleaningDuplicates || isSyncingToSheets}
+                    onClick={handleCleanupDuplicatesAndSyncSheets}
+                    className={`px-4 py-2.5 font-extrabold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${
+                      duplicateSlotAudit.removedDuplicates.length > 0
+                        ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                        : 'bg-emerald-700/70 hover:bg-emerald-700 text-emerald-100 border border-emerald-500/40'
+                    }`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>
+                      {isCleaningDuplicates
+                        ? 'กำลังล้างแถวซ้ำ & อัปเดตคอลัมน์...'
+                        : duplicateSlotAudit.removedDuplicates.length > 0
+                          ? `ล้างแถวซ้ำในวันเดียวกัน (พบ ${duplicateSlotAudit.removedDuplicates.length.toLocaleString()} แถว) & อัปเดตคอลัมน์`
+                          : 'ตรวจสอบแถวซ้ำ & อัปเดตคอลัมน์หัวข้อเพิ่ม'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isPullingFromSheets || isCleaningDuplicates}
                     onClick={handlePullFromGoogleSheets}
                     className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
