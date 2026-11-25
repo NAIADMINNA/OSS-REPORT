@@ -119,7 +119,7 @@ export const DEFAULT_REPORTERS: ReporterProfile[] = [
 ];
 
 export const DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL =
-  'https://script.google.com/macros/s/AKfycbyMiKbkdTrInFBml_jU8z9caIjyQCTNxkYwH7jb1qFiXQLrERWTwS6e9wd_Iz5T8fG_GQ/exec';
+  'https://script.google.com/macros/s/AKfycbyyyAOs_gvcaU7q5R7GcBlBIiGvuYYotAqfzqERu60665dJtl9z6rQPhAMoyjzS3inE/exec';
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   reportTitle: 'รายงานผลการปฏิบัติงานศูนย์บริการใบอนุญาตทำงานของคนต่างด้าว',

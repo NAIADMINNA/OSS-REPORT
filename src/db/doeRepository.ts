@@ -180,6 +180,28 @@ function mergeMasterConfigRecords(
 
   mergeProtectedCustom('bundledCategories', 'deletedCategoryIds', 'cat_');
   mergeProtectedCustom('bundledQueueMetrics', 'deletedQueueMetricIds', 'custom_queue_');
+
+  // Preserve deleted report tombstones (deletedReportIds) unless explicitly restored via restoredReportIds
+  const restoredReportSet = new Set<string>(
+    Array.isArray(incoming.restoredReportIds)
+      ? (incoming.restoredReportIds as unknown[]).map((id) => String(id || '').trim()).filter(Boolean)
+      : []
+  );
+  const mergedDeletedReportIds = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(base.deletedReportIds) ? (base.deletedReportIds as unknown[]) : []),
+        ...(Array.isArray(incoming.deletedReportIds) ? (incoming.deletedReportIds as unknown[]) : []),
+      ]
+        .map((id) => String(id || '').trim())
+        .filter((id) => id && !restoredReportSet.has(id))
+    )
+  ).slice(-500);
+  merged.deletedReportIds = mergedDeletedReportIds;
+  if ('restoredReportIds' in merged) {
+    delete merged.restoredReportIds;
+  }
+
   if ('testPing' in merged) {
     delete merged.testPing;
   }
@@ -706,13 +728,18 @@ export async function upsertBulkReportsInSql(
   }
 
   const mirror = loadMirror();
+  const masterDeletedReportIds = new Set<string>(
+    Array.isArray(mirror.masterConfig?.deletedReportIds)
+      ? (mirror.masterConfig!.deletedReportIds as unknown[]).map((id) => String(id || '').trim()).filter(Boolean)
+      : []
+  );
   const dedupedSyncMap = new Map<string, typeof doeReports.$inferInsert>();
   const nowIso = new Date().toISOString();
 
   for (const incoming of reports) {
     if (!incoming || !incoming.id || incoming.id === 'report-test-123') continue;
     const existingEntry = mirror.reports[incoming.id];
-    if (existingEntry && existingEntry.isDeleted && !restoreDeleted) {
+    if (((existingEntry && existingEntry.isDeleted) || masterDeletedReportIds.has(incoming.id)) && !restoreDeleted) {
       continue;
     }
     const winner = existingEntry
@@ -784,6 +811,9 @@ export async function upsertBulkReportsInSql(
  */
 export async function softDeleteReportInSql(report: DOEReport): Promise<void> {
   await upsertReportInSql(report, true);
+  if (report?.id) {
+    await upsertMasterStateInSql({ deletedReportIds: [report.id] }).catch(() => {});
+  }
 }
 
 /**
@@ -793,6 +823,10 @@ export async function hardDeleteReportInSql(reportId: string): Promise<void> {
   const mirror = loadMirror();
   delete mirror.reports[reportId];
   saveMirror(mirror);
+
+  if (reportId) {
+    await upsertMasterStateInSql({ deletedReportIds: [reportId] }).catch(() => {});
+  }
 
   try {
     await withSqlRetry(() => db.delete(doeReports).where(eq(doeReports.id, reportId)), 2);

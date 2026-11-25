@@ -110,13 +110,13 @@ export function buildSheetsSchemaMetadata(
  */
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  * ระบบสำรองและซิงค์ข้อมูลอัตโนมัติ (DOE Work Permit Reporting System -> Google Sheets)
- * รุ่นผู้บริหาร (Enterprise v2.2):
+ * รุ่นผู้บริหาร (Enterprise v2.4):
  *   1) ป้องกันและรวมแถวซ้ำอัตโนมัติ: ยึดหลัก 1 แถวต่อ (วันที่รายงาน + สำนักงาน + ศูนย์บริการ) เก็บฉบับที่แก้ไขล่าสุดเสมอ
  *   2) รองรับคอลัมน์ "ม.63/2 มติ 14 ก.ค. 69" โดยตรง พร้อมแตกคอลัมน์หัวข้อใหม่ในอนาคตแบบย่อชื่ออ่านง่าย + คอลัมน์สรุปหัวข้อเพิ่มเติม
- *   3) จัดเรียงแถวอัตโนมัติบนชีตจริง: เรียงคอลัมน์ B (วันที่รายงานล่าสุดอยู่บนสุด) + เวลาที่มีการรายงานล่าสุดอยู่ด้านบนเสมอ ทั้งชีตรวมและแท็บรายเดือน
- *   4) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") ควบคู่กับชีตรวมหลัก
- *   5) ซิงก์การตั้งค่าแอดมินแบบ 2 ทางผ่านแท็บ "ตั้งค่าระบบ_DOE" (หัวข้อกลุ่มเป้าหมายและมาตรา / สถานะคิว / ศูนย์บริการ / ไฮไลต์ / ข้อความหุ่นยนต์)
- *      ทำให้ตัวพัฒนาและเว็บที่ Deploy ซิงก์หัวข้อตรงกันตลอดเวลา แม้โควตาเขียนรายวันของ Firestore จะเต็ม
+ *   3) จัดเรียงแถวอัตโนมัติทุกครั้งที่มีคนส่งรายงาน: คอลัมน์ B (วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ) + เวลาล่าสุดอยู่ด้านบน แม้เปิดตัวกรอง (Filter) อยู่
+ *   4) ประทับเวลาแก้ไขล่าสุดเป็นเวลาประเทศไทย (UTC+7 พ.ศ.) และล็อกคอลัมน์ Z เบอร์โทรศัพท์ / LINE ID เป็นข้อความ (ไม่ตัดเลข 0 นำหน้า พร้อมกู้คืนเลข 0 อัตโนมัติ)
+ *   5) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") ควบคู่กับชีตรวมหลัก
+ *   6) ซิงก์การตั้งค่าแอดมินและรายการที่ลบแล้วแบบ 2 ทางผ่านแท็บ "ตั้งค่าระบบ_DOE" (ป้องกันรายงานที่แอดมินลบแล้วเด้งกลับมาแสดงซ้ำ 100%)
  *
  * วิธีติดตั้ง / อัปเดตโค้ด:
  * 1. เปิดไฟล์ Google Sheets ของคุณ -> เมนู "ส่วนขยาย (Extensions)" -> "Apps Script"
@@ -158,7 +158,7 @@ const BASE_HEADERS = [
   'ตำแหน่ง',
   'เบอร์โทรศัพท์',
   'LINE ID',
-  'เวลาแก้ไขล่าสุด (ISO)'
+  'เวลาแก้ไขล่าสุด (เวลาไทย)'
 ];
 
 const EXTRA_SUMMARY_HEADER = 'หัวข้อ/สถานะเพิ่มเติม (สรุป)';
@@ -281,11 +281,70 @@ function getReportSlotKey(r) {
   return dateKey + '|' + officeKey + '|' + centerKey;
 }
 
-function getReportTimestampMs(r) {
-  const ts = String(r.updatedAt || r.createdAt || '').trim();
-  if (!ts) return 0;
-  const ms = Date.parse(ts);
+function parseTimestampMs_(val) {
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.getTime();
+  }
+  const raw = String(val || '').trim();
+  if (!raw) return 0;
+  // รองรับรูปแบบเวลาไทย พ.ศ. หรือ ค.ศ. เช่น "2569-11-25 14:30:05" หรือ "2026-11-25 14:30:05"
+  const thYmd = raw.match(/^(\\d{4})[-/](\\d{1,2})[-/](\\d{1,2})[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?/);
+  if (thYmd && raw.indexOf('Z') === -1 && !/[+-]\\d{2}:?\\d{2}$/.test(raw)) {
+    let y = parseInt(thYmd[1], 10);
+    if (y >= 2400) y -= 543;
+    const mo = parseInt(thYmd[2], 10) - 1;
+    const d = parseInt(thYmd[3], 10);
+    const hh = parseInt(thYmd[4], 10);
+    const mm = parseInt(thYmd[5], 10);
+    const ss = parseInt(thYmd[6] || '0', 10);
+    return Date.UTC(y, mo, d, hh - 7, mm, ss);
+  }
+  const thDmy = raw.match(/^(\\d{1,2})[-/](\\d{1,2})[-/](\\d{4})[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?/);
+  if (thDmy) {
+    let y = parseInt(thDmy[3], 10);
+    if (y >= 2400) y -= 543;
+    const mo = parseInt(thDmy[2], 10) - 1;
+    const d = parseInt(thDmy[1], 10);
+    const hh = parseInt(thDmy[4], 10);
+    const mm = parseInt(thDmy[5], 10);
+    const ss = parseInt(thDmy[6] || '0', 10);
+    return Date.UTC(y, mo, d, hh - 7, mm, ss);
+  }
+  const ms = Date.parse(raw);
   return isNaN(ms) ? 0 : ms;
+}
+
+function formatThaiTimestamp(val) {
+  let ms = parseTimestampMs_(val);
+  if (!ms) ms = Date.now();
+  // แปลงเป็นเวลาประเทศไทย (UTC+7) เสมอ โดยไม่ขึ้นกับเขตเวลาของไฟล์ Google Sheets
+  const th = new Date(ms + 7 * 60 * 60 * 1000);
+  const y = th.getUTCFullYear() + 543;
+  const mo = String(th.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(th.getUTCDate()).padStart(2, '0');
+  const hh = String(th.getUTCHours()).padStart(2, '0');
+  const mm = String(th.getUTCMinutes()).padStart(2, '0');
+  const ss = String(th.getUTCSeconds()).padStart(2, '0');
+  return y + '-' + mo + '-' + d + ' ' + hh + ':' + mm + ':' + ss;
+}
+
+function formatThaiPhoneText(val) {
+  if (val === null || val === undefined) return '';
+  const s = String(val).trim().replace(/^'+/, '');
+  if (!s) return '';
+  // กู้คืนเลข 0 ตัวแรกให้อัตโนมัติ หากข้อมูลเดิมเคยถูก Google Sheets ตัดเลข 0 นำหน้าออก
+  if (/^[689]\\d{8}$/.test(s)) {
+    return '0' + s;
+  }
+  if (/^[23457]\\d{7}$/.test(s)) {
+    return '0' + s;
+  }
+  return s;
+}
+
+function getReportTimestampMs(r) {
+  const ts = r ? (r.updatedAt || r.createdAt || '') : '';
+  return parseTimestampMs_(ts);
 }
 
 function getReportRichness(r) {
@@ -323,6 +382,9 @@ function rowToFallbackReport(row, jsonColIdx, existingHeaders) {
       const parsed = JSON.parse(String(rawJson));
       if (parsed && parsed.id) {
         parsed.reportDate = normalizeDateIso(parsed.reportDate || row[1]);
+        if (parsed.phoneNumber !== undefined && parsed.phoneNumber !== null) {
+          parsed.phoneNumber = formatThaiPhoneText(parsed.phoneNumber);
+        }
         return parsed;
       }
     } catch (e) {}
@@ -336,6 +398,7 @@ function rowToFallbackReport(row, jsonColIdx, existingHeaders) {
   if (hasNewCol14) {
     customCategoryValues.cat_1795524799070 = Number(row[14] || 0);
   }
+  const parsedUpdatedMs = parseTimestampMs_(row[26 + off]);
   return {
     id: id,
     reportDate: normalizeDateIso(row[1]),
@@ -361,9 +424,9 @@ function rowToFallbackReport(row, jsonColIdx, existingHeaders) {
     notes: String(row[21 + off] || ''),
     reporterName: String(row[22 + off] || ''),
     reporterPosition: String(row[23 + off] || ''),
-    phoneNumber: String(row[24 + off] || ''),
-    lineId: String(row[25 + off] || ''),
-    updatedAt: String(row[26 + off] || '')
+    phoneNumber: formatThaiPhoneText(row[24 + off]),
+    lineId: String(row[25 + off] || '').trim().replace(/^'+/, ''),
+    updatedAt: parsedUpdatedMs ? new Date(parsedUpdatedMs).toISOString() : String(row[26 + off] || '')
   };
 }
 
@@ -539,9 +602,9 @@ function reportToRow(r, dynamicCols) {
     r.notes || '',
     r.reporterName || '',
     r.reporterPosition || '',
-    r.phoneNumber || '',
-    r.lineId || '',
-    r.updatedAt || r.createdAt || new Date().toISOString(),
+    formatThaiPhoneText(r.phoneNumber),
+    String(r.lineId || '').trim().replace(/^'+/, ''),
+    formatThaiTimestamp(r.updatedAt || r.createdAt || new Date().toISOString()),
     summaryParts.join(' | ')
   ];
 
@@ -566,6 +629,12 @@ function compareReportsNewestFirst(a, b) {
   return String(a.officeId || '').localeCompare(String(b.officeId || ''));
 }
 
+function findUpdatedTimeColIndex(headers) {
+  let idx = headers.indexOf('เวลาแก้ไขล่าสุด (เวลาไทย)');
+  if (idx >= 0) return idx;
+  return headers.indexOf('เวลาแก้ไขล่าสุด (ISO)');
+}
+
 function writeTableToSheet(sheet, headers, rows, headerBgColor, sortReportRows) {
   const numCols = headers.length;
   const prevLastRow = sheet.getLastRow();
@@ -581,24 +650,46 @@ function writeTableToSheet(sheet, headers, rows, headerBgColor, sortReportRows) 
 
   if (rows.length > 0) {
     const dataRange = sheet.getRange(2, 1, rows.length, numCols);
-    if (sortReportRows) {
-      // บังคับคอลัมน์ B (วันที่รายงาน YYYY-MM-DD) และคอลัมน์เวลาแก้ไขล่าสุด เป็นข้อความมาตรฐานเพื่อให้เรียงลำดับแม่นยำ 100%
-      sheet.getRange(2, 2, rows.length, 1).setNumberFormat('@');
-      const updatedColIdx = headers.indexOf('เวลาแก้ไขล่าสุด (ISO)');
-      if (updatedColIdx >= 0) {
-        sheet.getRange(2, updatedColIdx + 1, rows.length, 1).setNumberFormat('@');
+    // บังคับคอลัมน์ข้อความสำคัญ (วันที่, รหัสสำนักงาน, เบอร์โทรศัพท์ คอลัมน์ Z, LINE ID, เวลาไทย) เป็น Plain Text ('@') ก่อนเขียนค่า
+    // เพื่อป้องกัน Google Sheets ตัดเลข 0 นำหน้าเบอร์มือถือ และป้องกันการแปลงรูปแบบวันที่/เวลาผิดเขตเวลา
+    const plainTextHeaders = [
+      'วันที่รายงาน (YYYY-MM-DD)',
+      'รหัสสำนักงาน',
+      'เบอร์โทรศัพท์',
+      'LINE ID',
+      'เวลาแก้ไขล่าสุด (เวลาไทย)',
+      'เวลาแก้ไขล่าสุด (ISO)',
+      'เวลาอัปเดตล่าสุด (เวลาไทย)',
+      'เวลาอัปเดตล่าสุด (ISO)'
+    ];
+    for (let i = 0; i < plainTextHeaders.length; i++) {
+      const colIdx = headers.indexOf(plainTextHeaders[i]);
+      if (colIdx >= 0) {
+        sheet.getRange(2, colIdx + 1, rows.length, 1).setNumberFormat('@');
       }
     }
     dataRange.setValues(rows);
     if (sortReportRows && rows.length > 1) {
-      const updatedColIdx = headers.indexOf('เวลาแก้ไขล่าสุด (ISO)');
+      const updatedColIdx = findUpdatedTimeColIndex(headers);
       const sortSpecs = [{ column: 2, ascending: false }];
       if (updatedColIdx >= 0) {
         sortSpecs.push({ column: updatedColIdx + 1, ascending: false });
       }
       try {
-        dataRange.sort(sortSpecs);
-      } catch (e) {}
+        const activeFilter = sheet.getFilter();
+        if (activeFilter) {
+          if (updatedColIdx >= 0) {
+            activeFilter.sort(updatedColIdx + 1, false);
+          }
+          activeFilter.sort(2, false);
+        } else {
+          dataRange.sort(sortSpecs);
+        }
+      } catch (e) {
+        try {
+          dataRange.sort(sortSpecs);
+        } catch (e2) {}
+      }
     }
   }
 
@@ -774,9 +865,67 @@ function mergeMasterConfigOnSheet_(base, incoming) {
       if (currMs >= prevMs) issueMap[iss.id] = iss;
     }
   }
+  // รวมรายการรหัสรายงานที่แอดมินสั่งลบ (deletedReportIds) ป้องกันรายงานที่ลบแล้วเด้งกลับมาซ้ำ
+  const restoredSet = {};
+  const incomingRestored = Array.isArray(incoming.restoredReportIds) ? incoming.restoredReportIds : [];
+  for (let i = 0; i < incomingRestored.length; i++) {
+    if (incomingRestored[i]) restoredSet[String(incomingRestored[i])] = true;
+  }
+  const delRepMap = {};
+  const allDelRep = (Array.isArray(base.deletedReportIds) ? base.deletedReportIds : []).concat(
+    Array.isArray(incoming.deletedReportIds) ? incoming.deletedReportIds : []
+  );
+  const mergedDelRep = [];
+  for (let i = 0; i < allDelRep.length; i++) {
+    const rid = String(allDelRep[i] || '').trim();
+    if (rid && !restoredSet[rid] && !delRepMap[rid]) {
+      delRepMap[rid] = true;
+      mergedDelRep.push(rid);
+    }
+  }
+  merged.deletedReportIds = mergedDelRep.slice(-500);
+  delete merged.restoredReportIds;
+
   merged.bundledIssues = Object.keys(issueMap).map(function (k) { return issueMap[k]; });
   merged.updatedAt = new Date(Math.max(baseUpdatedMs, incUpdatedMs, Date.now())).toISOString();
   return merged;
+}
+
+function updateDeletedReportIdsOnSheet_(idsToAdd, idsToRemove) {
+  try {
+    const existing = readMasterConfigFromSheet_() || {};
+    const removeSet = {};
+    for (let i = 0; i < (idsToRemove || []).length; i++) {
+      const r = String(idsToRemove[i] || '').trim();
+      if (r) removeSet[r] = true;
+    }
+    const prevList = Array.isArray(existing.deletedReportIds) ? existing.deletedReportIds : [];
+    const seen = {};
+    const nextList = [];
+    for (let i = 0; i < prevList.length; i++) {
+      const id = String(prevList[i] || '').trim();
+      if (id && !removeSet[id] && !seen[id]) {
+        seen[id] = true;
+        nextList.push(id);
+      }
+    }
+    for (let i = 0; i < (idsToAdd || []).length; i++) {
+      const id = String(idsToAdd[i] || '').trim();
+      if (id && !removeSet[id] && !seen[id]) {
+        seen[id] = true;
+        nextList.push(id);
+      }
+    }
+    const changed = nextList.length !== prevList.length || nextList.some(function (id, idx) { return prevList[idx] !== id; });
+    if (changed) {
+      existing.deletedReportIds = nextList.slice(-500);
+      existing.updatedAt = new Date().toISOString();
+      writeMasterConfigToSheet_(existing);
+    }
+    return nextList;
+  } catch (e) {
+    return [];
+  }
 }
 
 function writeMasterConfigToSheet_(configObj) {
@@ -788,7 +937,7 @@ function writeMasterConfigToSheet_(configObj) {
   const headers = [
     'ลำดับชิ้นส่วน',
     'ข้อมูลการตั้งค่าระบบ (JSON - ห้ามแก้ไข)',
-    'เวลาอัปเดตล่าสุด (ISO)',
+    'เวลาอัปเดตล่าสุด (เวลาไทย)',
     'จำนวนหัวข้อกลุ่มเป้าหมาย',
     'จำนวนสถานะคิว',
     'จำนวนศูนย์บริการ'
@@ -801,21 +950,21 @@ function writeMasterConfigToSheet_(configObj) {
   const catCount = Array.isArray(compact.bundledCategories) ? compact.bundledCategories.length : 0;
   const qmCount = Array.isArray(compact.bundledQueueMetrics) ? compact.bundledQueueMetrics.length : 0;
   const offCount = Array.isArray(compact.bundledOffices) ? compact.bundledOffices.length : 0;
-  const updatedIso = compact.updatedAt || new Date().toISOString();
+  const updatedThai = formatThaiTimestamp(compact.updatedAt || new Date().toISOString());
 
   for (let i = 0; i < serialized.length; i += CHUNK_LEN) {
     const idx = Math.floor(i / CHUNK_LEN) + 1;
     rows.push([
       idx,
       serialized.slice(i, i + CHUNK_LEN),
-      idx === 1 ? updatedIso : '',
+      idx === 1 ? updatedThai : '',
       idx === 1 ? catCount : '',
       idx === 1 ? qmCount : '',
       idx === 1 ? offCount : ''
     ]);
   }
   if (rows.length === 0) {
-    rows.push([1, '{}', updatedIso, 0, 0, 0]);
+    rows.push([1, '{}', updatedThai, 0, 0, 0]);
   }
   writeTableToSheet(sheet, headers, rows, '#065f46');
 }
@@ -879,17 +1028,33 @@ function doPost(e) {
       }
     }
 
-    if (action === 'delete_single' && body.reportId) {
-      const targetId = String(body.reportId).trim();
+    const currentMaster = readMasterConfigFromSheet_() || {};
+    const sheetDeletedIdSet = {};
+    const masterDelList = Array.isArray(currentMaster.deletedReportIds) ? currentMaster.deletedReportIds : [];
+    for (let i = 0; i < masterDelList.length; i++) {
+      const did = String(masterDelList[i] || '').trim();
+      if (did) sheetDeletedIdSet[did] = true;
+    }
+
+    if ((action === 'delete_single' && body.reportId) || (action === 'delete_batch' && Array.isArray(body.reportIds))) {
+      const idsToDelete = action === 'delete_batch'
+        ? body.reportIds.map(function (x) { return String(x || '').trim(); }).filter(Boolean)
+        : [String(body.reportId || '').trim()].filter(Boolean);
+      const delSet = {};
+      for (let i = 0; i < idsToDelete.length; i++) delSet[idsToDelete[i]] = true;
+
       let deletedAny = false;
       for (const sKey in slotMap) {
-        if (String(slotMap[sKey].id || '').trim() === targetId) {
+        const rid = String(slotMap[sKey].id || '').trim();
+        if (delSet[rid] || sheetDeletedIdSet[rid]) {
           const oldTab = getMonthlyTabNameFromDate(slotMap[sKey].reportDate);
           if (oldTab) touchedMonthTabs[oldTab] = true;
           delete slotMap[sKey];
           deletedAny = true;
         }
       }
+      updateDeletedReportIdsOnSheet_(idsToDelete, []);
+
       const remainingReports = Object.keys(slotMap).map(function (k) { return slotMap[k]; });
       remainingReports.sort(compareReportsNewestFirst);
       const dynamicColsDel = buildDynamicColumns(existingHeaders, incomingSchema, remainingReports);
@@ -898,7 +1063,7 @@ function doPost(e) {
       writeTableToSheet(sheet, fullHeadersDel, rowsDel, '#0f172a', true);
       syncMonthlyArchiveTabs(remainingReports, dynamicColsDel, fullHeadersDel, touchedMonthTabs);
       return ContentService.createTextOutput(
-        JSON.stringify({ ok: true, deleted: targetId, deletedAny: deletedAny, duplicatesMerged: duplicatesMerged, totalRows: remainingReports.length })
+        JSON.stringify({ ok: true, deleted: idsToDelete, deletedAny: deletedAny, duplicatesMerged: duplicatesMerged, totalRows: remainingReports.length })
       ).setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -908,12 +1073,40 @@ function doPost(e) {
       ? []
       : (body.report ? [body.report] : []);
 
+    // หากเป็นการส่งรายงานใหม่หรือกู้คืนรายฉบับ ให้ปลดรหัสนั้นออกจากรายการลบถาวร
+    const restoredNowIds = [];
+    if (action === 'upsert_single' && body.report && body.report.id) {
+      const singleId = String(body.report.id).trim();
+      if (singleId && sheetDeletedIdSet[singleId]) {
+        delete sheetDeletedIdSet[singleId];
+        restoredNowIds.push(singleId);
+      }
+    }
+    if (restoredNowIds.length > 0) {
+      updateDeletedReportIdsOnSheet_([], restoredNowIds);
+    }
+
+    // คัดกรองรายงานที่ถูกลบแล้วออกจากแถวเดิมในชีตด้วย (กันซากข้อมูลค้าง)
+    for (const sKey in slotMap) {
+      const rid = String(slotMap[sKey].id || '').trim();
+      if (rid && sheetDeletedIdSet[rid]) {
+        const oldTab = getMonthlyTabNameFromDate(slotMap[sKey].reportDate);
+        if (oldTab) touchedMonthTabs[oldTab] = true;
+        delete slotMap[sKey];
+      }
+    }
+
     let insertedCount = 0;
     let updatedCount = 0;
 
     for (let i = 0; i < incomingList.length; i++) {
       const r = incomingList[i];
       if (!r || !r.id || r.id === 'report-test-123') continue;
+      const rid = String(r.id).trim();
+      // ป้องกันการซิงก์ชุดเก่าจากเครื่องอื่นนำรายงานที่แอดมินลบไปแล้วกลับเข้ามา
+      if (action === 'upsert_bulk' && !body.restoreDeleted && sheetDeletedIdSet[rid]) {
+        continue;
+      }
       r.reportDate = normalizeDateIso(r.reportDate);
 
       const newSlotKey = getReportSlotKey(r);
@@ -921,7 +1114,6 @@ function doPost(e) {
       if (newTab) touchedMonthTabs[newTab] = true;
 
       // หากมีรายงานเดิมที่ ID ตรงกันแต่อยู่คนละช่อง (เช่น แอดมินแก้เปลี่ยนวันที่/เปลี่ยนศูนย์) ให้ลบช่องเดิมออกก่อน
-      const rid = String(r.id).trim();
       for (const existingKey in slotMap) {
         if (existingKey !== newSlotKey && String(slotMap[existingKey].id || '').trim() === rid) {
           const prevTab = getMonthlyTabNameFromDate(slotMap[existingKey].reportDate);
@@ -1030,10 +1222,19 @@ function doGet() {
     const jsonColIdx = findJsonBackupColIndex(headerRow);
     const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
 
+    const deletedIdSet = {};
+    const masterDelIds = masterConfig && Array.isArray(masterConfig.deletedReportIds)
+      ? masterConfig.deletedReportIds
+      : [];
+    for (let i = 0; i < masterDelIds.length; i++) {
+      const did = String(masterDelIds[i] || '').trim();
+      if (did) deletedIdSet[did] = true;
+    }
+
     const slotMap = {};
     for (let i = 0; i < data.length; i++) {
       const rep = rowToFallbackReport(data[i], jsonColIdx, headerRow);
-      if (!rep || !rep.id || rep.id === 'report-test-123') continue;
+      if (!rep || !rep.id || rep.id === 'report-test-123' || deletedIdSet[String(rep.id).trim()]) continue;
       const slotKey = getReportSlotKey(rep);
       slotMap[slotKey] = pickWinningReport(slotMap[slotKey], rep);
     }
@@ -1184,6 +1385,47 @@ export async function deleteReportFromGoogleSheets(
   const payload = {
     action: 'delete_single',
     reportId,
+    schema: buildSheetsSchemaMetadata(),
+  };
+
+  try {
+    const proxyRes = await fetch('/api/doe/sheets-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhookUrl: url, payload }),
+    });
+    if (proxyRes.ok) return true;
+  } catch {}
+
+  try {
+    await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteReportsBatchFromGoogleSheets(
+  reportIds: string[],
+  explicitWebhookUrl?: string
+): Promise<boolean> {
+  const cleanIds = Array.from(
+    new Set((reportIds || []).map((id) => String(id || '').trim()).filter(Boolean))
+  );
+  if (cleanIds.length === 0) return true;
+  const cfg = getStoredGoogleSheetsConfig();
+  const url = (explicitWebhookUrl || cfg.webhookUrl || '').trim();
+  if (!url || !url.startsWith('https://script.google.com/')) return false;
+  if (!explicitWebhookUrl && !cfg.autoSync) return false;
+
+  const payload = {
+    action: 'delete_batch',
+    reportIds: cleanIds,
     schema: buildSheetsSchemaMetadata(),
   };
 

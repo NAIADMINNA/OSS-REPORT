@@ -129,8 +129,18 @@ export function sanitizeReport(raw: unknown): DOEReport | null {
     reportDateThaiStr,
     reporterName: typeof r.reporterName === 'string' ? r.reporterName : '',
     reporterPosition: typeof r.reporterPosition === 'string' ? r.reporterPosition : '',
-    phoneNumber: typeof r.phoneNumber === 'string' ? r.phoneNumber : '',
-    lineId: typeof r.lineId === 'string' ? r.lineId : '',
+    phoneNumber: (() => {
+      if (r.phoneNumber === null || r.phoneNumber === undefined) return '';
+      const s = String(r.phoneNumber).trim().replace(/^'+/, '');
+      if (!s) return '';
+      if (/^[689]\d{8}$/.test(s)) return `0${s}`;
+      if (/^[23457]\d{7}$/.test(s)) return `0${s}`;
+      return s;
+    })(),
+    lineId:
+      r.lineId !== null && r.lineId !== undefined
+        ? String(r.lineId).trim().replace(/^'+/, '')
+        : '',
     section59: Number(r.section59) || 0,
     section62: Number(r.section62) || 0,
     section63_1: Number(r.section63_1) || 0,

@@ -33,6 +33,7 @@ import {
 import {
   buildSheetsSchemaMetadata,
   deleteReportFromGoogleSheets,
+  deleteReportsBatchFromGoogleSheets,
   getStoredGoogleSheetsConfig,
   pullReportsFromGoogleSheets,
   saveStoredGoogleSheetsConfig,
@@ -151,6 +152,8 @@ interface BundledMasterConfig extends SystemConfig {
   deletedQueueMetricIds?: string[];
   bundledReporters?: (ReporterProfile & { sortOrder?: number })[];
   bundledDeletedReports?: DOEReport[];
+  deletedReportIds?: string[];
+  restoredReportIds?: string[];
   bundledIssues?: SystemIssueReport[];
   officesUpdatedAt?: string;
   categoriesUpdatedAt?: string;
@@ -161,6 +164,7 @@ interface BundledMasterConfig extends SystemConfig {
 }
 
 const STORAGE_KEY_MASTER_TIMESTAMPS = 'doe_master_section_timestamps_v1';
+const STORAGE_KEY_DELETED_REPORT_IDS = 'doe_deleted_report_ids_v1';
 
 interface MasterSectionTimestamps {
   officesUpdatedAt?: string;
@@ -171,6 +175,107 @@ interface MasterSectionTimestamps {
   updatedAt?: string;
   deletedCategoryIds?: string[];
   deletedQueueMetricIds?: string[];
+  deletedReportIds?: string[];
+}
+
+function loadLocalDeletedReportIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DELETED_REPORT_IDS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((id): id is string => typeof id === 'string' && id.trim() !== ''));
+      }
+    }
+  } catch {}
+  return new Set<string>();
+}
+
+const localDeletedReportIds: Set<string> = loadLocalDeletedReportIds();
+
+function saveLocalDeletedReportIds(): void {
+  const arr = Array.from(localDeletedReportIds).slice(-500);
+  if (localDeletedReportIds.size > 500) {
+    localDeletedReportIds.clear();
+    arr.forEach((id) => localDeletedReportIds.add(id));
+  }
+  safeWriteMasterLocalStorage(STORAGE_KEY_DELETED_REPORT_IDS, JSON.stringify(arr));
+}
+
+function removeReportIdsFromLocalReportCaches(idsToRemove: Set<string>): void {
+  if (idsToRemove.size === 0) return;
+  for (const key of [
+    'doe_work_permit_reports_v1',
+    'doe_work_permit_reports_backup_v1',
+    'doe_ss_reports_v1',
+    'doe_ss_reports_backup_v1',
+  ]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const filtered = parsed.filter(
+          (r: DOEReport | null | undefined) => r && r.id && !idsToRemove.has(r.id)
+        );
+        if (filtered.length !== parsed.length) {
+          localStorage.setItem(key, JSON.stringify(filtered));
+        }
+      }
+    } catch {}
+  }
+}
+
+function markReportIdsDeletedLocally(ids: string[]): string[] {
+  const addedSet = new Set<string>();
+  for (const rawId of ids) {
+    const id = String(rawId || '').trim();
+    if (id) {
+      localDeletedReportIds.add(id);
+      addedSet.add(id);
+    }
+  }
+  if (addedSet.size > 0) {
+    saveLocalDeletedReportIds();
+    removeReportIdsFromLocalReportCaches(addedSet);
+  }
+  return Array.from(localDeletedReportIds).slice(-500);
+}
+
+function unmarkReportIdsDeletedLocally(ids: string[]): void {
+  let changed = false;
+  for (const rawId of ids) {
+    const id = String(rawId || '').trim();
+    if (id && localDeletedReportIds.delete(id)) {
+      changed = true;
+    }
+  }
+  if (changed) {
+    saveLocalDeletedReportIds();
+  }
+}
+
+function getAllDeletedReportIds(extra?: Iterable<string>): Set<string> {
+  const result = new Set<string>();
+  localDeletedReportIds.forEach((id) => {
+    if (id) result.add(id);
+  });
+  if (Array.isArray(masterDocCache?.deletedReportIds)) {
+    masterDocCache.deletedReportIds.forEach((id) => {
+      if (typeof id === 'string' && id.trim()) result.add(id.trim());
+    });
+  }
+  if (Array.isArray(masterDocCache?.bundledDeletedReports)) {
+    masterDocCache.bundledDeletedReports.forEach((r) => {
+      if (r && r.id) result.add(r.id);
+    });
+  }
+  if (extra) {
+    for (const id of extra) {
+      if (id) result.add(id);
+    }
+  }
+  return result;
 }
 
 function parseIsoMs(val?: string | null): number {
@@ -212,6 +317,9 @@ function saveMasterSectionTimestamps(cfg: Partial<BundledMasterConfig>) {
     deletedCategoryIds: Array.isArray(cfg.deletedCategoryIds) ? cfg.deletedCategoryIds : undefined,
     deletedQueueMetricIds: Array.isArray(cfg.deletedQueueMetricIds)
       ? cfg.deletedQueueMetricIds
+      : undefined,
+    deletedReportIds: Array.isArray(cfg.deletedReportIds)
+      ? cfg.deletedReportIds.slice(-500)
       : undefined,
   };
   safeWriteMasterLocalStorage(STORAGE_KEY_MASTER_TIMESTAMPS, JSON.stringify(next));
@@ -507,6 +615,15 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
 
   const savedTimestamps = loadMasterSectionTimestamps();
 
+  const initialDeletedReportIds = Array.from(
+    new Set([
+      ...(Array.isArray(savedTimestamps.deletedReportIds) ? savedTimestamps.deletedReportIds : []),
+      ...Array.from(localDeletedReportIds),
+      ...localDelReports.map((r) => r?.id).filter((id): id is string => Boolean(id)),
+    ])
+  ).slice(-500);
+  initialDeletedReportIds.forEach((id) => localDeletedReportIds.add(id));
+
   return {
     ...localConfig,
     migrationVersion: CURRENT_MIGRATION_VERSION,
@@ -518,6 +635,7 @@ function loadInitialMasterCacheFromLocalStorage(): BundledMasterConfig {
     deletedQueueMetricIds: savedTimestamps.deletedQueueMetricIds || [],
     bundledReporters: localReps,
     bundledDeletedReports: localDelReports,
+    deletedReportIds: initialDeletedReportIds,
     bundledIssues: localIssues,
     officesUpdatedAt: savedTimestamps.officesUpdatedAt,
     categoriesUpdatedAt: savedTimestamps.categoriesUpdatedAt,
@@ -781,6 +899,50 @@ function mergeIncomingMasterConfig(
     nextDelOffices = incomingDelOfficesList;
   }
 
+  const restoredReportSet = new Set<string>(
+    isLiveRemote && Array.isArray(incoming.restoredReportIds)
+      ? incoming.restoredReportIds.filter((id): id is string => typeof id === 'string' && id.trim() !== '')
+      : []
+  );
+  if (restoredReportSet.size > 0) {
+    unmarkReportIdsDeletedLocally(Array.from(restoredReportSet));
+  }
+
+  const incomingDeletedReportIds = parseArrayField<string>(incoming.deletedReportIds).filter(
+    (id): id is string => typeof id === 'string' && id.trim() !== ''
+  );
+  const currentDeletedReportIds = Array.isArray(current.deletedReportIds)
+    ? current.deletedReportIds.filter((id): id is string => typeof id === 'string' && id.trim() !== '')
+    : [];
+  const mergedDeletedReportIds = Array.from(
+    new Set([
+      ...currentDeletedReportIds,
+      ...Array.from(localDeletedReportIds),
+      ...incomingDeletedReportIds,
+    ])
+  )
+    .filter((id) => !restoredReportSet.has(id))
+    .slice(-500);
+
+  if (incomingDeletedReportIds.length > 0) {
+    let addedLocalDel = false;
+    incomingDeletedReportIds.forEach((id) => {
+      if (!restoredReportSet.has(id) && !localDeletedReportIds.has(id)) {
+        localDeletedReportIds.add(id);
+        addedLocalDel = true;
+      }
+    });
+    if (addedLocalDel) {
+      saveLocalDeletedReportIds();
+    }
+  }
+  if (
+    isLiveRemote &&
+    mergedDeletedReportIds.some((id) => !incomingDeletedReportIds.includes(id))
+  ) {
+    localHasNewerSections = true;
+  }
+
   const next: BundledMasterConfig = {
     ...current,
     ...(acceptRemoteConfig
@@ -821,6 +983,7 @@ function mergeIncomingMasterConfig(
       nextDeletedReports.length > 0 || isLiveRemote
         ? nextDeletedReports
         : (current.bundledDeletedReports || []).filter((r) => r && r.id && !activeIds.has(r.id)),
+    deletedReportIds: mergedDeletedReportIds,
     bundledIssues: mergeSystemIssuesList(
       current.bundledIssues || [],
       parsedIssues,
@@ -994,30 +1157,73 @@ let isFetchingSqlState = false;
 let hasCompletedInitialSqlSync = false;
 let hasSeededLocalMasterConfigToSql = false;
 
+function pruneDeletedReportsFromMemory(deletedIds: Set<string>): boolean {
+  if (deletedIds.size === 0) return false;
+  let removed = false;
+  deletedIds.forEach((id) => {
+    if (sqlActiveReportsCache.delete(id)) {
+      removed = true;
+    }
+  });
+  liveBundleShardsCache.forEach((shardMap, shardId) => {
+    if (!shardMap || typeof shardMap !== 'object') return;
+    let shardChanged = false;
+    const nextShard: Record<string, DOEReport> = {};
+    for (const [id, rep] of Object.entries(shardMap)) {
+      if (deletedIds.has(id)) {
+        shardChanged = true;
+        removed = true;
+      } else {
+        nextShard[id] = rep;
+      }
+    }
+    if (shardChanged) {
+      liveBundleShardsCache.set(shardId, nextShard);
+    }
+  });
+  if (cachedStaticSeed && Array.isArray(cachedStaticSeed.activeReports)) {
+    const beforeLen = cachedStaticSeed.activeReports.length;
+    cachedStaticSeed.activeReports = cachedStaticSeed.activeReports.filter(
+      (r) => r && r.id && !deletedIds.has(r.id)
+    );
+    if (cachedStaticSeed.activeReports.length !== beforeLen) {
+      removed = true;
+    }
+  }
+  removeReportIdsFromLocalReportCaches(deletedIds);
+  return removed;
+}
+
 function getActiveReportIdsInBundles(): Set<string> {
+  const deletedIds = getAllDeletedReportIds();
   const activeIds = new Set<string>();
-  sqlActiveReportsCache.forEach((_, id) => activeIds.add(id));
+  sqlActiveReportsCache.forEach((_, id) => {
+    if (!deletedIds.has(id)) activeIds.add(id);
+  });
   liveBundleShardsCache.forEach((shardMap) => {
     if (shardMap && typeof shardMap === 'object') {
-      Object.keys(shardMap).forEach((id) => activeIds.add(id));
+      Object.keys(shardMap).forEach((id) => {
+        if (!deletedIds.has(id)) activeIds.add(id);
+      });
     }
   });
   return activeIds;
 }
 
 function broadcastActiveReports(isFromCache = false) {
+  const deletedIds = getAllDeletedReportIds();
   const mergedMap = new Map<string, DOEReport>();
   liveBundleShardsCache.forEach((shardMap) => {
     if (shardMap && typeof shardMap === 'object') {
       Object.values(shardMap).forEach((r) => {
-        if (r && r.id) {
+        if (r && r.id && !deletedIds.has(r.id)) {
           mergedMap.set(r.id, pickNewerReport(mergedMap.get(r.id), r));
         }
       });
     }
   });
   sqlActiveReportsCache.forEach((r, id) => {
-    if (r && id) {
+    if (r && id && !deletedIds.has(id)) {
       mergedMap.set(id, pickNewerReport(mergedMap.get(id), r));
     }
   });
@@ -1026,7 +1232,7 @@ function broadcastActiveReports(isFromCache = false) {
     (b.reportDate || '').localeCompare(a.reportDate || '')
   );
 
-  if (list.length > 0) {
+  if (list.length > 0 || hasCompletedInitialSqlSync) {
     saveReportsToIndexedDB(list).catch(() => {});
   }
 
@@ -1105,13 +1311,79 @@ async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Prom
   try {
     const result = await pullReportsFromGoogleSheets(webhookUrl);
     if (result.success && Array.isArray(result.reports)) {
+      // 1. Merge Master Config FIRST so deletedReportIds tombstones from Google Sheets ("ตั้งค่าระบบ_DOE")
+      // immediately block any deleted report from being resurrected in this same sync cycle
+      const incomingSheetMaster = result.masterConfig as Partial<BundledMasterConfig> | null | undefined;
+      if (incomingSheetMaster && typeof incomingSheetMaster === 'object') {
+        const activeIdSet = getActiveReportIdsInBundles();
+        const beforeSig = JSON.stringify({
+          c: masterDocCache.bundledCategories?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
+          q: masterDocCache.bundledQueueMetrics?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
+          o: masterDocCache.bundledOffices?.length,
+          i: masterDocCache.bundledIssues?.length,
+          d: masterDocCache.deletedReportIds?.length || 0,
+          cu: masterDocCache.categoriesUpdatedAt,
+          qu: masterDocCache.queueMetricsUpdatedAt,
+        });
+        const { next, localHasNewerSections } = mergeIncomingMasterConfig(
+          masterDocCache,
+          incomingSheetMaster,
+          { isLiveRemote: true, activeIds: activeIdSet }
+        );
+        masterDocCache = next;
+        const afterSig = JSON.stringify({
+          c: masterDocCache.bundledCategories?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
+          q: masterDocCache.bundledQueueMetrics?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
+          o: masterDocCache.bundledOffices?.length,
+          i: masterDocCache.bundledIssues?.length,
+          d: masterDocCache.deletedReportIds?.length || 0,
+          cu: masterDocCache.categoriesUpdatedAt,
+          qu: masterDocCache.queueMetricsUpdatedAt,
+        });
+        if (afterSig !== beforeSig) {
+          broadcastMasterState(false);
+          fetch('/api/doe/master-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: omitUndefinedForFirestore(masterDocCache) }),
+          }).catch(() => {});
+        }
+        if (localHasNewerSections && masterDocCache.googleSheetsAutoSync !== false) {
+          const pushSig = `${masterDocCache.categoriesUpdatedAt || ''}|${masterDocCache.queueMetricsUpdatedAt || ''}|${masterDocCache.officesUpdatedAt || ''}|${masterDocCache.configUpdatedAt || ''}|${masterDocCache.bundledCategories?.length || 0}|d:${masterDocCache.deletedReportIds?.length || 0}`;
+          if (pushSig !== lastSheetsMasterPushSignature) {
+            lastSheetsMasterPushSignature = pushSig;
+            const compactMaster = {
+              ...(omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>),
+            };
+            delete compactMaster.bundledDeletedReports;
+            syncMasterConfigToGoogleSheets(compactMaster, webhookUrl).catch(() => {});
+          }
+        }
+      } else if (masterDocCache.googleSheetsAutoSync !== false) {
+        const pushSig = `seed|${masterDocCache.categoriesUpdatedAt || ''}|${masterDocCache.bundledCategories?.length || 0}|${masterDocCache.bundledOffices?.length || 0}|d:${masterDocCache.deletedReportIds?.length || 0}`;
+        if (pushSig !== lastSheetsMasterPushSignature && (masterDocCache.bundledCategories?.length || 0) > 0) {
+          lastSheetsMasterPushSignature = pushSig;
+          const compactMaster = {
+            ...(omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>),
+          };
+          delete compactMaster.bundledDeletedReports;
+          syncMasterConfigToGoogleSheets(compactMaster, webhookUrl).catch(() => {});
+        }
+      }
+
+      const allDeletedIds = getAllDeletedReportIds(sqlDeletedIds);
       const sheetsMap = new Map<string, DOEReport>();
       const deltaToSql: DOEReport[] = [];
-      let changed = false;
+      const staleDeletedOnSheets: string[] = [];
+      let changed = pruneDeletedReportsFromMemory(allDeletedIds);
 
       for (const raw of result.reports) {
         const clean = sanitizeReport(raw);
-        if (!clean || !clean.id || sqlDeletedIds.has(clean.id)) continue;
+        if (!clean || !clean.id) continue;
+        if (allDeletedIds.has(clean.id)) {
+          staleDeletedOnSheets.push(clean.id);
+          continue;
+        }
         sheetsMap.set(clean.id, pickNewerReport(sheetsMap.get(clean.id), clean));
         const existing = sqlActiveReportsCache.get(clean.id);
         if (!existing || isReportStrictlyNewer(clean, existing)) {
@@ -1121,10 +1393,10 @@ async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Prom
         }
       }
 
-      // Also include any reports from IndexedDB / localStorage that might not be in sqlActiveReportsCache yet
+      // Also include any non-deleted reports from IndexedDB / localStorage that might not be in sqlActiveReportsCache yet
       const localCached = await getLocalCachedReportsForBundleSync();
       for (const localRep of localCached) {
-        if (!localRep || !localRep.id || sqlDeletedIds.has(localRep.id)) continue;
+        if (!localRep || !localRep.id || allDeletedIds.has(localRep.id)) continue;
         const existing = sqlActiveReportsCache.get(localRep.id);
         if (!existing || isReportStrictlyNewer(localRep, existing)) {
           sqlActiveReportsCache.set(localRep.id, pickNewerReport(existing, localRep));
@@ -1135,6 +1407,11 @@ async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Prom
 
       if (changed) {
         broadcastActiveReports(false);
+      }
+
+      // Auto-purge any zombie rows that were deleted by Admin but still lingered on Google Sheets
+      if (staleDeletedOnSheets.length > 0 && masterDocCache.googleSheetsAutoSync !== false) {
+        deleteReportsBatchFromGoogleSheets(staleDeletedOnSheets, webhookUrl).catch(() => {});
       }
 
       if (deltaToSql.length > 0) {
@@ -1162,7 +1439,7 @@ async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Prom
 
         const { deduped: activeDeduped } = deduplicateReportsBySlot(
           Array.from(sqlActiveReportsCache.values()).filter(
-            (r) => r && r.id && !sqlDeletedIds.has(r.id) && r.id !== 'report-test-123'
+            (r) => r && r.id && !allDeletedIds.has(r.id) && r.id !== 'report-test-123'
           )
         );
 
@@ -1185,63 +1462,6 @@ async function syncClientFromGoogleSheetsIfDue(sqlDeletedIds: Set<string>): Prom
             webhookUrl,
             undefined,
             schema
-          ).catch(() => {});
-        }
-      }
-
-      // Two-Way Master Config Sync via Google Sheets ("ตั้งค่าระบบ_DOE")
-      // Keeps categories, queue metrics, offices, highlights, and mascot replies in sync between Dev & Deployed even when Firestore daily write quota is hit
-      const incomingSheetMaster = result.masterConfig as Partial<BundledMasterConfig> | null | undefined;
-      if (incomingSheetMaster && typeof incomingSheetMaster === 'object') {
-        const activeIdSet = new Set<string>(sqlActiveReportsCache.keys());
-        const beforeSig = JSON.stringify({
-          c: masterDocCache.bundledCategories?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
-          q: masterDocCache.bundledQueueMetrics?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
-          o: masterDocCache.bundledOffices?.length,
-          i: masterDocCache.bundledIssues?.length,
-          cu: masterDocCache.categoriesUpdatedAt,
-          qu: masterDocCache.queueMetricsUpdatedAt,
-        });
-        const { next, localHasNewerSections } = mergeIncomingMasterConfig(
-          masterDocCache,
-          incomingSheetMaster,
-          { isLiveRemote: true, activeIds: activeIdSet }
-        );
-        masterDocCache = next;
-        const afterSig = JSON.stringify({
-          c: masterDocCache.bundledCategories?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
-          q: masterDocCache.bundledQueueMetrics?.map((x) => `${x.id}:${x.title}:${x.isHighlighted ? 1 : 0}`),
-          o: masterDocCache.bundledOffices?.length,
-          i: masterDocCache.bundledIssues?.length,
-          cu: masterDocCache.categoriesUpdatedAt,
-          qu: masterDocCache.queueMetricsUpdatedAt,
-        });
-        if (afterSig !== beforeSig) {
-          broadcastMasterState(false);
-          fetch('/api/doe/master-config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ config: omitUndefinedForFirestore(masterDocCache) }),
-          }).catch(() => {});
-        }
-        if (localHasNewerSections && masterDocCache.googleSheetsAutoSync !== false) {
-          const pushSig = `${masterDocCache.categoriesUpdatedAt || ''}|${masterDocCache.queueMetricsUpdatedAt || ''}|${masterDocCache.officesUpdatedAt || ''}|${masterDocCache.configUpdatedAt || ''}|${masterDocCache.bundledCategories?.length || 0}`;
-          if (pushSig !== lastSheetsMasterPushSignature) {
-            lastSheetsMasterPushSignature = pushSig;
-            syncMasterConfigToGoogleSheets(
-              omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>,
-              webhookUrl
-            ).catch(() => {});
-          }
-        }
-      } else if (masterDocCache.googleSheetsAutoSync !== false) {
-        // First-time seed of masterConfig into Google Sheets "ตั้งค่าระบบ_DOE" tab
-        const pushSig = `seed|${masterDocCache.categoriesUpdatedAt || ''}|${masterDocCache.bundledCategories?.length || 0}|${masterDocCache.bundledOffices?.length || 0}`;
-        if (pushSig !== lastSheetsMasterPushSignature && (masterDocCache.bundledCategories?.length || 0) > 0) {
-          lastSheetsMasterPushSignature = pushSig;
-          syncMasterConfigToGoogleSheets(
-            omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>,
-            webhookUrl
           ).catch(() => {});
         }
       }
@@ -1280,10 +1500,12 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
     }
 
     const staticSeed = await loadStaticCloudSqlSeedOnce();
-    const sqlActive: DOEReport[] = [
-      ...(staticSeed.activeReports || []),
-      ...(Array.isArray(payload?.activeReports) ? payload!.activeReports! : []),
-    ];
+    const hasLiveSqlActive = Array.isArray(payload?.activeReports);
+    // CRITICAL: When live Cloud SQL API responded, NEVER concatenate stale staticSeed.activeReports
+    // (otherwise hard-deleted/purged reports in staticSeed reappear every 20 seconds!).
+    const sqlActive: DOEReport[] = hasLiveSqlActive
+      ? payload!.activeReports!
+      : staticSeed.activeReports || [];
     const sqlDeleted: DOEReport[] = Array.isArray(payload?.deletedReports)
       ? payload!.deletedReports!
       : staticSeed.deletedReports || [];
@@ -1300,17 +1522,27 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
         sqlDeletedIds.add(clean.id);
       }
     }
+    if (Array.isArray(sqlMaster?.deletedReportIds)) {
+      for (const delId of sqlMaster.deletedReportIds) {
+        if (typeof delId === 'string' && delId.trim()) {
+          sqlDeletedIds.add(delId.trim());
+        }
+      }
+    }
+
+    const allDeletedIds = getAllDeletedReportIds(sqlDeletedIds);
+    pruneDeletedReportsFromMemory(allDeletedIds);
 
     const nextActiveMap = new Map<string, DOEReport>();
-    // Preserve existing in-memory active reports (e.g., from real-time Firestore shards or recent saves)
+    // Preserve existing in-memory active reports that are NOT deleted
     sqlActiveReportsCache.forEach((existing, id) => {
-      if (existing && id && !sqlDeletedIds.has(id)) {
+      if (existing && id && !allDeletedIds.has(id)) {
         nextActiveMap.set(id, existing);
       }
     });
     for (const raw of sqlActive) {
       const clean = sanitizeReport(raw);
-      if (clean && clean.id && !sqlDeletedIds.has(clean.id)) {
+      if (clean && clean.id && !allDeletedIds.has(clean.id)) {
         nextActiveMap.set(clean.id, pickNewerReport(nextActiveMap.get(clean.id), clean));
       }
     }
@@ -1333,7 +1565,7 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
       });
       masterDocCache = next;
 
-      // If client has strictly newer local edits (e.g., added category while SQL was catching up), push back to SQL
+      // If client has strictly newer local edits (e.g., added category or deleted report IDs while SQL was catching up), push back to SQL
       if (isLiveSqlMaster && localHasNewerSections) {
         fetch('/api/doe/master-config', {
           method: 'POST',
@@ -1387,12 +1619,15 @@ async function fetchAndSyncCloudSqlState(onError?: (err: unknown) => void): Prom
     }
 
     // Automatically pull live reports from Google Sheets (works even on Deployed Web App when Firestore is quota-exceeded)
-    syncClientFromGoogleSheetsIfDue(sqlDeletedIds).catch(() => {});
+    syncClientFromGoogleSheetsIfDue(allDeletedIds).catch(() => {});
 
     hasCompletedInitialSqlSync = true;
     migrateLegacyReportsToBundlesOnce(nextActiveMap, (migratedList) => {
+      const delSet = getAllDeletedReportIds();
       for (const r of migratedList) {
-        sqlActiveReportsCache.set(r.id, r);
+        if (r && r.id && !delSet.has(r.id)) {
+          sqlActiveReportsCache.set(r.id, r);
+        }
       }
       broadcastActiveReports(false);
     });
@@ -1554,9 +1789,26 @@ async function persistMasterConfigOnline(
       Array.isArray(partialUpdate.bundledDeletedOffices) ||
       Array.isArray(partialUpdate.bundledReporters) ||
       Array.isArray(partialUpdate.bundledIssues) ||
+      Array.isArray(partialUpdate.deletedReportIds) ||
+      Array.isArray(partialUpdate.restoredReportIds) ||
       stampedUpdate.configUpdatedAt !== undefined);
 
-  const sheetsMasterPromise = shouldSyncMasterToSheets
+  const sheetsMasterPayload = shouldSyncMasterToSheets
+    ? (() => {
+        const compactMaster = {
+          ...(omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>),
+        };
+        delete compactMaster.bundledDeletedReports;
+        return compactMaster;
+      })()
+    : null;
+
+  // Clear one-shot restoredReportIds signal from cache after building wire payloads
+  if (masterDocCache.restoredReportIds) {
+    delete masterDocCache.restoredReportIds;
+  }
+
+  const sheetsMasterPromise = sheetsMasterPayload
     ? (async () => {
         const storedCfg = getStoredGoogleSheetsConfig();
         const webhookUrl = (
@@ -1566,11 +1818,7 @@ async function persistMasterConfigOnline(
           ''
         ).trim();
         if (webhookUrl.startsWith('https://script.google.com/')) {
-          const compactMaster = {
-            ...(omitUndefinedForFirestore(masterDocCache) as unknown as Record<string, unknown>),
-          };
-          delete compactMaster.bundledDeletedReports;
-          await syncMasterConfigToGoogleSheets(compactMaster, webhookUrl);
+          await syncMasterConfigToGoogleSheets(sheetsMasterPayload, webhookUrl);
         }
       })().catch(() => {})
     : Promise.resolve();
@@ -1601,7 +1849,7 @@ export async function applyPulledMasterConfigFromSheets(
   incomingMasterConfig: Record<string, unknown> | null | undefined
 ): Promise<boolean> {
   if (!incomingMasterConfig || typeof incomingMasterConfig !== 'object') return false;
-  const activeIdSet = new Set<string>(sqlActiveReportsCache.keys());
+  const activeIdSet = getActiveReportIdsInBundles();
   const { next } = mergeIncomingMasterConfig(
     masterDocCache,
     incomingMasterConfig as Partial<BundledMasterConfig>,
@@ -1609,6 +1857,9 @@ export async function applyPulledMasterConfigFromSheets(
   );
   masterDocCache = next;
   saveMasterSectionTimestamps(masterDocCache);
+  if (pruneDeletedReportsFromMemory(getAllDeletedReportIds())) {
+    broadcastActiveReports(false);
+  }
   broadcastMasterState(false);
   fetch('/api/doe/master-config', {
     method: 'POST',
@@ -1635,6 +1886,9 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
         });
         masterDocCache = next;
         hasReceivedFirstMasterSnapshot = true;
+        if (pruneDeletedReportsFromMemory(getAllDeletedReportIds())) {
+          broadcastActiveReports(false);
+        }
         broadcastMasterState(false);
 
         // If local cache had strictly newer edits than Firestore snapshot, push back to Firestore (throttled & quota-safe)
@@ -1655,6 +1909,7 @@ function ensureMasterSubscription(onError?: (err: unknown) => void) {
             bundledOffices: masterDocCache.bundledOffices,
             bundledDeletedOffices: masterDocCache.bundledDeletedOffices,
             officesUpdatedAt: masterDocCache.officesUpdatedAt,
+            deletedReportIds: masterDocCache.deletedReportIds,
             reportTitle: masterDocCache.reportTitle || DEFAULT_SYSTEM_CONFIG.reportTitle,
             adminPin: masterDocCache.adminPin || DEFAULT_SYSTEM_CONFIG.adminPin,
             updatedAt: masterDocCache.updatedAt || new Date().toISOString(),
@@ -1745,9 +2000,7 @@ export async function saveBulkReportsOnline(
 ): Promise<void> {
   if (!Array.isArray(reports) || reports.length === 0) return;
 
-  const delIds = skipDeletedFilter
-    ? new Set<string>()
-    : new Set((masterDocCache.bundledDeletedReports || []).map((r) => r.id));
+  const delIds = skipDeletedFilter ? new Set<string>() : getAllDeletedReportIds();
   const validReports: DOEReport[] = [];
   const restoredIds = new Set<string>();
 
@@ -1765,21 +2018,41 @@ export async function saveBulkReportsOnline(
   if (validReports.length === 0) return;
 
   if (replaceAll) {
+    localDeletedReportIds.clear();
+    saveLocalDeletedReportIds();
     if (
-      Array.isArray(masterDocCache.bundledDeletedReports) &&
-      masterDocCache.bundledDeletedReports.length > 0
+      (Array.isArray(masterDocCache.bundledDeletedReports) &&
+        masterDocCache.bundledDeletedReports.length > 0) ||
+      (Array.isArray(masterDocCache.deletedReportIds) &&
+        masterDocCache.deletedReportIds.length > 0)
     ) {
-      persistMasterConfigOnline({ bundledDeletedReports: [] }).catch(() => {});
+      persistMasterConfigOnline({
+        bundledDeletedReports: [],
+        deletedReportIds: [],
+        restoredReportIds: Array.from(restoredIds),
+      }).catch(() => {});
     }
-  } else if (
-    skipDeletedFilter &&
-    Array.isArray(masterDocCache.bundledDeletedReports) &&
-    masterDocCache.bundledDeletedReports.some((r) => restoredIds.has(r.id))
-  ) {
-    const nextDel = masterDocCache.bundledDeletedReports.filter(
-      (r) => !restoredIds.has(r.id)
+  } else if (skipDeletedFilter && restoredIds.size > 0) {
+    unmarkReportIdsDeletedLocally(Array.from(restoredIds));
+    const hadInBundled = (masterDocCache.bundledDeletedReports || []).some((r) =>
+      restoredIds.has(r.id)
     );
-    persistMasterConfigOnline({ bundledDeletedReports: nextDel }).catch(() => {});
+    const hadInDelIds = (masterDocCache.deletedReportIds || []).some((id) =>
+      restoredIds.has(id)
+    );
+    if (hadInBundled || hadInDelIds) {
+      const nextDel = (masterDocCache.bundledDeletedReports || []).filter(
+        (r) => !restoredIds.has(r.id)
+      );
+      const nextDelIds = (masterDocCache.deletedReportIds || []).filter(
+        (id) => !restoredIds.has(id)
+      );
+      persistMasterConfigOnline({
+        bundledDeletedReports: nextDel,
+        deletedReportIds: nextDelIds,
+        restoredReportIds: Array.from(restoredIds),
+      }).catch(() => {});
+    }
   }
 
   broadcastActiveReports(false);
@@ -1833,12 +2106,7 @@ let hasMigratedReportBundlesInSession = false;
 
 async function getLocalCachedReportsForBundleSync(): Promise<DOEReport[]> {
   const map = new Map<string, DOEReport>();
-  const activeBundleIds = getActiveReportIdsInBundles();
-  const delIds = new Set(
-    (masterDocCache.bundledDeletedReports || [])
-      .map((r) => r?.id)
-      .filter((id): id is string => Boolean(id) && !activeBundleIds.has(id))
-  );
+  const delIds = getAllDeletedReportIds();
 
   try {
     const idbReports = await loadReportsFromIndexedDB();
@@ -1883,16 +2151,14 @@ async function migrateLegacyReportsToBundlesOnce(
   hasMigratedReportBundlesInSession = true;
 
   try {
-    const activeBundleIds = new Set(existingBundleMap.keys());
-    const delIds = new Set(
-      (masterDocCache.bundledDeletedReports || [])
-        .map((r) => r?.id)
-        .filter((id): id is string => Boolean(id) && !activeBundleIds.has(id))
-    );
-    const combinedMap = new Map<string, DOEReport>(existingBundleMap);
+    const delIds = getAllDeletedReportIds();
+    const combinedMap = new Map<string, DOEReport>();
+    existingBundleMap.forEach((rep, id) => {
+      if (!delIds.has(id)) combinedMap.set(id, rep);
+    });
     const reportsToSyncToSql = new Map<string, DOEReport>();
 
-    // Rescue valid local cached reports (IndexedDB + localStorage) missing from Cloud SQL or strictly newer
+    // Rescue valid non-deleted local cached reports (IndexedDB + localStorage) missing from Cloud SQL or strictly newer
     const localReports = await getLocalCachedReportsForBundleSync();
     for (const r of localReports) {
       if (delIds.has(r.id)) continue;
@@ -2066,7 +2332,7 @@ export async function deepScanAndRecoverAllReports(
     } catch {}
   }
 
-  const delIds = includeTrash ? new Set<string>() : new Set(trashMap.keys());
+  const delIds = includeTrash ? new Set<string>() : getAllDeletedReportIds(trashMap.keys());
 
   // Merge Cloud SQL + Firestore active reports
   cloudSqlMap.forEach((clean) => {
@@ -2244,6 +2510,7 @@ function ensureFirestoreReportsSubscription(onError?: (err: unknown) => void) {
   firestoreReportsUnsubscribe = onSnapshot(
     collection(db, REPORT_BUNDLES_COLLECTION),
     (snapshot) => {
+      const allDeletedIds = getAllDeletedReportIds();
       const deltaToSyncToSql: DOEReport[] = [];
 
       snapshot.docs.forEach((docSnap) => {
@@ -2251,9 +2518,9 @@ function ensureFirestoreReportsSubscription(onError?: (err: unknown) => void) {
         const shardMap: Record<string, DOEReport> = {};
         if (data?.reportsMap && typeof data.reportsMap === 'object') {
           for (const [id, raw] of Object.entries(data.reportsMap)) {
-            if (id === 'report-test-123') continue;
+            if (id === 'report-test-123' || allDeletedIds.has(id)) continue;
             const clean = sanitizeReport(raw as DOEReport);
-            if (clean && clean.id) {
+            if (clean && clean.id && !allDeletedIds.has(clean.id)) {
               shardMap[clean.id] = clean;
               const existingInSql = sqlActiveReportsCache.get(clean.id);
               if (!existingInSql || isReportStrictlyNewer(clean, existingInSql)) {
@@ -2269,7 +2536,7 @@ function ensureFirestoreReportsSubscription(onError?: (err: unknown) => void) {
       hasLoadedAllBundleShards = true;
       broadcastActiveReports(snapshot.metadata.fromCache);
 
-      // Automatically sync any reports present in Firestore (e.g. from Deployed Web App) into Cloud SQL
+      // Automatically sync any non-deleted reports present in Firestore (e.g. from Deployed Web App) into Cloud SQL
       if (deltaToSyncToSql.length > 0) {
         const SQL_CHUNK_SIZE = 100;
         for (let i = 0; i < deltaToSyncToSql.length; i += SQL_CHUNK_SIZE) {
@@ -2315,6 +2582,8 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
   if (!sanitized) return;
   const cleanReport = cleanForFirestore(sanitized);
 
+  unmarkReportIdsDeletedLocally([sanitized.id]);
+
   sqlActiveReportsCache.set(
     sanitized.id,
     pickNewerReport(sqlActiveReportsCache.get(sanitized.id), cleanReport)
@@ -2328,9 +2597,15 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
   });
 
   const existingDel = masterDocCache.bundledDeletedReports || [];
-  if (existingDel.some((r) => r.id === sanitized.id)) {
+  const existingDelIds = masterDocCache.deletedReportIds || [];
+  if (existingDel.some((r) => r.id === sanitized.id) || existingDelIds.includes(sanitized.id)) {
     const nextDel = existingDel.filter((r) => r.id !== sanitized.id);
-    persistMasterConfigOnline({ bundledDeletedReports: nextDel }).catch(() => {});
+    const nextDelIds = existingDelIds.filter((id) => id !== sanitized.id);
+    persistMasterConfigOnline({
+      bundledDeletedReports: nextDel,
+      deletedReportIds: nextDelIds,
+      restoredReportIds: [sanitized.id],
+    }).catch(() => {});
   }
 
   broadcastActiveReports(false);
@@ -2418,13 +2693,9 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
 
 export async function purgeGhostReportOnline(reportId: string): Promise<void> {
   if (!reportId) return;
-  sqlActiveReportsCache.delete(reportId);
   const touchedShards: string[] = [];
   liveBundleShardsCache.forEach((shardMap, shardId) => {
     if (shardMap && reportId in shardMap) {
-      const next = { ...shardMap };
-      delete next[reportId];
-      liveBundleShardsCache.set(shardId, next);
       touchedShards.push(shardId);
     }
   });
@@ -2432,7 +2703,17 @@ export async function purgeGhostReportOnline(reportId: string): Promise<void> {
   if (!touchedShards.includes(computedShard)) {
     touchedShards.push(computedShard);
   }
+
+  const nextLocalDelIds = markReportIdsDeletedLocally([reportId]);
+  const nextDelIds = Array.from(
+    new Set([...(masterDocCache.deletedReportIds || []), ...nextLocalDelIds, reportId])
+  ).slice(-500);
+  pruneDeletedReportsFromMemory(new Set([reportId]));
   broadcastActiveReports(false);
+
+  const masterPromise = persistMasterConfigOnline({
+    deletedReportIds: nextDelIds,
+  }).catch(() => {});
 
   const sqlPromise = fetch('/api/doe/reports/purge', {
     method: 'POST',
@@ -2458,22 +2739,21 @@ export async function purgeGhostReportOnline(reportId: string): Promise<void> {
         })
       );
 
-  if (masterDocCache.googleSheetsAutoSync !== false) {
-    deleteReportFromGoogleSheets(reportId, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
-  }
+  const sheetsPromise =
+    masterDocCache.googleSheetsAutoSync !== false
+      ? deleteReportFromGoogleSheets(reportId, masterDocCache.googleSheetsWebhookUrl).catch(
+          () => {}
+        )
+      : Promise.resolve();
 
-  await Promise.all([sqlPromise, ...firestorePromises]);
+  await Promise.all([masterPromise, sqlPromise, sheetsPromise, ...firestorePromises]);
 }
 
 export async function deleteReportOnline(report: DOEReport): Promise<void> {
   if (!report || !report.id) return;
-  sqlActiveReportsCache.delete(report.id);
   const touchedShards: string[] = [];
   liveBundleShardsCache.forEach((shardMap, shardId) => {
     if (shardMap && report.id in shardMap) {
-      const next = { ...shardMap };
-      delete next[report.id];
-      liveBundleShardsCache.set(shardId, next);
       touchedShards.push(shardId);
     }
   });
@@ -2482,17 +2762,21 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
     touchedShards.push(computedShard);
   }
 
-  const sanitized = sanitizeReport(report);
-  if (sanitized) {
-    const prevDel = (masterDocCache.bundledDeletedReports || []).filter(
-      (r) => r.id !== sanitized.id
-    );
-    await persistMasterConfigOnline({
-      bundledDeletedReports: [sanitized, ...prevDel].slice(0, 50),
-    }).catch(() => {});
-  }
-
+  const nextLocalDelIds = markReportIdsDeletedLocally([report.id]);
+  const nextDelIds = Array.from(
+    new Set([...(masterDocCache.deletedReportIds || []), ...nextLocalDelIds, report.id])
+  ).slice(-500);
+  pruneDeletedReportsFromMemory(new Set([report.id]));
   broadcastActiveReports(false);
+
+  const sanitized = sanitizeReport(report);
+  const prevDel = (masterDocCache.bundledDeletedReports || []).filter(
+    (r) => r.id !== report.id
+  );
+  const masterPromise = persistMasterConfigOnline({
+    ...(sanitized ? { bundledDeletedReports: [sanitized, ...prevDel].slice(0, 50) } : {}),
+    deletedReportIds: nextDelIds,
+  }).catch(() => {});
 
   const sqlPromise = fetch('/api/doe/reports/delete', {
     method: 'POST',
@@ -2518,17 +2802,22 @@ export async function deleteReportOnline(report: DOEReport): Promise<void> {
         })
       );
 
-  if (masterDocCache.googleSheetsAutoSync !== false) {
-    deleteReportFromGoogleSheets(report.id, masterDocCache.googleSheetsWebhookUrl).catch(() => {});
-  }
+  const sheetsPromise =
+    masterDocCache.googleSheetsAutoSync !== false
+      ? deleteReportFromGoogleSheets(report.id, masterDocCache.googleSheetsWebhookUrl).catch(
+          () => {}
+        )
+      : Promise.resolve();
 
-  await Promise.all([sqlPromise, ...firestorePromises]);
+  await Promise.all([masterPromise, sqlPromise, sheetsPromise, ...firestorePromises]);
 }
 
 export async function restoreReportOnline(report: DOEReport): Promise<void> {
   const sanitized = sanitizeReport(report);
   if (!sanitized) return;
   const cleanReport = cleanForFirestore(sanitized);
+
+  unmarkReportIdsDeletedLocally([sanitized.id]);
 
   sqlActiveReportsCache.set(sanitized.id, cleanReport);
   const shardId = getBundleIdForReportId(sanitized.id);
@@ -2541,7 +2830,14 @@ export async function restoreReportOnline(report: DOEReport): Promise<void> {
   const nextDel = (masterDocCache.bundledDeletedReports || []).filter(
     (r) => r.id !== sanitized.id
   );
-  await persistMasterConfigOnline({ bundledDeletedReports: nextDel }).catch(() => {});
+  const nextDelIds = (masterDocCache.deletedReportIds || []).filter(
+    (id) => id !== sanitized.id
+  );
+  const masterPromise = persistMasterConfigOnline({
+    bundledDeletedReports: nextDel,
+    deletedReportIds: nextDelIds,
+    restoredReportIds: [sanitized.id],
+  }).catch(() => {});
   broadcastActiveReports(false);
 
   const sqlPromise = fetch('/api/doe/reports/restore', {
@@ -2566,17 +2862,22 @@ export async function restoreReportOnline(report: DOEReport): Promise<void> {
         if (isQuotaExceededError(err)) markFirestoreWriteQuotaExceeded();
       });
 
-  if (masterDocCache.googleSheetsAutoSync !== false) {
-    const schema = buildSheetsSchemaMetadata(
-      masterDocCache.bundledCategories,
-      masterDocCache.bundledQueueMetrics
-    );
-    syncReportToGoogleSheets(cleanReport, masterDocCache.googleSheetsWebhookUrl, schema).catch(
-      () => {}
-    );
-  }
+  const sheetsPromise =
+    masterDocCache.googleSheetsAutoSync !== false
+      ? (() => {
+          const schema = buildSheetsSchemaMetadata(
+            masterDocCache.bundledCategories,
+            masterDocCache.bundledQueueMetrics
+          );
+          return syncReportToGoogleSheets(
+            cleanReport,
+            masterDocCache.googleSheetsWebhookUrl,
+            schema
+          ).catch(() => {});
+        })()
+      : Promise.resolve();
 
-  await Promise.all([sqlPromise, firestorePromise]);
+  await Promise.all([masterPromise, sqlPromise, firestorePromise, sheetsPromise]);
 }
 
 /**
@@ -2996,23 +3297,43 @@ export async function saveSystemConfigOnline(config: SystemConfig): Promise<void
 export async function clearAllReportsOnline(): Promise<void> {
   try {
     const archived = Array.from(sqlActiveReportsCache.values());
+    const archivedIds = archived.map((r) => r.id).filter(Boolean);
+    const nextLocalDelIds = markReportIdsDeletedLocally(archivedIds);
+    const nextDelIds = Array.from(
+      new Set([...(masterDocCache.deletedReportIds || []), ...nextLocalDelIds])
+    ).slice(-500);
+    pruneDeletedReportsFromMemory(new Set(archivedIds));
     sqlActiveReportsCache.clear();
     liveBundleShardsCache.clear();
     broadcastActiveReports(false);
 
-    await fetch('/api/doe/reports/clear-all', {
+    const sqlPromise = fetch('/api/doe/reports/clear-all', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-    });
+    }).catch(() => {});
 
-    if (archived.length > 0) {
-      const prevDel = masterDocCache.bundledDeletedReports || [];
-      const mergedMap = new Map<string, DOEReport>();
-      [...archived, ...prevDel].forEach((r) => mergedMap.set(r.id, r));
-      await persistMasterConfigOnline({
-        bundledDeletedReports: Array.from(mergedMap.values()).slice(0, 50),
-      });
-    }
+    const masterPromise =
+      archived.length > 0
+        ? (() => {
+            const prevDel = masterDocCache.bundledDeletedReports || [];
+            const mergedMap = new Map<string, DOEReport>();
+            [...archived, ...prevDel].forEach((r) => mergedMap.set(r.id, r));
+            return persistMasterConfigOnline({
+              bundledDeletedReports: Array.from(mergedMap.values()).slice(0, 50),
+              deletedReportIds: nextDelIds,
+            }).catch(() => {});
+          })()
+        : Promise.resolve();
+
+    const sheetsPromise =
+      archivedIds.length > 0 && masterDocCache.googleSheetsAutoSync !== false
+        ? deleteReportsBatchFromGoogleSheets(
+            archivedIds,
+            masterDocCache.googleSheetsWebhookUrl
+          ).catch(() => {})
+        : Promise.resolve();
+
+    await Promise.all([sqlPromise, masterPromise, sheetsPromise]);
   } catch (err) {
     console.warn('Error clearing reports online:', err);
   }
