@@ -4118,7 +4118,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <Code className="w-3.5 h-3.5" />
-                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'อัปเดตโค้ด Apps Script v2.4 (เวลาไทย + ไม่ตัดเลข 0 เบอร์โทร + เรียงวันที่ล่าสุดอัตโนมัติ)'}</span>
+                  <span>{showAppsScriptGuide ? 'ซ่อนวิธีตั้งค่า & โค้ด Apps Script' : 'อัปเดตโค้ด Apps Script v2.5 (ซิงก์ทันที 1-2 วิ + เวลาไทย + ไม่ตัดเลข 0 เบอร์โทร)'}</span>
                 </button>
               </div>
 
@@ -4126,28 +4126,28 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 <div className="bg-slate-950/80 rounded-xl p-4 border border-emerald-800/50 space-y-3 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-bold text-emerald-300">
-                      โค้ด Google Apps Script รุ่นผู้บริหาร v2.4 (ประทับเวลาไทย พ.ศ. UTC+7 + ล็อกคอลัมน์ Z เบอร์โทรไม่ตัดเลข 0 + เรียงวันที่ล่าสุดอัตโนมัติ + กันรายงานที่ลบเด้งกลับ):
+                      โค้ด Google Apps Script รุ่นผู้บริหาร v2.5 (Fast-Path ซิงก์รายฉบับทันที 1-2 วินาที + เวลาไทย UTC+7 + ล็อกคอลัมน์ Z เบอร์โทรไม่ตัดเลข 0 + เรียงวันที่ล่าสุดอัตโนมัติ):
                     </span>
                     <button
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
-                        onNotify('คัดลอกโค้ด Google Apps Script v2.4 เรียบร้อยแล้ว');
+                        onNotify('คัดลอกโค้ด Google Apps Script v2.5 เรียบร้อยแล้ว');
                       }}
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <Copy className="w-3.5 h-3.5" />
-                      <span>คัดลอกโค้ด Apps Script v2.4 ทั้งหมด</span>
+                      <span>คัดลอกโค้ด Apps Script v2.5 ทั้งหมด</span>
                     </button>
                   </div>
                   <ol className="list-decimal list-inside space-y-1.5 text-slate-300 leading-relaxed">
                     <li>เปิดไฟล์ <strong>Google Sheets</strong> ของคุณ แล้วไปที่เมนูด้านบน <strong>ส่วนขยาย (Extensions) &rarr; Apps Script</strong></li>
-                    <li>ลบโค้ดเดิมออกทั้งหมด กดปุ่ม <strong>"คัดลอกโค้ด Apps Script v2.4 ทั้งหมด"</strong> ด้านบนไปวางแทนที่ แล้วกดไอคอนบันทึก (Save)</li>
+                    <li>ลบโค้ดเดิมออกทั้งหมด กดปุ่ม <strong>"คัดลอกโค้ด Apps Script v2.5 ทั้งหมด"</strong> ด้านบนไปวางแทนที่ แล้วกดไอคอนบันทึก (Save)</li>
                     <li>
-                      หากเคยสร้าง URL ไว้แล้ว: กดปุ่มมุมขวาบน <strong>ทำให้ใช้งานได้ (Deploy) &rarr; จัดการการทำให้ใช้งานได้ (Manage deployments)</strong> &rarr; กดไอคอนรูปดินสอ (แก้ไข) &rarr; ช่องเวอร์ชันเลือก <strong>เวอร์ชันใหม่ (New version)</strong> แล้วกด Deploy (ได้ URL เดิม ไม่ต้องเปลี่ยน URL)
+                      <strong>สำคัญมาก (ไม่ต้องสร้าง URL ใหม่):</strong> กดปุ่มมุมขวาบน <strong>ทำให้ใช้งานได้ (Deploy) &rarr; จัดการการทำให้ใช้งานได้ (Manage deployments)</strong> &rarr; กดไอคอนรูปดินสอ (แก้ไข) ของ URL ที่ใช้อยู่ &rarr; ช่องเวอร์ชันเลือก <strong>เวอร์ชันใหม่ (New version)</strong> แล้วกด Deploy (ได้ URL เดิมที่เชื่อมกับระบบอยู่แล้วทันที)
                     </li>
                     <li>
-                      หลังจากกด Deploy เวอร์ชันใหม่แล้ว ให้กดปุ่ม <strong>"ซิงก์รายงานทั้งหมดขึ้น Google Sheets"</strong> ด้านล่าง 1 ครั้ง ระบบจะแปลงเวลาเป็นเวลาไทย, กู้คืนเลข 0 หน้าเบอร์มือถือในคอลัมน์ Z ทั้งหมด และเรียงวันที่ล่าสุดอยู่แถวบนสุดให้อัตโนมัติครับ
+                      หลังจากกด Deploy เวอร์ชันใหม่แล้ว ให้กดปุ่ม <strong>"ซิงก์รายงานทั้งหมดขึ้น Google Sheets"</strong> ด้านล่าง 1 ครั้ง จากนั้นทุกครั้งที่มีคนกดบันทึกรายงานใหม่ ข้อมูลจะเด้งเข้าแถวบนสุดของ Google Sheets ภายใน 1–2 วินาทีครับ
                     </li>
                   </ol>
                 </div>

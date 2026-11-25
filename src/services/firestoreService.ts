@@ -2577,7 +2577,9 @@ export function subscribeReports(
   };
 }
 
-export async function saveReportOnline(report: DOEReport): Promise<void> {
+export async function saveReportOnline(
+  report: DOEReport
+): Promise<{ sqlOk: boolean; firestoreOk: boolean; sheetsOk: boolean } | void> {
   const sanitized = sanitizeReport(report);
   if (!sanitized) return;
   const cleanReport = cleanForFirestore(sanitized);
@@ -2667,20 +2669,26 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
           }
         });
 
-  // 3. Sync to Google Sheets with dynamic admin schema (serves as real-time persistence when Firestore daily quota is reached)
+  // 3. Sync to Google Sheets immediately with dynamic admin schema
   let sheetsOk = false;
+  const storedSheetsCfg = getStoredGoogleSheetsConfig();
+  const resolvedSheetsUrl = (
+    masterDocCache.googleSheetsWebhookUrl ||
+    storedSheetsCfg.webhookUrl ||
+    DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL ||
+    ''
+  ).trim();
+  const shouldAutoSyncSheets =
+    masterDocCache.googleSheetsAutoSync !== false && storedSheetsCfg.autoSync !== false;
+
   const sheetsPromise =
-    masterDocCache.googleSheetsAutoSync !== false
+    shouldAutoSyncSheets && resolvedSheetsUrl.startsWith('https://script.google.com/')
       ? (async () => {
           const schema = buildSheetsSchemaMetadata(
             masterDocCache.bundledCategories,
             masterDocCache.bundledQueueMetrics
           );
-          sheetsOk = await syncReportToGoogleSheets(
-            cleanReport,
-            masterDocCache.googleSheetsWebhookUrl,
-            schema
-          );
+          sheetsOk = await syncReportToGoogleSheets(cleanReport, resolvedSheetsUrl, schema);
         })().catch(() => {})
       : Promise.resolve();
 
@@ -2689,6 +2697,7 @@ export async function saveReportOnline(report: DOEReport): Promise<void> {
   if (!sqlOk && !firestoreOk && !sheetsOk) {
     throw lastError || new Error('Online report persistence failed');
   }
+  return { sqlOk, firestoreOk, sheetsOk };
 }
 
 export async function purgeGhostReportOnline(reportId: string): Promise<void> {

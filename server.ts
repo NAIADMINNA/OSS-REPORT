@@ -177,7 +177,7 @@ async function startServer() {
       const webhookUrl = String(req.body?.webhookUrl || '').trim();
       const payload = req.body?.payload;
       if (!webhookUrl.startsWith('https://script.google.com/')) {
-        return res.status(400).json({ error: 'Invalid Google Apps Script URL' });
+        return res.status(400).json({ ok: false, error: 'Invalid Google Apps Script URL' });
       }
       const response = await fetch(webhookUrl, {
         method: 'POST',
@@ -187,13 +187,22 @@ async function startServer() {
       });
       const text = await response.text();
       try {
-        return res.json(JSON.parse(text));
+        const parsed = JSON.parse(text);
+        if (!response.ok || parsed?.ok === false) {
+          return res.status(502).json(parsed);
+        }
+        return res.json(parsed);
       } catch {
-        return res.json({ ok: response.ok, raw: text.slice(0, 300) });
+        return res.status(502).json({
+          ok: false,
+          error: 'Invalid non-JSON response from Google Apps Script',
+          upstreamStatus: response.status,
+          raw: text.slice(0, 300),
+        });
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'Google Sheets proxy POST failed';
-      res.status(500).json({ error: msg });
+      res.status(500).json({ ok: false, error: msg });
     }
   });
 

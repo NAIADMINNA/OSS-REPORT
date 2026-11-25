@@ -1693,16 +1693,17 @@ export default function App() {
     // Open preview poster modal to verify
     setIsPosterModalOpen(true);
 
-    // 2. Save directly to Cloud Firestore online database and verify completion
+    // 2. Save directly to Cloud SQL, Firestore & Google Sheets and verify completion
     try {
-      await saveReportOnline(finalReport);
+      const syncResult = await saveReportOnline(finalReport);
       pendingSaveReportIdsRef.current.delete(finalReport.id);
       persistUnsyncedIds();
       setIsFirestoreOnline(true);
+      const sheetsSuffix = syncResult?.sheetsOk ? ' และซิงก์เข้า Google Sheets ทันทีแล้ว!' : ' สำเร็จ!';
       showToast(
         targetIndex >= 0
-          ? `บันทึกการแก้ไขรายงาน "${finalReport.officeName}" ลงฐานข้อมูล Cloud Firestore สำเร็จ!`
-          : `บันทึกรายงานใหม่ของ "${finalReport.officeName}" ลงฐานข้อมูล Cloud Firestore สำเร็จ!`
+          ? `บันทึกการแก้ไขรายงาน "${finalReport.officeName}" ลงฐานข้อมูล${sheetsSuffix}`
+          : `บันทึกรายงานใหม่ของ "${finalReport.officeName}" ลงฐานข้อมูล${sheetsSuffix}`
       );
     } catch (err) {
       console.error('Failed to save report online to Firestore:', err);

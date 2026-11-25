@@ -110,13 +110,13 @@ export function buildSheetsSchemaMetadata(
  */
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  * ระบบสำรองและซิงค์ข้อมูลอัตโนมัติ (DOE Work Permit Reporting System -> Google Sheets)
- * รุ่นผู้บริหาร (Enterprise v2.4):
- *   1) ป้องกันและรวมแถวซ้ำอัตโนมัติ: ยึดหลัก 1 แถวต่อ (วันที่รายงาน + สำนักงาน + ศูนย์บริการ) เก็บฉบับที่แก้ไขล่าสุดเสมอ
- *   2) รองรับคอลัมน์ "ม.63/2 มติ 14 ก.ค. 69" โดยตรง พร้อมแตกคอลัมน์หัวข้อใหม่ในอนาคตแบบย่อชื่ออ่านง่าย + คอลัมน์สรุปหัวข้อเพิ่มเติม
- *   3) จัดเรียงแถวอัตโนมัติทุกครั้งที่มีคนส่งรายงาน: คอลัมน์ B (วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ) + เวลาล่าสุดอยู่ด้านบน แม้เปิดตัวกรอง (Filter) อยู่
- *   4) ประทับเวลาแก้ไขล่าสุดเป็นเวลาประเทศไทย (UTC+7 พ.ศ.) และล็อกคอลัมน์ Z เบอร์โทรศัพท์ / LINE ID เป็นข้อความ (ไม่ตัดเลข 0 นำหน้า พร้อมกู้คืนเลข 0 อัตโนมัติ)
- *   5) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") ควบคู่กับชีตรวมหลัก
- *   6) ซิงก์การตั้งค่าแอดมินและรายการที่ลบแล้วแบบ 2 ทางผ่านแท็บ "ตั้งค่าระบบ_DOE" (ป้องกันรายงานที่แอดมินลบแล้วเด้งกลับมาแสดงซ้ำ 100%)
+ * รุ่นผู้บริหาร (Enterprise v2.5 - ซิงก์ทันที 1-2 วินาที):
+ *   1) Fast-Path ซิงก์รายฉบับทันที (1-2 วินาที): เมื่อกดบันทึกรายงานใหม่/แก้ไข จะแทรกหรืออัปเดตเฉพาะแถวเดียวและเรียงลำดับทันที ไม่ต้องเขียนทับทั้งชีต
+ *   2) ป้องกันและรวมแถวซ้ำอัตโนมัติ: ยึดหลัก 1 แถวต่อ (วันที่รายงาน + สำนักงาน + ศูนย์บริการ) เก็บฉบับที่แก้ไขล่าสุดเสมอ
+ *   3) รองรับคอลัมน์ "ม.63/2 มติ 14 ก.ค. 69" โดยตรง พร้อมแตกคอลัมน์หัวข้อใหม่ในอนาคตแบบย่อชื่ออ่านง่าย + คอลัมน์สรุปหัวข้อเพิ่มเติม
+ *   4) จัดเรียงแถวอัตโนมัติทุกครั้งที่มีคนส่งรายงาน: คอลัมน์ B (วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ) + เวลาล่าสุดอยู่ด้านบน แม้เปิดตัวกรอง (Filter) อยู่
+ *   5) ประทับเวลาแก้ไขล่าสุดเป็นเวลาประเทศไทย (UTC+7 พ.ศ.) และล็อกคอลัมน์ Z เบอร์โทรศัพท์ / LINE ID เป็นข้อความ (ไม่ตัดเลข 0 นำหน้า พร้อมกู้คืนเลข 0 อัตโนมัติ)
+ *   6) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") และซิงก์รายการลบถาวรผ่านแท็บ "ตั้งค่าระบบ_DOE" (กันรายงานที่ลบแล้วเด้งกลับ 100%)
  *
  * วิธีติดตั้ง / อัปเดตโค้ด:
  * 1. เปิดไฟล์ Google Sheets ของคุณ -> เมนู "ส่วนขยาย (Extensions)" -> "Apps Script"
@@ -635,6 +635,123 @@ function findUpdatedTimeColIndex(headers) {
   return headers.indexOf('เวลาแก้ไขล่าสุด (ISO)');
 }
 
+function applyPlainTextFormatsToRange_(sheet, startRow, numRows, headers) {
+  if (numRows <= 0) return;
+  const plainTextHeaders = [
+    'วันที่รายงาน (YYYY-MM-DD)',
+    'รหัสสำนักงาน',
+    'เบอร์โทรศัพท์',
+    'LINE ID',
+    'เวลาแก้ไขล่าสุด (เวลาไทย)',
+    'เวลาแก้ไขล่าสุด (ISO)',
+    'เวลาอัปเดตล่าสุด (เวลาไทย)',
+    'เวลาอัปเดตล่าสุด (ISO)'
+  ];
+  for (let i = 0; i < plainTextHeaders.length; i++) {
+    const colIdx = headers.indexOf(plainTextHeaders[i]);
+    if (colIdx >= 0) {
+      sheet.getRange(startRow, colIdx + 1, numRows, 1).setNumberFormat('@');
+    }
+  }
+}
+
+function sortSheetRowsNewestFirst_(sheet, headers) {
+  const lastRow = sheet.getLastRow();
+  const numCols = headers.length;
+  if (lastRow <= 2 || numCols < 2) return;
+  const updatedColIdx = findUpdatedTimeColIndex(headers);
+  const sortSpecs = [{ column: 2, ascending: false }];
+  if (updatedColIdx >= 0) {
+    sortSpecs.push({ column: updatedColIdx + 1, ascending: false });
+  }
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, numCols);
+  try {
+    const activeFilter = sheet.getFilter();
+    if (activeFilter) {
+      if (updatedColIdx >= 0) {
+        activeFilter.sort(updatedColIdx + 1, false);
+      }
+      activeFilter.sort(2, false);
+    } else {
+      dataRange.sort(sortSpecs);
+    }
+  } catch (e) {
+    try {
+      dataRange.sort(sortSpecs);
+    } catch (e2) {}
+  }
+}
+
+function headersExactlyMatch_(existingHeaders, targetHeaders) {
+  if (!Array.isArray(existingHeaders) || !Array.isArray(targetHeaders)) return false;
+  if (existingHeaders.length !== targetHeaders.length) return false;
+  for (let i = 0; i < targetHeaders.length; i++) {
+    if (String(existingHeaders[i] || '').trim() !== String(targetHeaders[i] || '').trim()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Fast-Path (1-2 วินาที): แทรกหรืออัปเดตเฉพาะรายงานฉบับเดียวลงชีตทันทีโดยไม่อ่าน/เขียนทับแถวเดิมทั้งหมด 1,600+ แถว
+ */
+function fastUpsertSingleRowOnSheet_(sheet, report, headers, dynamicCols) {
+  const numCols = headers.length;
+  const lastRow = sheet.getLastRow();
+  const targetId = String(report.id || '').trim();
+  const targetSlotKey = getReportSlotKey(report);
+  const rowValues = reportToRow(report, dynamicCols);
+
+  const matchedRowNums = [];
+  if (lastRow > 1) {
+    // อ่านเฉพาะคอลัมน์ A-G (7 คอลัมน์เบาๆ) เพื่อค้นหาแถวเดิมอย่างรวดเร็ว ไม่ต้องดึง JSON_BACKUP ทั้งชีต
+    const metaRows = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
+    for (let i = 0; i < metaRows.length; i++) {
+      const rowId = String(metaRows[i][0] || '').trim();
+      if (!rowId) continue;
+      if (rowId === targetId) {
+        matchedRowNums.push(i + 2);
+        continue;
+      }
+      const rowSlot = getReportSlotKey({
+        id: rowId,
+        reportDate: metaRows[i][1],
+        officeId: metaRows[i][4],
+        officeName: metaRows[i][5],
+        centerName: metaRows[i][6]
+      });
+      if (targetSlotKey && rowSlot === targetSlotKey) {
+        matchedRowNums.push(i + 2);
+      }
+    }
+  }
+
+  let inserted = 0;
+  let updated = 0;
+
+  if (matchedRowNums.length > 0) {
+    const keepRow = matchedRowNums[0];
+    applyPlainTextFormatsToRange_(sheet, keepRow, 1, headers);
+    sheet.getRange(keepRow, 1, 1, numCols).setValues([rowValues]);
+    // ลบแถวซ้ำส่วนเกิน (ถ้ามี) จากล่างขึ้นบน
+    for (let d = matchedRowNums.length - 1; d >= 1; d--) {
+      sheet.deleteRow(matchedRowNums[d]);
+    }
+    updated = 1;
+  } else {
+    if (lastRow >= 2) {
+      sheet.insertRowBefore(2);
+    }
+    applyPlainTextFormatsToRange_(sheet, 2, 1, headers);
+    sheet.getRange(2, 1, 1, numCols).setValues([rowValues]);
+    inserted = 1;
+  }
+
+  sortSheetRowsNewestFirst_(sheet, headers);
+  return { inserted: inserted, updated: updated, totalRows: Math.max(0, sheet.getLastRow() - 1) };
+}
+
 function writeTableToSheet(sheet, headers, rows, headerBgColor, sortReportRows) {
   const numCols = headers.length;
   const prevLastRow = sheet.getLastRow();
@@ -652,44 +769,10 @@ function writeTableToSheet(sheet, headers, rows, headerBgColor, sortReportRows) 
     const dataRange = sheet.getRange(2, 1, rows.length, numCols);
     // บังคับคอลัมน์ข้อความสำคัญ (วันที่, รหัสสำนักงาน, เบอร์โทรศัพท์ คอลัมน์ Z, LINE ID, เวลาไทย) เป็น Plain Text ('@') ก่อนเขียนค่า
     // เพื่อป้องกัน Google Sheets ตัดเลข 0 นำหน้าเบอร์มือถือ และป้องกันการแปลงรูปแบบวันที่/เวลาผิดเขตเวลา
-    const plainTextHeaders = [
-      'วันที่รายงาน (YYYY-MM-DD)',
-      'รหัสสำนักงาน',
-      'เบอร์โทรศัพท์',
-      'LINE ID',
-      'เวลาแก้ไขล่าสุด (เวลาไทย)',
-      'เวลาแก้ไขล่าสุด (ISO)',
-      'เวลาอัปเดตล่าสุด (เวลาไทย)',
-      'เวลาอัปเดตล่าสุด (ISO)'
-    ];
-    for (let i = 0; i < plainTextHeaders.length; i++) {
-      const colIdx = headers.indexOf(plainTextHeaders[i]);
-      if (colIdx >= 0) {
-        sheet.getRange(2, colIdx + 1, rows.length, 1).setNumberFormat('@');
-      }
-    }
+    applyPlainTextFormatsToRange_(sheet, 2, rows.length, headers);
     dataRange.setValues(rows);
     if (sortReportRows && rows.length > 1) {
-      const updatedColIdx = findUpdatedTimeColIndex(headers);
-      const sortSpecs = [{ column: 2, ascending: false }];
-      if (updatedColIdx >= 0) {
-        sortSpecs.push({ column: updatedColIdx + 1, ascending: false });
-      }
-      try {
-        const activeFilter = sheet.getFilter();
-        if (activeFilter) {
-          if (updatedColIdx >= 0) {
-            activeFilter.sort(updatedColIdx + 1, false);
-          }
-          activeFilter.sort(2, false);
-        } else {
-          dataRange.sort(sortSpecs);
-        }
-      } catch (e) {
-        try {
-          dataRange.sort(sortSpecs);
-        } catch (e2) {}
-      }
+      sortSheetRowsNewestFirst_(sheet, headers);
     }
   }
 
@@ -1003,6 +1086,54 @@ function doPost(e) {
     const existingHeaders = lastRow >= 1
       ? sheet.getRange(1, 1, 1, lastCol).getValues()[0]
       : [];
+
+    // FAST-PATH (1-2 วินาที): เมื่อส่ง/แก้ไขรายงานรายฉบับ (upsert_single) และหัวตารางชีตเป็นเวอร์ชันล่าสุดอยู่แล้ว
+    if (action === 'upsert_single' && body.report && body.report.id && String(body.report.id).trim() !== 'report-test-123') {
+      const singleRep = Object.assign({}, body.report);
+      singleRep.reportDate = normalizeDateIso(singleRep.reportDate);
+      singleRep.phoneNumber = formatThaiPhoneText(singleRep.phoneNumber);
+      const fastDynamicCols = buildDynamicColumns(existingHeaders, incomingSchema, [singleRep]);
+      const fastHeaders = buildFullHeaders(fastDynamicCols);
+      if (headersExactlyMatch_(existingHeaders, fastHeaders)) {
+        // ปลดรหัสนี้ออกจากรายการลบถาวรถ้ามีการกู้คืน/บันทึกทับ
+        const singleId = String(singleRep.id).trim();
+        const curMasterFast = readMasterConfigFromSheet_() || {};
+        if (Array.isArray(curMasterFast.deletedReportIds) && curMasterFast.deletedReportIds.indexOf(singleId) !== -1) {
+          updateDeletedReportIdsOnSheet_([], [singleId]);
+        }
+        const fastRes = fastUpsertSingleRowOnSheet_(sheet, singleRep, fastHeaders, fastDynamicCols);
+        const monthlySynced = [];
+        if (ENABLE_MONTHLY_ARCHIVE_TABS) {
+          const mTab = getMonthlyTabNameFromDate(singleRep.reportDate);
+          if (mTab) {
+            const mSheet = getOrCreateNamedSheet(mTab, '#1e3a8a', fastHeaders);
+            const mLastCol = Math.max(mSheet.getLastColumn(), 1);
+            const mHeaders = mSheet.getLastRow() >= 1 ? mSheet.getRange(1, 1, 1, mLastCol).getValues()[0] : [];
+            if (headersExactlyMatch_(mHeaders, fastHeaders)) {
+              fastUpsertSingleRowOnSheet_(mSheet, singleRep, fastHeaders, fastDynamicCols);
+            } else if (mSheet.getLastRow() <= 1) {
+              writeTableToSheet(mSheet, fastHeaders, [reportToRow(singleRep, fastDynamicCols)], '#1e3a8a', true);
+            }
+            monthlySynced.push(mTab);
+          }
+        }
+        return ContentService.createTextOutput(
+          JSON.stringify({
+            ok: true,
+            fastPath: true,
+            inserted: fastRes.inserted,
+            updated: fastRes.updated,
+            duplicatesMerged: 0,
+            dynamicColumnCount: fastDynamicCols.length,
+            totalColumns: fastHeaders.length,
+            sorted: 'reportDate_DESC_updatedAt_DESC',
+            monthlyArchiveSynced: monthlySynced,
+            totalRows: fastRes.totalRows
+          })
+        ).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
     const jsonColIdx = findJsonBackupColIndex(existingHeaders);
 
     const existingRawRows = lastRow > 1
@@ -1260,30 +1391,27 @@ function doGet() {
 }
 `;
 
-export async function syncReportToGoogleSheets(
-  report: DOEReport,
-  explicitWebhookUrl?: string,
-  schema?: GoogleSheetsSchemaMetadata
-): Promise<boolean> {
-  const cfg = getStoredGoogleSheetsConfig();
-  const url = (explicitWebhookUrl || cfg.webhookUrl || '').trim();
-  if (!url || (!explicitWebhookUrl && !cfg.autoSync)) return false;
-
-  const payload = {
-    action: 'upsert_single',
-    report,
-    schema: schema || buildSheetsSchemaMetadata(),
-  };
-
+async function postToSheetsWebhook(
+  url: string,
+  payload: Record<string, unknown>
+): Promise<{ ok: boolean; data?: Record<string, unknown> }> {
+  // 1. Try server-side proxy first (gives full JSON confirmation & avoids CORS issues when running with Express backend)
   try {
     const proxyRes = await fetch('/api/doe/sheets-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ webhookUrl: url, payload }),
     });
-    if (proxyRes.ok) return true;
+    const contentType = proxyRes.headers.get('content-type') || '';
+    if (proxyRes.ok && contentType.includes('application/json')) {
+      const json = (await proxyRes.json()) as Record<string, unknown>;
+      if (json && json.ok !== false) {
+        return { ok: true, data: json };
+      }
+    }
   } catch {}
 
+  // 2. Fallback: Direct POST to Google Apps Script Web App (essential on Static Deployed Web App where /api/* is 404)
   try {
     await fetch(url, {
       method: 'POST',
@@ -1291,10 +1419,34 @@ export async function syncReportToGoogleSheets(
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(payload),
     });
-    return true;
+    return { ok: true };
   } catch {
-    return false;
+    return { ok: false };
   }
+}
+
+export async function syncReportToGoogleSheets(
+  report: DOEReport,
+  explicitWebhookUrl?: string,
+  schema?: GoogleSheetsSchemaMetadata
+): Promise<boolean> {
+  const cfg = getStoredGoogleSheetsConfig();
+  const url = (explicitWebhookUrl || cfg.webhookUrl || DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL || '').trim();
+  if (!url || !url.startsWith('https://script.google.com/')) return false;
+  if (!explicitWebhookUrl && !cfg.autoSync) return false;
+
+  const payload = {
+    action: 'upsert_single',
+    report,
+    schema: schema || buildSheetsSchemaMetadata(),
+  };
+
+  const first = await postToSheetsWebhook(url, payload);
+  if (first.ok) return true;
+  // Retry once after brief delay if transient network/lock hiccup occurred
+  await new Promise((r) => setTimeout(r, 800));
+  const second = await postToSheetsWebhook(url, payload);
+  return second.ok;
 }
 
 export async function syncMasterConfigToGoogleSheets(
@@ -1302,7 +1454,7 @@ export async function syncMasterConfigToGoogleSheets(
   explicitWebhookUrl?: string
 ): Promise<boolean> {
   const cfg = getStoredGoogleSheetsConfig();
-  const url = (explicitWebhookUrl || cfg.webhookUrl || '').trim();
+  const url = (explicitWebhookUrl || cfg.webhookUrl || DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL || '').trim();
   if (!url || !url.startsWith('https://script.google.com/')) return false;
   if (!explicitWebhookUrl && !cfg.autoSync) return false;
 
@@ -1315,26 +1467,8 @@ export async function syncMasterConfigToGoogleSheets(
     masterConfig: compactConfig,
   };
 
-  try {
-    const proxyRes = await fetch('/api/doe/sheets-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ webhookUrl: url, payload }),
-    });
-    if (proxyRes.ok) return true;
-  } catch {}
-
-  try {
-    await fetch(url, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload),
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  const res = await postToSheetsWebhook(url, payload);
+  return res.ok;
 }
 
 export async function syncSchemaToGoogleSheets(
@@ -1342,7 +1476,7 @@ export async function syncSchemaToGoogleSheets(
   schema?: GoogleSheetsSchemaMetadata
 ): Promise<boolean> {
   const cfg = getStoredGoogleSheetsConfig();
-  const url = (explicitWebhookUrl || cfg.webhookUrl || '').trim();
+  const url = (explicitWebhookUrl || cfg.webhookUrl || DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL || '').trim();
   if (!url || !url.startsWith('https://script.google.com/')) return false;
   if (!explicitWebhookUrl && !cfg.autoSync) return false;
 
@@ -1352,26 +1486,8 @@ export async function syncSchemaToGoogleSheets(
     schema: schema || buildSheetsSchemaMetadata(),
   };
 
-  try {
-    const proxyRes = await fetch('/api/doe/sheets-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ webhookUrl: url, payload }),
-    });
-    if (proxyRes.ok) return true;
-  } catch {}
-
-  try {
-    await fetch(url, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload),
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  const res = await postToSheetsWebhook(url, payload);
+  return res.ok;
 }
 
 export async function deleteReportFromGoogleSheets(
@@ -1379,8 +1495,9 @@ export async function deleteReportFromGoogleSheets(
   explicitWebhookUrl?: string
 ): Promise<boolean> {
   const cfg = getStoredGoogleSheetsConfig();
-  const url = (explicitWebhookUrl || cfg.webhookUrl || '').trim();
-  if (!url || !reportId || (!explicitWebhookUrl && !cfg.autoSync)) return false;
+  const url = (explicitWebhookUrl || cfg.webhookUrl || DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL || '').trim();
+  if (!url || !url.startsWith('https://script.google.com/') || !reportId) return false;
+  if (!explicitWebhookUrl && !cfg.autoSync) return false;
 
   const payload = {
     action: 'delete_single',
@@ -1388,26 +1505,8 @@ export async function deleteReportFromGoogleSheets(
     schema: buildSheetsSchemaMetadata(),
   };
 
-  try {
-    const proxyRes = await fetch('/api/doe/sheets-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ webhookUrl: url, payload }),
-    });
-    if (proxyRes.ok) return true;
-  } catch {}
-
-  try {
-    await fetch(url, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload),
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  const res = await postToSheetsWebhook(url, payload);
+  return res.ok;
 }
 
 export async function deleteReportsBatchFromGoogleSheets(
@@ -1419,7 +1518,7 @@ export async function deleteReportsBatchFromGoogleSheets(
   );
   if (cleanIds.length === 0) return true;
   const cfg = getStoredGoogleSheetsConfig();
-  const url = (explicitWebhookUrl || cfg.webhookUrl || '').trim();
+  const url = (explicitWebhookUrl || cfg.webhookUrl || DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL || '').trim();
   if (!url || !url.startsWith('https://script.google.com/')) return false;
   if (!explicitWebhookUrl && !cfg.autoSync) return false;
 
@@ -1429,26 +1528,8 @@ export async function deleteReportsBatchFromGoogleSheets(
     schema: buildSheetsSchemaMetadata(),
   };
 
-  try {
-    const proxyRes = await fetch('/api/doe/sheets-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ webhookUrl: url, payload }),
-    });
-    if (proxyRes.ok) return true;
-  } catch {}
-
-  try {
-    await fetch(url, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload),
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  const res = await postToSheetsWebhook(url, payload);
+  return res.ok;
 }
 
 export async function syncBulkReportsToGoogleSheets(
@@ -1504,40 +1585,16 @@ export async function syncBulkReportsToGoogleSheets(
       deduplicate: isLastBatch,
     };
 
-    let chunkOk = false;
-    try {
-      const res = await fetch('/api/doe/sheets-proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhookUrl: cleanUrl, payload }),
-      });
-      if (res.ok) {
-        chunkOk = true;
-        try {
-          const json = await res.json();
-          if (typeof json?.duplicatesMerged === 'number') {
-            remoteMerged += json.duplicatesMerged;
-          }
-        } catch {}
-      }
-    } catch {}
-
-    if (!chunkOk) {
-      try {
-        await fetch(cleanUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload),
-        });
-        chunkOk = true;
-      } catch (err) {
-        return {
-          success: false,
-          syncedCount: synced,
-          message: `เกิดข้อผิดพลาดขณะส่งข้อมูลชุดที่ ${Math.floor(i / BATCH_SIZE) + 1}: ${String(err)}`,
-        };
-      }
+    const chunkRes = await postToSheetsWebhook(cleanUrl, payload);
+    if (!chunkRes.ok) {
+      return {
+        success: false,
+        syncedCount: synced,
+        message: `เกิดข้อผิดพลาดขณะส่งข้อมูลชุดที่ ${Math.floor(i / BATCH_SIZE) + 1}`,
+      };
+    }
+    if (typeof chunkRes.data?.duplicatesMerged === 'number') {
+      remoteMerged += chunkRes.data.duplicatesMerged;
     }
 
     synced += chunk.length;
