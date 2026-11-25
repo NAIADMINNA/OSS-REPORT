@@ -1699,7 +1699,9 @@ export default function App() {
       pendingSaveReportIdsRef.current.delete(finalReport.id);
       persistUnsyncedIds();
       setIsFirestoreOnline(true);
-      const sheetsSuffix = syncResult?.sheetsOk ? ' และซิงก์เข้า Google Sheets ทันทีแล้ว!' : ' สำเร็จ!';
+      const sheetsSuffix = syncResult?.sheetsOk
+        ? ' และซิงก์เข้า Google Sheets ทันทีแล้ว!'
+        : ' สำเร็จ (แต่ Google Sheets ยังซิงก์ไม่เข้า กรุณาอัปเดต Apps Script v2.6)';
       showToast(
         targetIndex >= 0
           ? `บันทึกการแก้ไขรายงาน "${finalReport.officeName}" ลงฐานข้อมูล${sheetsSuffix}`

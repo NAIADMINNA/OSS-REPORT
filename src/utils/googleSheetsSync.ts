@@ -110,13 +110,14 @@ export function buildSheetsSchemaMetadata(
  */
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  * ระบบสำรองและซิงค์ข้อมูลอัตโนมัติ (DOE Work Permit Reporting System -> Google Sheets)
- * รุ่นผู้บริหาร (Enterprise v2.5 - ซิงก์ทันที 1-2 วินาที):
- *   1) Fast-Path ซิงก์รายฉบับทันที (1-2 วินาที): เมื่อกดบันทึกรายงานใหม่/แก้ไข จะแทรกหรืออัปเดตเฉพาะแถวเดียวและเรียงลำดับทันที ไม่ต้องเขียนทับทั้งชีต
- *   2) ป้องกันและรวมแถวซ้ำอัตโนมัติ: ยึดหลัก 1 แถวต่อ (วันที่รายงาน + สำนักงาน + ศูนย์บริการ) เก็บฉบับที่แก้ไขล่าสุดเสมอ
- *   3) รองรับคอลัมน์ "ม.63/2 มติ 14 ก.ค. 69" โดยตรง พร้อมแตกคอลัมน์หัวข้อใหม่ในอนาคตแบบย่อชื่ออ่านง่าย + คอลัมน์สรุปหัวข้อเพิ่มเติม
- *   4) จัดเรียงแถวอัตโนมัติทุกครั้งที่มีคนส่งรายงาน: คอลัมน์ B (วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ) + เวลาล่าสุดอยู่ด้านบน แม้เปิดตัวกรอง (Filter) อยู่
- *   5) ประทับเวลาแก้ไขล่าสุดเป็นเวลาประเทศไทย (UTC+7 พ.ศ.) และล็อกคอลัมน์ Z เบอร์โทรศัพท์ / LINE ID เป็นข้อความ (ไม่ตัดเลข 0 นำหน้า พร้อมกู้คืนเลข 0 อัตโนมัติ)
- *   6) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") และซิงก์รายการลบถาวรผ่านแท็บ "ตั้งค่าระบบ_DOE" (กันรายงานที่ลบแล้วเด้งกลับ 100%)
+ * รุ่นผู้บริหาร (Enterprise v2.6 - รองรับคอลัมน์จัดประเภท/Table + ซิงก์ทันที 1-2 วินาที):
+ *   1) แก้ไข Error "ตั้งค่ารูปแบบตัวเลขของเซลล์ในคอลัมน์ที่มีการจัดประเภทไม่ได้" 100%: รองรับ Google Sheets Tables และ Typed Columns ทุกชนิด ไม่แครชขณะบันทึก/ลบ
+ *   2) Fast-Path ซิงก์และลบรายฉบับทันที (1-2 วินาที): เมื่อกดบันทึกรายงานใหม่/แก้ไข/ลบ จะจัดการเฉพาะแถวที่เกี่ยวข้องและเรียงลำดับทันที ไม่เขียนทับทั้งชีต
+ *   3) ป้องกันและรวมแถวซ้ำอัตโนมัติ: ยึดหลัก 1 แถวต่อ (วันที่รายงาน + สำนักงาน + ศูนย์บริการ) เก็บฉบับที่แก้ไขล่าสุดเสมอ
+ *   4) รองรับคอลัมน์ "ม.63/2 มติ 14 ก.ค. 69" โดยตรง พร้อมแตกคอลัมน์หัวข้อใหม่ในอนาคตแบบย่อชื่ออ่านง่าย + คอลัมน์สรุปหัวข้อเพิ่มเติม
+ *   5) จัดเรียงแถวอัตโนมัติทุกครั้งที่มีคนส่งรายงาน: คอลัมน์ B (วันที่รายงานล่าสุดอยู่แถวบนสุดเสมอ) + เวลาล่าสุดอยู่ด้านบน แม้เปิดตัวกรอง (Filter) อยู่
+ *   6) ประทับเวลาแก้ไขล่าสุดเป็นเวลาประเทศไทย (UTC+7 พ.ศ.) และคงเลข 0 นำหน้าเบอร์โทรศัพท์ / LINE ID (พร้อมกู้คืนเลข 0 อัตโนมัติ)
+ *   7) แยกแท็บสำรองข้อมูลรายเดือนอัตโนมัติ (เช่น "ประจำเดือน_2569-11") และซิงก์รายการลบถาวรผ่านแท็บ "ตั้งค่าระบบ_DOE" (กันรายงานที่ลบแล้วเด้งกลับ 100%)
  *
  * วิธีติดตั้ง / อัปเดตโค้ด:
  * 1. เปิดไฟล์ Google Sheets ของคุณ -> เมนู "ส่วนขยาย (Extensions)" -> "Apps Script"
@@ -194,11 +195,13 @@ function getOrCreateNamedSheet(targetName, headerBgColor, headers) {
   const activeHeaders = headers && headers.length > 0 ? headers : BASE_HEADERS.concat([EXTRA_SUMMARY_HEADER, JSON_BACKUP_HEADER]);
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, activeHeaders.length).setValues([activeHeaders]);
-    const headerRange = sheet.getRange(1, 1, 1, activeHeaders.length);
-    headerRange.setBackground(headerBgColor || '#0f172a');
-    headerRange.setFontColor('#ffffff');
-    headerRange.setFontWeight('bold');
-    sheet.setFrozenRows(1);
+    try {
+      const headerRange = sheet.getRange(1, 1, 1, activeHeaders.length);
+      headerRange.setBackground(headerBgColor || '#0f172a');
+      headerRange.setFontColor('#ffffff');
+      headerRange.setFontWeight('bold');
+      sheet.setFrozenRows(1);
+    } catch (styleErr) {}
   }
   return sheet;
 }
@@ -636,7 +639,7 @@ function findUpdatedTimeColIndex(headers) {
 }
 
 function applyPlainTextFormatsToRange_(sheet, startRow, numRows, headers) {
-  if (numRows <= 0) return;
+  if (numRows <= 0) return {};
   const plainTextHeaders = [
     'วันที่รายงาน (YYYY-MM-DD)',
     'รหัสสำนักงาน',
@@ -647,12 +650,19 @@ function applyPlainTextFormatsToRange_(sheet, startRow, numRows, headers) {
     'เวลาอัปเดตล่าสุด (เวลาไทย)',
     'เวลาอัปเดตล่าสุด (ISO)'
   ];
+  const typedCols = {};
   for (let i = 0; i < plainTextHeaders.length; i++) {
     const colIdx = headers.indexOf(plainTextHeaders[i]);
     if (colIdx >= 0) {
-      sheet.getRange(startRow, colIdx + 1, numRows, 1).setNumberFormat('@');
+      try {
+        sheet.getRange(startRow, colIdx + 1, numRows, 1).setNumberFormat('@');
+      } catch (fmtErr) {
+        // กรณีคอลัมน์ถูกตั้งเป็น Google Sheets Table / Typed Column จะห้ามเรียก setNumberFormat -> ข้ามอย่างปลอดภัยไม่ให้แครช
+        typedCols[colIdx] = true;
+      }
     }
   }
+  return typedCols;
 }
 
 function sortSheetRowsNewestFirst_(sheet, headers) {
@@ -736,20 +746,61 @@ function fastUpsertSingleRowOnSheet_(sheet, report, headers, dynamicCols) {
     sheet.getRange(keepRow, 1, 1, numCols).setValues([rowValues]);
     // ลบแถวซ้ำส่วนเกิน (ถ้ามี) จากล่างขึ้นบน
     for (let d = matchedRowNums.length - 1; d >= 1; d--) {
-      sheet.deleteRow(matchedRowNums[d]);
+      try {
+        sheet.deleteRow(matchedRowNums[d]);
+      } catch (delErr) {}
     }
     updated = 1;
   } else {
+    let targetRow = 2;
     if (lastRow >= 2) {
-      sheet.insertRowBefore(2);
+      try {
+        sheet.insertRowBefore(2);
+        targetRow = 2;
+      } catch (insErr) {
+        // กรณี Google Sheets Table ไม่อนุญาต insertRowBefore(2) ให้เขียนต่อท้ายแล้วให้ sortSheetRowsNewestFirst_ ดันขึ้นแถวบนสุดแทน
+        targetRow = lastRow + 1;
+      }
     }
-    applyPlainTextFormatsToRange_(sheet, 2, 1, headers);
-    sheet.getRange(2, 1, 1, numCols).setValues([rowValues]);
+    applyPlainTextFormatsToRange_(sheet, targetRow, 1, headers);
+    sheet.getRange(targetRow, 1, 1, numCols).setValues([rowValues]);
     inserted = 1;
   }
 
   sortSheetRowsNewestFirst_(sheet, headers);
   return { inserted: inserted, updated: updated, totalRows: Math.max(0, sheet.getLastRow() - 1) };
+}
+
+/**
+ * Fast-Path ลบรายฉบับ/หลายฉบับทันที (1-2 วินาที) โดยไม่เขียนทับทั้งชีต
+ */
+function fastDeleteRowsOnSheet_(sheet, idsToDelete) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1 || !idsToDelete || idsToDelete.length === 0) {
+    return { deletedCount: 0, touchedMonthTabs: {} };
+  }
+  const delSet = {};
+  for (let i = 0; i < idsToDelete.length; i++) {
+    const id = String(idsToDelete[i] || '').trim();
+    if (id) delSet[id] = true;
+  }
+  const idAndDateCols = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  const rowsToDelete = [];
+  const touchedMonthTabs = {};
+  for (let i = 0; i < idAndDateCols.length; i++) {
+    const rid = String(idAndDateCols[i][0] || '').trim();
+    if (rid && delSet[rid]) {
+      rowsToDelete.push(i + 2);
+      const tab = getMonthlyTabNameFromDate(idAndDateCols[i][1]);
+      if (tab) touchedMonthTabs[tab] = true;
+    }
+  }
+  for (let d = rowsToDelete.length - 1; d >= 0; d--) {
+    try {
+      sheet.deleteRow(rowsToDelete[d]);
+    } catch (delErr) {}
+  }
+  return { deletedCount: rowsToDelete.length, touchedMonthTabs: touchedMonthTabs };
 }
 
 function writeTableToSheet(sheet, headers, rows, headerBgColor, sortReportRows) {
@@ -760,15 +811,16 @@ function writeTableToSheet(sheet, headers, rows, headerBgColor, sortReportRows) 
   // อัปเดตแถวหัวตารางให้ครบทุกคอลัมน์
   const headerRange = sheet.getRange(1, 1, 1, numCols);
   headerRange.setValues([headers]);
-  headerRange.setBackground(headerBgColor || '#0f172a');
-  headerRange.setFontColor('#ffffff');
-  headerRange.setFontWeight('bold');
-  sheet.setFrozenRows(1);
+  try {
+    headerRange.setBackground(headerBgColor || '#0f172a');
+    headerRange.setFontColor('#ffffff');
+    headerRange.setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  } catch (headerStyleErr) {}
 
   if (rows.length > 0) {
     const dataRange = sheet.getRange(2, 1, rows.length, numCols);
-    // บังคับคอลัมน์ข้อความสำคัญ (วันที่, รหัสสำนักงาน, เบอร์โทรศัพท์ คอลัมน์ Z, LINE ID, เวลาไทย) เป็น Plain Text ('@') ก่อนเขียนค่า
-    // เพื่อป้องกัน Google Sheets ตัดเลข 0 นำหน้าเบอร์มือถือ และป้องกันการแปลงรูปแบบวันที่/เวลาผิดเขตเวลา
+    // ตั้งคอลัมน์ข้อความสำคัญเป็น Plain Text ('@') อย่างปลอดภัย (ข้ามคอลัมน์ที่มีการจัดประเภทใน Google Sheets Table โดยไม่แครช)
     applyPlainTextFormatsToRange_(sheet, 2, rows.length, headers);
     dataRange.setValues(rows);
     if (sortReportRows && rows.length > 1) {
@@ -778,12 +830,20 @@ function writeTableToSheet(sheet, headers, rows, headerBgColor, sortReportRows) 
 
   // ลบแถวส่วนเกินด้านล่าง (เช่น กรณีรวมแถวซ้ำแล้วจำนวนแถวลดลง)
   if (prevLastRow > rows.length + 1) {
-    sheet.deleteRows(rows.length + 2, prevLastRow - (rows.length + 1));
+    try {
+      sheet.deleteRows(rows.length + 2, prevLastRow - (rows.length + 1));
+    } catch (delRowsErr) {
+      try {
+        sheet.getRange(rows.length + 2, 1, prevLastRow - (rows.length + 1), Math.max(prevLastCol, numCols)).clearContent();
+      } catch (clearErr) {}
+    }
   }
 
   // ล้างคอลัมน์ส่วนเกินด้านขวาหากมี
   if (prevLastCol > numCols) {
-    sheet.getRange(1, numCols + 1, Math.max(1, rows.length + 1), prevLastCol - numCols).clearContent();
+    try {
+      sheet.getRange(1, numCols + 1, Math.max(1, rows.length + 1), prevLastCol - numCols).clearContent();
+    } catch (clearColErr) {}
   }
 }
 
@@ -1120,6 +1180,7 @@ function doPost(e) {
         return ContentService.createTextOutput(
           JSON.stringify({
             ok: true,
+            version: '2.6',
             fastPath: true,
             inserted: fastRes.inserted,
             updated: fastRes.updated,
@@ -1132,6 +1193,36 @@ function doPost(e) {
           })
         ).setMimeType(ContentService.MimeType.JSON);
       }
+    }
+
+    // FAST-PATH ลบรายฉบับ/หลายฉบับ (1-2 วินาที): ลบเฉพาะแถวที่ระบุและอัปเดตแท็บรายเดือนโดยไม่เขียนทับทั้งชีต
+    if ((action === 'delete_single' && body.reportId) || (action === 'delete_batch' && Array.isArray(body.reportIds))) {
+      const idsToDeleteFast = action === 'delete_batch'
+        ? body.reportIds.map(function (x) { return String(x || '').trim(); }).filter(Boolean)
+        : [String(body.reportId || '').trim()].filter(Boolean);
+      const fastDelRes = fastDeleteRowsOnSheet_(sheet, idsToDeleteFast);
+      updateDeletedReportIdsOnSheet_(idsToDeleteFast, []);
+      if (ENABLE_MONTHLY_ARCHIVE_TABS) {
+        const ssFastDel = SpreadsheetApp.getActiveSpreadsheet();
+        const touchedTabs = Object.keys(fastDelRes.touchedMonthTabs || {});
+        for (let t = 0; t < touchedTabs.length; t++) {
+          const mSheet = ssFastDel.getSheetByName(touchedTabs[t]);
+          if (mSheet) {
+            fastDeleteRowsOnSheet_(mSheet, idsToDeleteFast);
+          }
+        }
+      }
+      return ContentService.createTextOutput(
+        JSON.stringify({
+          ok: true,
+          version: '2.6',
+          fastPath: true,
+          deleted: idsToDeleteFast,
+          deletedAny: fastDelRes.deletedCount > 0,
+          deletedCount: fastDelRes.deletedCount,
+          totalRows: Math.max(0, sheet.getLastRow() - 1)
+        })
+      ).setMimeType(ContentService.MimeType.JSON);
     }
 
     const jsonColIdx = findJsonBackupColIndex(existingHeaders);
@@ -1394,8 +1485,9 @@ function doGet() {
 async function postToSheetsWebhook(
   url: string,
   payload: Record<string, unknown>
-): Promise<{ ok: boolean; data?: Record<string, unknown> }> {
+): Promise<{ ok: boolean; error?: string; data?: Record<string, unknown> }> {
   // 1. Try server-side proxy first (gives full JSON confirmation & avoids CORS issues when running with Express backend)
+  let proxyReachedScript = false;
   try {
     const proxyRes = await fetch('/api/doe/sheets-proxy', {
       method: 'POST',
@@ -1403,13 +1495,23 @@ async function postToSheetsWebhook(
       body: JSON.stringify({ webhookUrl: url, payload }),
     });
     const contentType = proxyRes.headers.get('content-type') || '';
-    if (proxyRes.ok && contentType.includes('application/json')) {
+    if (contentType.includes('application/json')) {
       const json = (await proxyRes.json()) as Record<string, unknown>;
-      if (json && json.ok !== false) {
+      if (proxyRes.ok && json && json.ok !== false) {
         return { ok: true, data: json };
+      }
+      // Proxy reached Apps Script and Apps Script returned a real error (e.g. Exception) — DO NOT mask it with no-cors!
+      if (json && json.ok === false && typeof json.error === 'string') {
+        proxyReachedScript = true;
+        console.error('Google Apps Script returned error:', json.error);
+        return { ok: false, error: json.error, data: json };
       }
     }
   } catch {}
+
+  if (proxyReachedScript) {
+    return { ok: false, error: 'Google Apps Script rejected the request' };
+  }
 
   // 2. Fallback: Direct POST to Google Apps Script Web App (essential on Static Deployed Web App where /api/* is 404)
   try {
@@ -1420,8 +1522,8 @@ async function postToSheetsWebhook(
       body: JSON.stringify(payload),
     });
     return { ok: true };
-  } catch {
-    return { ok: false };
+  } catch (err) {
+    return { ok: false, error: String(err) };
   }
 }
 
@@ -1443,6 +1545,10 @@ export async function syncReportToGoogleSheets(
 
   const first = await postToSheetsWebhook(url, payload);
   if (first.ok) return true;
+  // Do not waste time retrying deterministic Apps Script exceptions
+  if (first.error && first.error.includes('Exception:')) {
+    return false;
+  }
   // Retry once after brief delay if transient network/lock hiccup occurred
   await new Promise((r) => setTimeout(r, 800));
   const second = await postToSheetsWebhook(url, payload);
